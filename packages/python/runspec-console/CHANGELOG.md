@@ -9,6 +9,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.406.0] — 2026-11-12
+
+### Changed
+
+- **Root-owned venvs get no shared schedules.** Every fire in such a venv
+  would run as root, and the console never becomes root to manage its
+  daemon, so root's runnables (for example `runspec-linux-root`) are scheduled
+  from This console instead.
+  - The Schedules tab no longer runs `runspec-scheduler status` in a venv owned
+    by root. It lists those venvs in a note as left out on purpose.
+  - Provision venv greys out *Shared schedules* when *Run as* is `root`, and a
+    host whose SSH login is root gets the venv without the scheduler, with a
+    warning.
+  - Update venv greys out *Shared schedules* when every picked venv is root's;
+    otherwise a root-owned venv is skipped for the scheduler steps (no install,
+    sync or restart) with a warning, and the rest of the update still runs.
+  - The guide (`docs/shared-schedules.md`) says how to take
+    `runspec-scheduler` back out of a root-owned venv.
+
 ## [0.405.0] — 2026-11-12
 
 ### Added

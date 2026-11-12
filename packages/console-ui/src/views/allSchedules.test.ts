@@ -64,6 +64,7 @@ describe('collectRows', () => {
       daemonVenv([sched({ id: 'poll', line: 'daemon', when: { every: '5m' } })], 'running', { config_error: 'boom' }),
       { host: 'db-1', group: 'legacy', available: true, ok: false, error: 'sudo: a password is required', owner: 'root' },
       { host: 'db-1', group: 'web', available: false, ok: true },
+      { host: 'db-1', group: 'root-tools', available: false, ok: true, owner: 'root', root_owned: true },
     ]
     const c = collectRows([consoleSched()], venvs, { hostGroups: { 'web-1': 'prod' } })
     const byKey = Object.fromEntries(c.rows.map(r => [r.key, r]))
@@ -73,6 +74,7 @@ describe('collectRows', () => {
     expect(byKey['job-1::jobs::poll']).toMatchObject({ source: 'daemon', when: 'every 5m' })
     expect(byKey['db-1::legacy::unreadable']).toMatchObject({ kind: 'unreadable', state: "can't read", source: 'unknown', problem: true })
     expect(c.without).toEqual(['db-1/web'])
+    expect(c.rootOwned).toEqual(['db-1/root-tools'])
     expect(c.daemons.map(d => d.key)).toEqual(['job-1::jobs'])
     expect(c.notes.map(n => n.message)).toEqual(['bad toml', "The scheduler can't load its config: boom"])
   })

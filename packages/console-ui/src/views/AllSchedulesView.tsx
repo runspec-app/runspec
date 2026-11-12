@@ -810,6 +810,11 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           No runspec-scheduler in {collected.without.length} venv{collected.without.length === 1 ? '' : 's'}: {collected.without.join(', ')}. Install it into a venv from the Marketplace to schedule that venv's runnables.
         </div>
       )}
+      {scope !== 'console' && collected.rootOwned.length > 0 && (
+        <div style={{ marginTop: 6, fontSize: 12, color: muted }} data-testid="root-owned-venvs">
+          Root-owned, left out of shared schedules: {collected.rootOwned.join(', ')}. Every fire there would run as root, so schedule their runnables from This console instead.
+        </div>
+      )}
       {scope !== 'console' && (
         <div style={{ marginTop: 6, fontSize: 12, color: muted }}>
           <InfoCircleOutlined style={{ marginRight: 4 }} />

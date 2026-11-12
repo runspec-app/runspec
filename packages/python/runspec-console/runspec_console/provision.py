@@ -1171,6 +1171,15 @@ def retarget_scheduler_spec(specs: list[str], package: str, *also: str) -> list[
     return list(dict.fromkeys(out))
 
 
+def without_scheduler_spec(
+    specs: list[str], package: str = SCHEDULER_PACKAGE
+) -> list[str]:
+    """``specs`` minus any scheduler requirement (upstream or ``package``) — for
+    a root-owned venv, which gets no shared schedules."""
+    rx = _scheduler_spec_re(package)
+    return [s for s in specs if not rx.match(s)]
+
+
 def host_command(argv: list[str], run_as: str = "", become_method: str = "sudo") -> str:
     """``argv`` as one line an operator can paste on the host, run as
     ``run_as`` (``sudo -iu`` / ``su -``) when that isn't the SSH login."""
@@ -1266,6 +1275,22 @@ def update_install_specs(
     if scheduler and scheduler != SCHEDULER_OFF:
         specs = add_scheduler_spec(specs, scheduler, scheduler_package)
     return list(dict.fromkeys(specs))
+
+
+#: Why a root-owned venv gets no shared schedules. Every fire would run as
+#: root, and the console (which never escalates to root) couldn't restart or
+#: change the daemon. Root tools are scheduled from the console instead, where
+#: their ``run_as = "root"`` goes through sudo like any other run.
+ROOT_SCHEDULER_NOTE = (
+    "This venv belongs to root, so shared schedules aren't set up in it: every "
+    "fire would run as root and the console can't manage its daemon. Schedule "
+    "its runnables from This console instead."
+)
+
+
+def root_owned(owner: str) -> bool:
+    """Whether a venv owned by ``owner`` is left out of shared schedules."""
+    return owner == "root"
 
 
 def update_steps(

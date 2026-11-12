@@ -2,6 +2,20 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.10.5] — 2026-11-12
+
+### Fixed
+
+- **Restart replaces a daemon its keeper didn't start.** When an older daemon
+  (for example one the cron watchdog started before the venv moved to
+  systemd --user) held the venv lock, `restart` asked systemd or supervisord to
+  restart their own daemon, which quit at once because the lock was taken. The
+  old daemon kept running the old code, so *restart needed* never cleared.
+  `restart` now checks whether the running daemon belongs to the keeper (its
+  cgroup names the systemd unit, or its parent is the venv's supervisord) and
+  stops it first when it doesn't. When `/proc` can't be read it leaves the
+  daemon alone.
+
 ## [0.10.4] — 2026-11-12
 
 ### Fixed

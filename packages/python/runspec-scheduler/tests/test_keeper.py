@@ -298,6 +298,41 @@ def test_restart_through_supervisor(venv, monkeypatch):
     assert plan.actions[0].argv[-2:] == ["restart", "runspec-scheduler"]
 
 
+def test_restart_stops_a_daemon_systemd_didnt_start(venv, monkeypatch):
+    # Switched from the cron watchdog on an older version: its daemon still
+    # holds the lock, so the unit's own daemon would quit at once.
+    calls = []
+    monkeypatch.setattr(keeper.subprocess, "run", systemctl(calls, venv.units))
+    keeper.apply(keeper.plan_install("systemd-user", facts=facts()))
+    monkeypatch.setattr(keeper, "_daemon_pid", lambda config: 2079631)
+    monkeypatch.setattr(keeper, "_proc_text", lambda pid, name: "0::/user.slice/user-1001.slice/session-c4.scope\n")
+    plan = keeper.plan_restart(facts=facts())
+    assert [a.kind for a in plan.actions] == ["stop", "run"]
+    assert plan.actions[0].pid == 2079631
+    assert plan.actions[1].argv == ["systemctl", "--user", "restart", "runspec-scheduler-ops.service"]
+    # the unit's own daemon is left to systemctl
+    unit_cgroup = "0::/user.slice/user-1001.slice/user@1001.service/app.slice/runspec-scheduler-ops.service\n"
+    monkeypatch.setattr(keeper, "_proc_text", lambda pid, name: unit_cgroup)
+    assert [a.kind for a in keeper.plan_restart(facts=facts()).actions] == ["run"]
+    # can't tell (no /proc): never stop it
+    monkeypatch.setattr(keeper, "_proc_text", lambda pid, name: None)
+    assert [a.kind for a in keeper.plan_restart(facts=facts()).actions] == ["run"]
+
+
+def test_restart_stops_a_daemon_supervisord_didnt_start(venv, monkeypatch):
+    sup = venv.root / "bin" / "supervisord"
+    sup.write_text("")
+    f = facts(supervisord=sup, linger=False)
+    monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: _Proc(0))
+    monkeypatch.setattr(keeper, "_supervisord_pid", lambda: 4242)
+    keeper.apply(keeper.plan_install("supervisor", facts=f))
+    monkeypatch.setattr(keeper, "_daemon_pid", lambda config: 5555)
+    monkeypatch.setattr(keeper, "_proc_text", lambda pid, name: "5555 (runspec-schedu) S 1 5555 5555 0 -1")
+    assert [a.kind for a in keeper.plan_restart(facts=f).actions] == ["stop", "run"]
+    monkeypatch.setattr(keeper, "_proc_text", lambda pid, name: "5555 (runspec-schedu) S 4242 5555 5555 0 -1")
+    assert [a.kind for a in keeper.plan_restart(facts=f).actions] == ["run"]
+
+
 def test_restart_with_the_cron_watchdog_stops_then_detaches(venv, monkeypatch):
     monkeypatch.setattr(keeper.subprocess, "run", lambda argv, **k: _Proc(0))
     keeper.apply(keeper.plan_install("cron", facts=facts()))

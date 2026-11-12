@@ -943,6 +943,17 @@ class SchedulesMixin:
         # enforce_run_as), so a service-account venv refuses the login user —
         # escalate to the owner the way a runnable run does.
         owner, venv_owner = self._scheduler_owner(host, group, remote)
+        if venv_owner == "root":
+            # Root venvs get no shared schedules (every fire would run as root,
+            # and the console never escalates to root to manage the daemon);
+            # their runnables are scheduled from the console instead.
+            return {
+                "group": group,
+                "available": False,
+                "ok": True,
+                "owner": venv_owner,
+                "root_owned": True,
+            }
         if owner:
             code, stdout, stderr = self._run_scheduler_as(
                 host, binary, ["status"], owner, remote

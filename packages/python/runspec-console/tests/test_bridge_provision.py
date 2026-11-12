@@ -24,6 +24,7 @@ from runspec_console import config as config_mod
 from runspec_console import host_schedules as hs
 from runspec_console import hosts as hosts_mod
 from runspec_console import marketplace as mp
+from runspec_console import provision as prov_mod
 from runspec_console.bridge import Bridge
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell scripts")
@@ -72,7 +73,19 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(mp, "pip_config_files", lambda **kw: [])
     for k in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_CONFIG_FILE"):
         monkeypatch.delenv(k, raising=False)
+    # The "hosts" here are this machine, and CI runs as root — so every venv
+    # would count as root-owned and lose its scheduler. Tests that are about
+    # root-owned venvs put the real check back with _real_root_check.
+    monkeypatch.setattr(prov_mod, "root_owned", lambda owner: False)
     return tmp_path
+
+
+_REAL_ROOT_OWNED = prov_mod.root_owned
+
+
+def _real_root_check(monkeypatch, user="root"):
+    """Treat ``user`` as root, whoever the tests run as."""
+    monkeypatch.setattr(prov_mod, "root_owned", lambda owner: owner in ("root", user))
 
 
 class _StubBridge:
@@ -1538,3 +1551,68 @@ def test_update_moves_schedules_back_to_crontab(app, tmp_path):
     assert res["ok"]
     assert not any("install-service" in c for c in b.commands)
     assert any("left running" in w for w in res["warnings"])
+
+
+def test_plan_refuses_shared_schedules_for_a_root_owned_venv(app, monkeypatch):
+    _real_root_check(monkeypatch)
+    _hosts()
+    b = _StubBridge()
+    base = {"hosts": ["web-01"], "dest": "/opt/venvs/root-tools", "python": "3.12"}
+    with pytest.raises(ValueError, match="belongs to root"):
+        b._prov_plan({**base, "run_as": "root", "scheduler": "auto"})
+    # Without schedules a root venv is fine.
+    assert b._prov_plan({**base, "run_as": "root"})["scheduler"] == ""
+    assert prov_mod.ROOT_SCHEDULER_NOTE
+    assert _REAL_ROOT_OWNED("root") and not _REAL_ROOT_OWNED("svc")
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_provision_as_the_root_login_skips_the_scheduler(app, tmp_path, monkeypatch):
+    # No Run as, but the SSH login is root: the venv is root's, so no daemon.
+    import getpass
+
+    _real_root_check(monkeypatch, getpass.getuser())
+    _hosts()
+    b = _StubBridge()
+    dest = tmp_path / "venvs" / "root-tools"
+    out = b.provision_start(
+        {
+            "hosts": ["web-01"],
+            "dest": str(dest),
+            "python": sys.executable,
+            "scheduler": "auto",
+        }
+    )
+    rec = _wait(b, out["op"])
+    [res] = rec["results"]
+    assert res["ok"], res
+    assert prov_mod.ROOT_SCHEDULER_NOTE in res["warnings"]
+    assert "scheduler" not in res
+    joined = "\n".join(b.commands)
+    assert "runspec-scheduler" not in joined
+    assert not (dest / "bin" / "keeper.calls").exists()
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="runspec needs 3.10+")
+def test_update_leaves_a_root_owned_venvs_schedules_alone(app, tmp_path, monkeypatch):
+    import getpass
+
+    _real_root_check(monkeypatch, getpass.getuser())
+    venv = _old_venv(tmp_path)
+    rp = f"{venv}/bin/runspec"
+    _hosts([rp])
+    b = _StubBridge()
+    out = b.venv_update_start(
+        {
+            "targets": [{"host": "web-01", "runspec_path": rp}],
+            "upgrade_runspec": True,
+            "scheduler": "auto",
+        }
+    )
+    rec = _wait(b, out["op"])
+    [res] = rec["results"]
+    assert res["ok"], res
+    assert prov_mod.ROOT_SCHEDULER_NOTE in res["warnings"]
+    joined = _step_cmds(b)
+    assert " install --disable-pip-version-check --no-input -U runspec" in joined
+    assert "runspec-scheduler" not in joined
