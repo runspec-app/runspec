@@ -36,6 +36,32 @@ them: write and change pages in the repo, where the team reviews them, then Pull
 A page is read as the repo's CI lints it (OKF frontmatter with a `type`); one that
 doesn't parse cleanly is still shown, with a note.
 
+### Editing pages and proposing them to the team
+
+You change the team's pages from the console as **page edits**: the page's new
+text, kept on this console (`{app_dir}/knowledge/drafts/`) until you propose it.
+
+- **Add to page** (on an inbox fact, or on a team fact under a page) approves the
+  fact and adds it as a bullet to its page: on a runnable's page, how tools
+  connect (`pairing`, `effect`) goes under **Works with** and everything else
+  under **Watch out for**; other pages get a **Notes** section. A fact about
+  several things goes on the first of runnable, service, term, topic, team,
+  runbook. A page that doesn't exist yet starts from a new OKF page
+  (`status: draft`). Facts that stay on this console can't be added.
+- **Add all facts to pages** does that once for every approved team fact that
+  isn't on a page yet (yours and the team's; not the built-in ones). Use it when
+  you move a team from facts to pages.
+- **Edit page** (or **Start a page** on a tool with none) opens the page's
+  Markdown to change it by hand.
+
+An edited page shows its diff against the team's page, with **Edit** and
+**Discard**, and the index marks it. **Propose changes** pushes every page edit
+in one commit to your own branch `contrib/<lane>` (never a force push) and gives
+you a link that opens the merge request into the team branch on GitLab (or the
+compare view on GitHub). The team reviews it there like any change to the repo.
+Your edits stay on this console until a Pull shows the team's page matching
+them, so you can keep editing and propose again; the same branch updates.
+
 The agent gets a runnable's page too. When it searches for or describes the
 runnable, the page's **Works with** and **Watch out for** bullets come first in
 its notes, before facts. `search_wiki` also searches pages, and `wiki_page`

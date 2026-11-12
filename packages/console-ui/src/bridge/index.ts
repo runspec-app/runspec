@@ -1089,6 +1089,16 @@ export interface WikiPage {
   error?: string       // the page couldn't be read cleanly
 }
 
+// A page edit kept on this console until proposed.
+export interface WikiDraft {
+  path: string
+  entity: string
+  new: boolean       // the page doesn't exist in the team wiki yet
+  added: number
+  removed: number
+  diff: string       // unified diff against the team's page
+}
+
 export interface WikiPages {
   pages: WikiPage[]
   repo_url: string
@@ -3204,6 +3214,17 @@ export interface BridgeApi {
   memory_sync_status: () => Promise<MemorySyncStatus>
   // The team wiki's pages (OKF Markdown) Memory Sync's Pull cached, parsed.
   knowledge_wiki_pages: () => Promise<WikiPages>
+  // Edits to the team's pages, kept on this console until proposed.
+  knowledge_drafts: () => Promise<{ drafts: WikiDraft[]; drafted: string[] }>
+  knowledge_draft_text: (path: string, entity?: string) => Promise<{ ok: boolean; error?: string; path?: string; text?: string; base?: string | null; drafted?: boolean }>
+  knowledge_draft_save: (path: string, text: string) => Promise<{ ok: boolean; error?: string; kept?: boolean }>
+  knowledge_draft_discard: (path: string) => Promise<{ ok: boolean; error?: string; discarded?: boolean }>
+  // Turn a fact into a bullet on its page (approving it first when pending).
+  knowledge_draft_fact: (factId: string) => Promise<{ ok: boolean; error?: string; path?: string; heading?: string }>
+  // One-time: every approved team fact not on a page yet becomes a page edit.
+  knowledge_convert_facts: () => Promise<{ ok: boolean; facts: number; pages: number; kept_local: number; no_page: number }>
+  // Push the page edits to contrib/<lane>; returns a link to open the merge request.
+  memory_sync_propose: () => Promise<{ ok: boolean; error?: string; branch?: string; commit?: string; changed?: boolean; pages?: number; merge_request_url?: string }>
   // What a push would share and what it keeps on this console, fact by fact.
   memory_sync_preview: () => Promise<MemorySyncPreview>
   // One ls-remote: is the repo reachable, do the team / contrib branches exist yet.

@@ -32,7 +32,7 @@ from typing import Any
 
 from . import config as config_mod
 from . import knowledge as kn
-from . import wiki_pages
+from . import wiki_drafts, wiki_pages
 
 logger = logging.getLogger(__name__)
 
@@ -381,6 +381,63 @@ class MemorySyncMixin:
             **preview,
         }
 
+    def memory_sync_propose(self) -> dict[str, Any]:
+        """Propose this console's page edits to the team: commit every draft to
+        ``contrib/<lane>`` (one commit, never a force push) and return a link
+        that opens the merge request into the team branch. Drafts stay until a
+        Pull shows them merged, so a further edit can be proposed again.
+        Returns ``{ok, branch, commit, changed, pages, merge_request_url}``."""
+        from . import gitsync
+
+        ms = self._memory_sync()
+        if not ms["url"]:
+            return {"ok": False, "error": "Memory Sync isn't set up — add a repo first"}
+        root = self._knowledge_store().root  # type: ignore[attr-defined]
+        files: dict[str, bytes | None] = {}
+        for path in wiki_drafts.draft_paths(root):
+            text = wiki_drafts.read_draft(root, path) or ""
+            if kn.secret_reason(text):
+                return {
+                    "ok": False,
+                    "error": f"{path} looks like it contains a secret; edit it first.",
+                }
+            files[path] = text.encode("utf-8")
+        if not files:
+            return {"ok": False, "error": "No page edits to propose."}
+        try:
+            res = gitsync.push_files(
+                ms["url"],
+                ms["contrib_branch"],
+                files,
+                self._memory_sync_auth(ms),
+                base_branch=ms["branch"],
+                message=f"wiki: {ms['lane']} proposes changes to {len(files)} page(s)",
+                author=self._memory_sync_author(ms),
+            )
+        except gitsync.PushConflictError as exc:
+            return {
+                "ok": False,
+                "error": f"{ms['contrib_branch']} changed on the repo while pushing "
+                f"— try again. ({exc})",
+            }
+        except gitsync.GitSyncError as exc:
+            return {"ok": False, "error": _push_error(str(exc))}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("memory sync propose failed")
+            return {"ok": False, "error": _push_error(f"propose failed: {exc}")}
+        self._memory_sync_stamp(last_propose=_now(), last_propose_commit=res.commit)
+        self._knowledge_changed()  # type: ignore[attr-defined]
+        return {
+            "ok": True,
+            "branch": res.branch,
+            "commit": res.commit,
+            "changed": res.changed,
+            "pages": len(files),
+            "merge_request_url": wiki_drafts.merge_request_url(
+                ms["url"], ms["contrib_branch"], ms["branch"]
+            ),
+        }
+
     def memory_sync_pull(self) -> dict[str, Any]:
         """Pull the team's facts into ``team/`` and the team's wiki pages into
         ``pages/``, from the team branch, the newest release tag, or a pinned tag
@@ -426,9 +483,12 @@ class MemorySyncMixin:
             return {"ok": False, "error": f"nothing was pulled: {exc}"}
         try:
             pages = wiki_pages.write_cache(store.root, page_files)
+            # Page edits the team has now merged are done.
+            landed = len(wiki_drafts.drop_landed(store.root))
         except OSError as exc:
             logger.warning("memory sync: saving wiki pages failed: %s", exc)
             pages = {"pages": 0, "added": 0, "removed": 0, "error": str(exc)}
+            landed = 0
         self._memory_sync_stamp(
             last_pull=_now(), last_pull_commit=res.commit, last_pull_ref=ref
         )
@@ -439,6 +499,7 @@ class MemorySyncMixin:
             "commit": res.commit,
             "skipped": skipped,
             "pages": pages,
+            "drafts_landed": landed,
             **counts,
         }
 

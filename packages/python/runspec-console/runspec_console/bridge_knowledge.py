@@ -38,7 +38,7 @@ from typing import Any
 from . import config as config_mod
 from . import conversations as conv_mod
 from . import knowledge as kn
-from . import wiki_pages
+from . import wiki_drafts, wiki_pages
 
 logger = logging.getLogger(__name__)
 
@@ -770,6 +770,147 @@ class KnowledgeMixin:
                 )
             )
         )
+
+    # ── page edits (drafts of the team wiki's pages) ─────────────────────────
+    def _drafted_ids(self) -> list[str]:
+        raw = self._knowledge_store().state().get("drafted") or []
+        return [str(x) for x in raw] if isinstance(raw, list) else []
+
+    def _mark_drafted(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        store = self._knowledge_store()
+        have = self._drafted_ids()
+        store.update_state(drafted=have + [i for i in ids if i not in have])
+
+    def knowledge_drafts(self) -> dict[str, Any]:
+        """Edits to the team's pages kept on this console (not yet proposed or
+        merged): ``{drafts: [{path, entity, new, added, removed, diff}],
+        drafted: [fact ids already turned into page edits]}``."""
+        root = self._knowledge_store().root
+        return {
+            "drafts": wiki_drafts.list_drafts(root),
+            "drafted": self._drafted_ids(),
+        }
+
+    def knowledge_draft_text(self, path: str, entity: str = "") -> dict[str, Any]:
+        """The text to edit for ``path``: its draft, else the team's page, else a
+        new page. ``base`` is the team's page (``None`` when it doesn't exist)."""
+        root = self._knowledge_store().root
+        try:
+            path = str(path or "") or wiki_drafts.page_path_for(str(entity or ""))
+            wiki_drafts._draft_file(root, path)  # validates the path
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "path": path,
+            "text": wiki_drafts.current_text(root, path, str(entity or "")),
+            "base": wiki_drafts.base_text(root, path),
+            "drafted": wiki_drafts.read_draft(root, path) is not None,
+        }
+
+    def knowledge_draft_save(self, path: str, text: str) -> dict[str, Any]:
+        """Save an edit to a team page (kept on this console until proposed)."""
+        if kn.secret_reason(str(text or "")):
+            return {"ok": False, "error": "That page looks like it contains a secret."}
+        try:
+            kept = wiki_drafts.save_draft(
+                self._knowledge_store().root, str(path or ""), str(text or "")
+            )
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self._knowledge_changed()
+        return {"ok": True, "kept": kept}
+
+    def knowledge_draft_discard(self, path: str) -> dict[str, Any]:
+        try:
+            gone = wiki_drafts.discard_draft(
+                self._knowledge_store().root, str(path or "")
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        self._knowledge_changed()
+        return {"ok": True, "discarded": gone}
+
+    def _draft_one(
+        self, fact: dict[str, Any], names: list[str]
+    ) -> tuple[str, str] | str:
+        """Add ``fact`` to its page's draft. Returns ``(path, heading)`` or a
+        reason it wasn't added."""
+        if kn.fact_scope(fact, names)[0] != "team":
+            return "it stays on this console"
+        target = wiki_drafts.target_for(fact)
+        if target is None:
+            return "none of its subjects has a page (a runnable, service, term …)"
+        entity, heading = target
+        path = wiki_drafts.page_path_for(entity)
+        root = self._knowledge_store().root
+        text = wiki_drafts.current_text(root, path, entity)
+        new = wiki_drafts.add_bullet(text, heading, str(fact.get("text") or ""))
+        if new != text:
+            wiki_drafts.save_draft(root, path, new)
+        return path, heading
+
+    def knowledge_draft_fact(self, fact_id: str) -> dict[str, Any]:
+        """Turn a fact into an edit of its page: approve it when it's still in
+        the inbox, then add it as a bullet to the right section of the page's
+        draft. Returns ``{ok, path, heading}``."""
+        store = self._knowledge_store()
+        fid = str(fact_id or "")
+        fact = next((f for f in store.all_facts() if f.get("id") == fid), None)
+        if fact is None:
+            return {"ok": False, "error": "That fact no longer exists."}
+        if fact.get("status") == "pending":
+            try:
+                approved = store.review(fid, True)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            if not approved:
+                return {"ok": False, "error": "That fact is no longer in the inbox."}
+            fact = approved
+        res = self._draft_one(fact, self._knowledge_local_names())
+        if isinstance(res, str):
+            self._knowledge_changed()
+            return {"ok": False, "error": f"Not added to a page: {res}."}
+        self._mark_drafted([fid, str(fact.get("id"))])
+        self._knowledge_changed()
+        return {"ok": True, "path": res[0], "heading": res[1]}
+
+    def knowledge_convert_facts(self) -> dict[str, Any]:
+        """One-time move to pages: every approved team fact (yours and the
+        team's, not the built-in ones) not yet on a page becomes an edit of its
+        page. Returns ``{ok, facts, pages, kept_local, no_page}``."""
+        store = self._knowledge_store()
+        names = self._knowledge_local_names()
+        done = set(self._drafted_ids())
+        pages: set[str] = set()
+        moved: list[str] = []
+        kept_local = no_page = 0
+        for fact in store.all_facts():
+            fid = str(fact.get("id") or "")
+            if fact.get("status") != "approved" or fid in done:
+                continue
+            if str(fact.get("source") or "") == "seed":
+                continue
+            res = self._draft_one(fact, names)
+            if isinstance(res, str):
+                if "this console" in res:
+                    kept_local += 1
+                else:
+                    no_page += 1
+                continue
+            pages.add(res[0])
+            moved.append(fid)
+        self._mark_drafted(moved)
+        self._knowledge_changed()
+        return {
+            "ok": True,
+            "facts": len(moved),
+            "pages": len(pages),
+            "kept_local": kept_local,
+            "no_page": no_page,
+        }
 
     def knowledge_review(
         self, fact_id: str, approve: bool, edits: dict[str, Any] | None = None
