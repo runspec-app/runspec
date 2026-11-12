@@ -469,7 +469,7 @@ describe('MarketplaceView', () => {
     await waitFor(() => expect(install).toHaveBeenCalled())
     expect(install.mock.calls[0][0].targets.map((t: { id: string }) => t.id).sort()).toEqual(
       ['h2::/opt/b', 'h3::/opt/a', 'h3::/opt/b', 'h4::/opt/b', 'h5::/opt/b', 'h6::/opt/b'])
-  })
+  }, 15_000)  // renders a 14-venv picker and clicks through it: ~3.5s locally, over 5s on a slow CI runner
 
   it('shows the off notice when the marketplace is disabled', async () => {
     catalog.mockResolvedValue({ enabled: false, entries: [], repos: [], errors: [] })
