@@ -24,8 +24,22 @@ export function waitingCueActive(triggerAwaiting: number, pendingConfirms: numbe
 }
 
 export function useWaitingCue(triggerAwaiting: number): boolean {
-  // Live Approve/Deny cards, by tool-call id — the same lifecycle the session
-  // chips follow (tool_confirm opens, confirm_resolved / run_end closes).
+  const pending = usePendingConfirms()
+  const active = waitingCueActive(triggerAwaiting, pending.size)
+  useEffect(() => {
+    const send = (on: boolean) => { Promise.resolve(bridge.set_waiting_cue?.(on)).catch(() => {}) }
+    if (!active) { send(false); return }
+    send(true)
+    const t = window.setInterval(() => send(true), WAITING_REASSERT_MS)
+    return () => { window.clearInterval(t); send(false) }
+  }, [active])
+  return active
+}
+
+/** Live Approve/Deny cards, by tool-call id — the same lifecycle the session
+ * chips follow (tool_confirm opens, confirm_resolved / run_end closes). Also
+ * drives the status bar's "waiting for you" count. */
+export function usePendingConfirms(): ReadonlySet<string> {
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set())
   useEffect(() => {
     const add = (e: Event) => {
@@ -45,14 +59,5 @@ export function useWaitingCue(triggerAwaiting: number): boolean {
       window.removeEventListener('runspec:run_end', drop)
     }
   }, [])
-
-  const active = waitingCueActive(triggerAwaiting, pending.size)
-  useEffect(() => {
-    const send = (on: boolean) => { Promise.resolve(bridge.set_waiting_cue?.(on)).catch(() => {}) }
-    if (!active) { send(false); return }
-    send(true)
-    const t = window.setInterval(() => send(true), WAITING_REASSERT_MS)
-    return () => { window.clearInterval(t); send(false) }
-  }, [active])
-  return active
+  return pending
 }

@@ -9,6 +9,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.403.0] — 2026-11-12
+
+### Changed
+
+- **Tabs.** Files is now a tab in the first group (Console, Forms, History,
+  Logs, Files), and Rota moves into the **More** menu with Specs, Improve,
+  Evals and Dev. The Files toolbar icon is gone, since the tab replaces it.
+- **Sidebar.** The profile picker is always at the top of the hosts panel
+  (it used to appear only once profiles existed) and ends with **Manage
+  profiles…**, which opens Settings → Jump Hosts. The footer is one row of
+  icons: Denylist and Env files on the left; documentation, keyboard
+  shortcuts, the theme switch and Settings on the right. Those four app
+  controls moved down from the top-right corner.
+- **Status bar.** A bar along the bottom of the window shows how many hosts are
+  connected, how many approvals are waiting for you (click to go to them;
+  hidden with AI off), the active room, the context-window gauge, the tool
+  count (click to refresh), the config update badge and the app version. These
+  used to be stacked in the hosts panel footer.
+- **Search commands.** The top-right corner now holds one **Search commands**
+  button that opens the Ctrl+K command palette, which had no on-screen way in.
+- **Prompt box.** The text sits on top and a toolbar runs underneath. The
+  selected host's venv pills, which used to sit in a row above the prompt, are
+  now one scope menu in that toolbar ("web-04 · all venvs"). The thunderbolt is
+  a labelled **Follow runs** toggle, dictation sits beside it, and Send is a
+  filled button that turns into Stop while the assistant runs. It shows an
+  accent ring while you type.
+
+### Fixed
+
+- **Send button colour.** The prompt box's send arrow was hard-coded to Ant's
+  old blue (`#1677ff`); it now uses the brand (or white-label) primary colour.
+
 ## [0.402.0] — 2026-11-12
 
 ### Changed

@@ -13,13 +13,13 @@ describe('layoutNavTabs()', () => {
       'specs', 'forms', 'marketplace', 'schedules', 'triggers', 'rota', 'dev')
     const { groups, overflow, ordered } = layoutNavTabs(all)
     expect(groups.map(keys)).toEqual([
-      ['console', 'forms', 'history', 'logs'],
-      ['schedules', 'triggers', 'rota'],
+      ['console', 'forms', 'history', 'logs', 'files'],
+      ['schedules', 'triggers'],
       ['knowledge', 'marketplace'],
     ])
-    expect(keys(overflow)).toEqual(['files', 'specs', 'improve', 'evals', 'dev'])
+    expect(keys(overflow)).toEqual(['rota', 'specs', 'improve', 'evals', 'dev'])
     expect(ordered).toHaveLength(all.length)
-    expect(keys(ordered).slice(0, 4)).toEqual(['console', 'forms', 'history', 'logs'])
+    expect(keys(ordered).slice(0, 5)).toEqual(['console', 'forms', 'history', 'logs', 'files'])
   })
 
   it('drops groups emptied by the AI switch and keeps unknown tabs reachable', () => {

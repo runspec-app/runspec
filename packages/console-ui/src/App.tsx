@@ -13,7 +13,6 @@ import {
   SunOutlined,
   MoonOutlined,
   SettingOutlined,
-  SwapOutlined,
   FolderOpenOutlined,
   CodeOutlined,
   BellOutlined,
@@ -41,7 +40,7 @@ import {
   SearchOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
-import { useWaitingCue } from './useWaitingCue'
+import { useWaitingCue, usePendingConfirms } from './useWaitingCue'
 import { matchRunnableForEdit, resolveCommandPath, toCommandPath } from './views/formsMatch'
 import { openTerminals as openGroupTerminals, openSendBar } from './views/terminals'
 import { OtherHostsSection, profileEditNote, type SyncSource } from './components/OtherHostsSection'
@@ -90,7 +89,7 @@ import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type OtherHost, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
-import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint, textColor, textWarning } from './ThemeContext'
 import GateMark from './components/GateMark'
 import {
   anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
@@ -140,6 +139,9 @@ function fmtTokens(n: number): string {
   if (n < 1000) return `${n}`
   return `${(n / 1000).toFixed(1)}k`
 }
+
+// Sentinel option in the profile picker that opens Settings → Jump Hosts.
+const MANAGE_PROFILES = '__manage_profiles__'
 
 const SIDEBAR_WIDTH = 180
 const SIDEBAR_MIN = 150
@@ -329,6 +331,8 @@ export default function App() {
   // Loop the gentle "waiting" ping while an attention badge needs the operator
   // (Triggers approvals / queue callers, or any live Approve/Deny card).
   useWaitingCue(triggerAwaiting)
+  // Live Approve/Deny cards, for the status bar's "waiting for you" count.
+  const pendingConfirms = usePendingConfirms()
 
   const selectedHostObj = hosts.find(h => h.name === selectedHost)
   const selectedHostGroups = selectedHostObj?.groups ?? []
@@ -1212,26 +1216,27 @@ export default function App() {
             </div>
             {/* Host-profile switcher — only when profiles are defined. Picking one
                 scopes the sidebar + standing connections to that working-set. */}
-            {profiles.length > 0 && (
-              <div style={{ padding: '8px 10px', borderBottom: `1px solid ${borderCol}`, flexShrink: 0 }}>
-                <Select
-                  size="small"
-                  value={activeProfile}
-                  onChange={handleSwitchProfile}
-                  style={{ width: '100%' }}
-                  popupMatchSelectWidth={false}
-                  options={[
-                    { value: '', label: 'All hosts' },
-                    ...profiles.map(p => ({ value: p.name, label: p.name })),
-                  ]}
-                  title="Active host profile"
-                />
-              </div>
-            )}
+            <div style={{ padding: '10px 10px 0', flexShrink: 0 }}>
+              <Select
+                size="small"
+                value={activeProfile}
+                onChange={v => { if (v === MANAGE_PROFILES) openSettings('jumpHosts'); else handleSwitchProfile(v) }}
+                style={{ width: '100%' }}
+                popupMatchSelectWidth={false}
+                prefix={<span style={{ color: textMuted(isDark), fontSize: 12 }}>Profile</span>}
+                options={[
+                  { value: '', label: 'All hosts' },
+                  ...profiles.map(p => ({ value: p.name, label: p.name })),
+                  { value: MANAGE_PROFILES, label: <span style={{ color: textMuted(isDark) }}>Manage profiles…</span> },
+                ]}
+                aria-label="Active host profile"
+                title="Active host profile"
+              />
+            </div>
             {/* Host filter — on a fleet big enough to scroll. Matches the host
                 name or its group; a match opens a collapsed group. */}
             {hosts.length > 6 && (
-              <div style={{ padding: '8px 10px 4px', flexShrink: 0 }}>
+              <div style={{ padding: '8px 10px 2px', flexShrink: 0 }}>
                 <Input
                   size="small"
                   allowClear
@@ -1446,17 +1451,15 @@ export default function App() {
                 )
               })()}
             </div>
-            {/* Catalogue size + version/update footer */}
+            {/* Sidebar footer: fleet tools (Denylist, Env files) on the left,
+                app controls (docs, shortcuts, theme, Settings) on the right.
+                Status (tools, rooms, versions) lives in the status bar. */}
             <div style={{
               flexShrink: 0,
               borderTop: `1px solid ${borderCol}`,
-              padding: '6px 14px',
-              display: 'flex', flexDirection: 'column', gap: 3,
-              fontSize: 12, color: iconCol,
+              padding: '6px 8px',
+              display: 'flex', alignItems: 'center', gap: 2,
             }}>
-              {/* Denylist + Env files share one row: both act on the hosts
-                  connected right now, so they sit together and gate together. */}
-              <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
               {/* Denylist: the fleet kill switch for the hosts connected right
                   now. Greyed out while a sweep is in flight (first discovery or a
                   Refresh) so the modal's scope matches the sidebar's green dots. */}
@@ -1472,15 +1475,13 @@ export default function App() {
                 return (
                   <Tooltip title={tip} placement="topLeft">
                     <Button
-                      size="small"
+                      type="text"
                       icon={sweeping ? <LoadingOutlined /> : <StopOutlined />}
                       disabled={disabled}
                       onClick={() => setDenylistOpen(true)}
                       aria-label="Denylist"
-                      style={{ flex: 1, minWidth: 0, fontSize: 12 }}
-                    >
-                      Denylist
-                    </Button>
+                      style={{ color: iconCol }}
+                    />
                   </Tooltip>
                 )
               })()}
@@ -1491,19 +1492,291 @@ export default function App() {
                 return (
                   <Tooltip title={sweeping ? 'Waiting for the fleet to finish connecting…' : 'Edit the .runspec_env file of local and connected venvs'} placement="topLeft">
                     <Button
-                      size="small"
+                      type="text"
                       icon={sweeping ? <LoadingOutlined /> : <CodeOutlined />}
                       disabled={sweeping}
                       onClick={() => setEnvFilesOpen(true)}
                       aria-label="Env files"
-                      style={{ flex: 1, minWidth: 0, fontSize: 12 }}
-                    >
-                      Env files
-                    </Button>
+                      style={{ color: iconCol }}
+                    />
                   </Tooltip>
                 )
               })()}
+              <div style={{ flex: 1 }} />
+              <Tooltip title={docsUrl ? `Documentation — ${docsUrl}` : 'Documentation'}>
+                <Button type="text" icon={<ReadOutlined />} onClick={() => bridge.open_docs().catch(console.error)} style={{ color: iconCol }} aria-label="Documentation" />
+              </Tooltip>
+              <Tooltip title={`Keyboard shortcuts (${shortcutHint('help')})`}>
+                <Button type="text" icon={<QuestionCircleOutlined />} onClick={() => setShortcutsOpen(true)} style={{ color: iconCol }} aria-label="Keyboard shortcuts" />
+              </Tooltip>
+              <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
+                <Button type="text" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} aria-label={isDark ? 'Light theme' : 'Dark theme'} />
+              </Tooltip>
+              <Tooltip title={
+                mcpInvalidTools.length > 0
+                  ? `${mcpInvalidTools.length} runnable(s) not published to the MCP server — invalid tool schema. Open Settings → MCP Server.`
+                  : sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : `Settings (${shortcutHint('settings')})`
+              }>
+                <Badge
+                  dot={mcpInvalidTools.length > 0 || (sshKeyAgeDays !== null && sshKeyAgeDays >= 75)}
+                  color={mcpInvalidTools.length > 0 ? 'red' : 'orange'}
+                  offset={[-4, 4]}
+                >
+                  <Button type="text" icon={<SettingOutlined />} onClick={() => openSettings(mcpInvalidTools.length > 0 ? 'mcpServer' : undefined)} style={{ color: iconCol }} aria-label="Settings" />
+                </Badge>
+              </Tooltip>
+            </div>
+          </div>
+
+          {/* Content column */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+            {/* Tab bar */}
+            <div style={{
+              height: 44, flexShrink: 0,
+              background: headerBg, borderBottom: `1px solid ${borderCol}`,
+              display: 'flex', alignItems: 'stretch',
+            }}>
+              {navLayout.groups.map((group, gi) => (
+                <React.Fragment key={gi}>
+                  {gi > 0 && <div aria-hidden style={{ width: 1, margin: '12px 6px', background: borderCol, flexShrink: 0 }} />}
+                  {group.map(tab => {
+                    const n = navLayout.ordered.indexOf(tab)
+                    return (
+                      <button
+                        key={tab.key}
+                        className="rs-nav-tab"
+                        title={n < 9 ? `${tab.label} (Ctrl+${n + 1})` : undefined}
+                        onClick={() => setView(tab.key)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
+                          fontWeight: view === tab.key ? 600 : 500,
+                          color: view === tab.key ? titleCol : iconCol,
+                          borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
+                        }}
+                      >
+                        {tab.icon}
+                        {tab.label}
+                      </button>
+                    )
+                  })}
+                </React.Fragment>
+              ))}
+              {navLayout.overflow.length > 0 && (() => {
+                // More: the occasional tabs. While one of them is open the
+                // button takes its name and the active underline.
+                const active = navLayout.overflow.find(t => t.key === view)
+                return (
+                  <Dropdown
+                    trigger={['click']}
+                    menu={{
+                      selectedKeys: active ? [active.key] : [],
+                      items: navLayout.overflow.map(t => {
+                        const n = navLayout.ordered.indexOf(t)
+                        return {
+                          key: t.key,
+                          icon: t.icon,
+                          label: n < 9 ? <span>{t.label} <span style={{ color: textMuted(isDark), marginLeft: 8 }}>Ctrl+{n + 1}</span></span> : t.label,
+                          onClick: () => setView(t.key),
+                        }
+                      }),
+                    }}
+                  >
+                    <button
+                      className="rs-nav-tab"
+                      aria-label={active ? `${active.label} (more tabs)` : 'More tabs'}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
+                        fontWeight: active ? 600 : 500,
+                        color: active ? titleCol : iconCol,
+                        borderBottom: active ? `2px solid ${titleCol}` : '2px solid transparent',
+                      }}
+                    >
+                      {active ? <>{active.icon}{active.label}</> : 'More'}
+                      <DownOutlined style={{ fontSize: 10 }} />
+                    </button>
+                  </Dropdown>
+                )
+              })()}
+
+              <div style={{ flex: 1 }} />
+
+              <div style={{ display: 'flex', alignItems: 'center', paddingRight: 10, paddingLeft: 8, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  className="rs-palette-btn"
+                  onClick={() => setPaletteOpen(true)}
+                  aria-label="Search commands"
+                >
+                  <SearchOutlined />
+                  <span>Search commands</span>
+                  <span className="rs-kbd">{shortcutHint('palette')}</span>
+                </button>
               </div>
+            </div>
+
+            {/* View area */}
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
+                <div className="rs-view" style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                  <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
+                </div>
+                {/* Triggers stays mounted (display toggle) so a pending approval's
+                    Approve/Deny buttons survive tab switches — unmounting it drops
+                    the live tool_confirm and the buttons can't return until timeout.
+                    Lazy-loaded, so it mounts on first visit and stays mounted after. */}
+                {viewsVisited.current.has('triggers') && (
+                  <div className="rs-view" style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <TriggersView />
+                    </Suspense>
+                  </div>
+                )}
+                {/* History stays mounted (display toggle) so its fetched records
+                    survive tab switches — returning shows the last data instantly
+                    instead of unmounting and reloading from empty over SSH. Its
+                    poll is gated on `active` so it only runs while visible.
+                    Lazy-loaded (antd Table), so it mounts on first visit. */}
+                {viewsVisited.current.has('history') && (
+                  <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'history'} />
+                    </Suspense>
+                  </div>
+                )}
+                {/* Logs stays mounted (display toggle) so its logs_status SSH
+                    inventory survives tab switches; its fetch is gated on `active`
+                    so it only runs while visible and on host change.
+                    Lazy-loaded (antd Table), so it mounts on first visit. */}
+                {viewsVisited.current.has('logs') && (
+                  <div className="rs-view" style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} />
+                    </Suspense>
+                  </div>
+                )}
+                {/* Specs is a full-height master/detail inspector — its own flex
+                    block (not the shared overflow:auto one) so each pane scrolls
+                    independently. Lazy-loaded, so it mounts on first visit and
+                    stays mounted after (display toggle). */}
+                {viewsVisited.current.has('specs') && (
+                  <div className="rs-view" style={{ display: view === 'specs' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} onOpenForm={handleOpenForm} />
+                    </Suspense>
+                  </div>
+                )}
+                {/* Files stays mounted (display toggle) so its panes and the
+                    copies running in its Transfers strip survive tab switches.
+                    Lazy-loaded, so it mounts on first visit. */}
+                {viewsVisited.current.has('files') && (
+                  <div className="rs-view" style={{ display: view === 'files' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      <FilesView hosts={hosts} selectedHost={selectedHost} active={view === 'files'} />
+                    </Suspense>
+                  </div>
+                )}
+                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'logs' && view !== 'specs' && view !== 'files' && (
+                  <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
+                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
+                      {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} activeProfile={activeProfile} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
+                      {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} activeProfile={activeProfile} onOpenHistory={q => { setHistorySearch(q); setView('history') }} />}
+                      {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
+                      {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} onOpenSettings={openSettings} />}
+                      {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
+                      {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
+                      {view === 'rota'      && <RotaView />}
+                      {view === 'dev'       && <DevView />}
+                    </Suspense>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Command bar — the composer floats on the content background; the
+                selected host's venv scope is a menu in its toolbar. */}
+            <div style={{
+              padding: '4px 24px 14px',
+              background: contentBg, flexShrink: 0,
+            }}>
+              {!discovery.ready && discovery.total > 0 && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  margin: '0 0 6px', fontSize: 12, color: textMuted(isDark),
+                }}>
+                  <LoadingOutlined spin style={{ fontSize: 12 }} />
+                  <span>Discovering fleet… {discovery.done}/{discovery.total} hosts. {aiEnabled ? 'The assistant sees more runnables as they load.' : 'More runnables appear as they load.'}</span>
+                </div>
+              )}
+              <CommandInput
+                runnables={scopedRunnables}
+                allRunnables={runnables}
+                selectedHost={selectedHost}
+                runbooks={runbooks}
+                savedRuns={savedRuns}
+                onRunRunnable={handleRunRunnable}
+                onOpenForm={handleOpenForm}
+                onOpenRunbook={handleOpenRunbook}
+                onOpenSavedRun={handleOpenSavedRun}
+                onSendChat={handleSendChat}
+                activeChatId={activeChatId}
+                readOnlySession={readOnlySession}
+                onStopChat={(id) => { bridge.cancel_chat(id).catch(console.error) }}
+                history={inputHistory}
+                autoSwitch={autoSwitch}
+                onToggleAutoSwitch={toggleAutoSwitch}
+                scope={selectedHostGroups.length > 0 ? {
+                  host: selectedHost,
+                  venvs: selectedHostGroups,
+                  active: activeScope,
+                  onToggle: handleScopeToggle,
+                  onClear: () => setActiveScope([]),
+                } : undefined}
+              />
+            </div>
+
+          </div>
+        </div>
+        {/* Status bar: fleet + app state along the bottom of the window. */}
+        <div
+          data-testid="status-bar"
+          style={{
+            height: 26, flexShrink: 0,
+            borderTop: `1px solid ${borderCol}`, background: headerBg,
+            display: 'flex', alignItems: 'center', gap: 14, padding: '0 12px',
+            fontSize: 12, color: iconCol, whiteSpace: 'nowrap', overflow: 'hidden',
+          }}
+        >
+              {(() => {
+                const remote = hosts.filter(h => h.name !== 'local')
+                const up = remote.filter(h => h.connected).length
+                return remote.length > 0 && (
+                  <Tooltip title={`${up} of ${remote.length} hosts in the ${activeProfile ? `“${activeProfile}” profile` : 'fleet'} are connected`} placement="topLeft">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: up === remote.length ? '#52c41a' : (up === 0 ? textFaint(isDark) : '#faad14') }} />
+                      <span style={{ fontVariantNumeric: 'tabular-nums', color: textColor(isDark) }}>{up}/{remote.length}</span> hosts connected
+                    </span>
+                  </Tooltip>
+                )
+              })()}
+              {aiEnabled && (triggerAwaiting + pendingConfirms.size) > 0 && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  data-testid="status-approvals"
+                  onClick={() => {
+                    if (pendingConfirms.size > 0) { setView('console'); requestAnimationFrame(() => requestAnimationFrame(() => { revealPendingConfirm() })) }
+                    else setView('triggers')
+                  }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click() } }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: textWarning(isDark) }}
+                >
+                  <BellOutlined style={{ fontSize: 12 }} />
+                  {triggerAwaiting + pendingConfirms.size} waiting for you
+                </span>
+              )}
               {/* Rooms: live connection state for every configured chat/helpdesk
                   room, so a room server going down is visible at a glance instead
                   of buried in the Dev tab. Hidden entirely when none are set. */}
@@ -1572,6 +1845,7 @@ export default function App() {
                   </Popover>
                 )
               })()}
+              <div style={{ flex: 1 }} />
               {/* Catalogue: distinct tool count (deduped by name), growing live while discovery streams hosts in */}
               <Popover
                 placement="topLeft"
@@ -1786,258 +2060,6 @@ export default function App() {
                   </Tooltip>
                 )}
               </div>
-            </div>
-          </div>
-
-          {/* Content column */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
-            {/* Tab bar */}
-            <div style={{
-              height: 44, flexShrink: 0,
-              background: headerBg, borderBottom: `1px solid ${borderCol}`,
-              display: 'flex', alignItems: 'stretch',
-            }}>
-              {navLayout.groups.map((group, gi) => (
-                <React.Fragment key={gi}>
-                  {gi > 0 && <div aria-hidden style={{ width: 1, margin: '12px 6px', background: borderCol, flexShrink: 0 }} />}
-                  {group.map(tab => {
-                    const n = navLayout.ordered.indexOf(tab)
-                    return (
-                      <button
-                        key={tab.key}
-                        className="rs-nav-tab"
-                        title={n < 9 ? `${tab.label} (Ctrl+${n + 1})` : undefined}
-                        onClick={() => setView(tab.key)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
-                          fontWeight: view === tab.key ? 600 : 500,
-                          color: view === tab.key ? titleCol : iconCol,
-                          borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
-                        }}
-                      >
-                        {tab.icon}
-                        {tab.label}
-                      </button>
-                    )
-                  })}
-                </React.Fragment>
-              ))}
-              {navLayout.overflow.length > 0 && (() => {
-                // More: the occasional tabs. While one of them is open the
-                // button takes its name and the active underline.
-                const active = navLayout.overflow.find(t => t.key === view)
-                return (
-                  <Dropdown
-                    trigger={['click']}
-                    menu={{
-                      selectedKeys: active ? [active.key] : [],
-                      items: navLayout.overflow.map(t => {
-                        const n = navLayout.ordered.indexOf(t)
-                        return {
-                          key: t.key,
-                          icon: t.icon,
-                          label: n < 9 ? <span>{t.label} <span style={{ color: textMuted(isDark), marginLeft: 8 }}>Ctrl+{n + 1}</span></span> : t.label,
-                          onClick: () => setView(t.key),
-                        }
-                      }),
-                    }}
-                  >
-                    <button
-                      className="rs-nav-tab"
-                      aria-label={active ? `${active.label} (more tabs)` : 'More tabs'}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
-                        fontWeight: active ? 600 : 500,
-                        color: active ? titleCol : iconCol,
-                        borderBottom: active ? `2px solid ${titleCol}` : '2px solid transparent',
-                      }}
-                    >
-                      {active ? <>{active.icon}{active.label}</> : 'More'}
-                      <DownOutlined style={{ fontSize: 10 }} />
-                    </button>
-                  </Dropdown>
-                )
-              })()}
-
-              <div style={{ flex: 1 }} />
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingRight: 8, flexShrink: 0 }}>
-                <Tooltip title={docsUrl ? `Documentation — ${docsUrl}` : 'Documentation'}>
-                  <Button type="text" size="small" icon={<ReadOutlined />} onClick={() => bridge.open_docs().catch(console.error)} style={{ color: iconCol }} />
-                </Tooltip>
-                <Tooltip title={`Keyboard shortcuts (${shortcutHint('help')}) · command palette (${shortcutHint('palette')})`}>
-                  <Button type="text" size="small" icon={<QuestionCircleOutlined />} onClick={() => setShortcutsOpen(true)} style={{ color: iconCol }} aria-label="Keyboard shortcuts" />
-                </Tooltip>
-                <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
-                  <Button type="text" size="small" icon={isDark ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ color: iconCol }} />
-                </Tooltip>
-                <Tooltip title="Files: browse hosts and copy files (download, upload, fan-out, relay)">
-                  <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setView('files')} style={{ color: iconCol }} aria-label="Open the Files tab" />
-                </Tooltip>
-                <Tooltip title={
-                  mcpInvalidTools.length > 0
-                    ? `${mcpInvalidTools.length} runnable(s) not published to the MCP server — invalid tool schema. Open Settings → MCP Server.`
-                    : sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : `Settings (${shortcutHint('settings')})`
-                }>
-                  <Badge
-                    dot={mcpInvalidTools.length > 0 || (sshKeyAgeDays !== null && sshKeyAgeDays >= 75)}
-                    color={mcpInvalidTools.length > 0 ? 'red' : 'orange'}
-                    offset={[-4, 4]}
-                  >
-                    <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => openSettings(mcpInvalidTools.length > 0 ? 'mcpServer' : undefined)} style={{ color: iconCol }} />
-                  </Badge>
-                </Tooltip>
-              </div>
-            </div>
-
-            {/* View area */}
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
-                <div className="rs-view" style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                  <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
-                </div>
-                {/* Triggers stays mounted (display toggle) so a pending approval's
-                    Approve/Deny buttons survive tab switches — unmounting it drops
-                    the live tool_confirm and the buttons can't return until timeout.
-                    Lazy-loaded, so it mounts on first visit and stays mounted after. */}
-                {viewsVisited.current.has('triggers') && (
-                  <div className="rs-view" style={{ display: view === 'triggers' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <TriggersView />
-                    </Suspense>
-                  </div>
-                )}
-                {/* History stays mounted (display toggle) so its fetched records
-                    survive tab switches — returning shows the last data instantly
-                    instead of unmounting and reloading from empty over SSH. Its
-                    poll is gated on `active` so it only runs while visible.
-                    Lazy-loaded (antd Table), so it mounts on first visit. */}
-                {viewsVisited.current.has('history') && (
-                  <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'history'} />
-                    </Suspense>
-                  </div>
-                )}
-                {/* Logs stays mounted (display toggle) so its logs_status SSH
-                    inventory survives tab switches; its fetch is gated on `active`
-                    so it only runs while visible and on host change.
-                    Lazy-loaded (antd Table), so it mounts on first visit. */}
-                {viewsVisited.current.has('logs') && (
-                  <div className="rs-view" style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
-                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} />
-                    </Suspense>
-                  </div>
-                )}
-                {/* Specs is a full-height master/detail inspector — its own flex
-                    block (not the shared overflow:auto one) so each pane scrolls
-                    independently. Lazy-loaded, so it mounts on first visit and
-                    stays mounted after (display toggle). */}
-                {viewsVisited.current.has('specs') && (
-                  <div className="rs-view" style={{ display: view === 'specs' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <SpecsView runnables={runnables} selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} onOpenForm={handleOpenForm} />
-                    </Suspense>
-                  </div>
-                )}
-                {/* Files stays mounted (display toggle) so its panes and the
-                    copies running in its Transfers strip survive tab switches.
-                    Lazy-loaded, so it mounts on first visit. */}
-                {viewsVisited.current.has('files') && (
-                  <div className="rs-view" style={{ display: view === 'files' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <FilesView hosts={hosts} selectedHost={selectedHost} active={view === 'files'} />
-                    </Suspense>
-                  </div>
-                )}
-                {view !== 'console' && view !== 'triggers' && view !== 'history' && view !== 'logs' && view !== 'specs' && view !== 'files' && (
-                  <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
-                    <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} activeProfile={activeProfile} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
-                      {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} activeProfile={activeProfile} onOpenHistory={q => { setHistorySearch(q); setView('history') }} />}
-                      {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
-                      {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} onOpenSettings={openSettings} />}
-                      {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
-                      {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
-                      {view === 'rota'      && <RotaView />}
-                      {view === 'dev'       && <DevView />}
-                    </Suspense>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {selectedHostGroups.length > 0 && (
-              <div style={{
-                borderTop: `1px solid ${borderCol}`,
-                padding: '5px 16px',
-                display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-                background: headerBg, flexShrink: 0,
-              }}>
-                {selectedHostGroups.map(g => (
-                  <Tag
-                    key={g}
-                    onClick={() => handleScopeToggle(g)}
-                    closable={activeScope.includes(g)}
-                    onClose={e => { e.preventDefault(); handleScopeToggle(g) }}
-                    color={activeScope.includes(g) ? 'blue' : undefined}
-                    style={{ cursor: 'pointer', fontSize: 13, margin: 0, userSelect: 'none' }}
-                  >
-                    {g}
-                  </Tag>
-                ))}
-                {activeScope.length > 0 && (
-                  <Button
-                    size="small" type="text"
-                    onClick={() => setActiveScope([])}
-                    style={{ fontSize: 12, color: textMuted(isDark), padding: '0 4px', height: 'auto' }}
-                  >
-                    clear
-                  </Button>
-                )}
-              </div>
-            )}
-
-            {/* Command bar */}
-            <div style={{
-              borderTop: `1px solid ${borderCol}`,
-              padding: '8px 12px 8px 16px',
-              background: contentBg, flexShrink: 0,
-            }}>
-              {!discovery.ready && discovery.total > 0 && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  margin: '0 0 6px', fontSize: 12, color: textMuted(isDark),
-                }}>
-                  <LoadingOutlined spin style={{ fontSize: 12 }} />
-                  <span>Discovering fleet… {discovery.done}/{discovery.total} hosts. {aiEnabled ? 'The assistant sees more runnables as they load.' : 'More runnables appear as they load.'}</span>
-                </div>
-              )}
-              <CommandInput
-                runnables={scopedRunnables}
-                allRunnables={runnables}
-                selectedHost={selectedHost}
-                runbooks={runbooks}
-                savedRuns={savedRuns}
-                onRunRunnable={handleRunRunnable}
-                onOpenForm={handleOpenForm}
-                onOpenRunbook={handleOpenRunbook}
-                onOpenSavedRun={handleOpenSavedRun}
-                onSendChat={handleSendChat}
-                activeChatId={activeChatId}
-                readOnlySession={readOnlySession}
-                onStopChat={(id) => { bridge.cancel_chat(id).catch(console.error) }}
-                history={inputHistory}
-                autoSwitch={autoSwitch}
-                onToggleAutoSwitch={toggleAutoSwitch}
-              />
-            </div>
-
-          </div>
         </div>
         </div>
 

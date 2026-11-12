@@ -52,7 +52,7 @@ test, copy key, edit, delete); the search box (name / hostname / user / group)
 and the profile filter flatten the list across groups. The sidebar's title
 row has a **collapse / expand all** toggle for the host groups (remembered
 across restarts, and a group that appears later follows your last choice).
-The **tool count** at the bottom of the hosts panel (*N tools · M venvs*) is
+The **tool count** in the status bar along the bottom of the window (*N tools · M venvs*) is
 also the refresh control: click it to probe every host in the profile and
 re-discover its runnables now — which is exactly what that number reflects
 (hover shows the per-host breakdown). The sidebar's connection dots update
@@ -273,7 +273,7 @@ Every runspec venv can hold a `.runspec_env` file in its root: plain
 that venv (a variable already set in the environment wins). It's the usual
 place for an instance URL, a region, or a token a runnable reads from
 `RUNSPEC_<RUNNABLE>_ARG_<ARG>` or one of its declared `env` names. The
-**Env files** button at the bottom of the hosts panel manages these files for
+**Env files** button (the terminal icon) at the bottom of the hosts panel manages these files for
 the local venvs and every venv on the hosts that are connected right now (in
 the active profile).
 
@@ -870,8 +870,8 @@ host over its warm pooled transport (cheap). `discovery_interval` is the
 per venv) re-runs on a host only when it first connects, reconnects after a
 drop, its `runspec_paths` / identity change, or this many seconds have passed
 since its last discovery — plus on any explicit trigger (a host save, profile
-switch, host import, copy-key, or clicking the tool count at the bottom of the
-hosts panel). `0` re-runs
+switch, host import, copy-key, or clicking the tool count in the status
+bar). `0` re-runs
 discovery every cycle. `workers` also bounds the other fleet-wide sweeps
 (the hosts-panel Denylist modal / `runspec deny`).
 
@@ -929,7 +929,7 @@ Each venv on each host has a [denylist](denylist.md) — a kill switch that
 makes `runspec` refuse matched runnables at parse time, no matter how they're
 invoked. The console drives it fleet-wide two ways:
 
-- the **Denylist** button at the bottom of the hosts panel — a modal scoped to
+- the **Denylist** button (the no-entry icon) at the bottom of the hosts panel — a modal scoped to
   the hosts *connected right now* in the active profile (greyed out until the
   fleet sweep has settled, so its scope is the green dots you can see): pick a
   subset or act on all of them, disable/re-enable all, add rules, set

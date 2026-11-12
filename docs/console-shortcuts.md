@@ -2,7 +2,8 @@
 
 The console has app-wide keyboard shortcuts and a **command palette**. Press
 **Ctrl+/** (or **?** when you aren't typing in a field) to see them all, or click
-the **?** button in the top-right corner.
+the **?** button at the bottom of the hosts panel. The **Search commands**
+button at the top right opens the command palette.
 
 On macOS, **Cmd** works wherever **Ctrl** is listed.
 
