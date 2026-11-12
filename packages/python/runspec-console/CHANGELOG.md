@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.404.0] — 2026-11-12
+
+### Changed
+
+- **Console responses read as a conversation.** A chat turn is no longer a
+  bordered box with a header bar holding more boxes. Your prompt is a rounded
+  bubble, the reply is plain text on the page, and the transcript sits in a
+  centred column the same width as the prompt box. Each tool call is one slim
+  rounded row (a green tick when it finished) that opens on click. A
+  confirmation is a rounded, softly amber-tinted panel with round Approve and
+  Deny buttons. The header's tags (tool count, ok/error, tokens, cache, cost,
+  trigger) are soft fills instead of outlined boxes. A run you start yourself
+  keeps one rounded card with a soft shadow. A streaming reply shows in the
+  reading font instead of monospace.
+
 ## [0.403.0] — 2026-11-12
 
 ### Changed

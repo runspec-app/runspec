@@ -151,6 +151,15 @@ body {
 .rs-palette-btn:hover { color: var(--rs-text-secondary); border-color: var(--rs-border-strong); }
 .rs-palette-btn:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 1px; }
 
+/* Read by screen readers, not drawn (e.g. "You" before a prompt bubble). */
+.rs-visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+/* A tool call's row in a chat turn: a soft hover when it opens on click. */
+.rs-tool-row { transition: background var(--rs-motion); }
+.rs-tool-row:hover { background: var(--rs-hover) !important; }
+
 /* Composer (CommandInput): an accent ring while you type in it. */
 .rs-composer { transition: border-color var(--rs-motion), box-shadow var(--rs-motion); }
 .rs-composer:focus-within {
