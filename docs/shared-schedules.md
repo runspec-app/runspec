@@ -22,6 +22,25 @@ to check when something looks wrong. For the console screens, see
 Use a console schedule for your own reminders and checks. Use a shared schedule
 for jobs the team relies on: nightly cleanups, reports and health checks.
 
+### Not in root-owned venvs
+
+A venv that belongs to root (for example one holding `runspec-linux-root`) gets
+no shared schedules. Every fire there would run as root, and the console never
+becomes root to manage a daemon. Schedule those runnables from your console
+instead: the console runs them with `sudo`, the way it runs them from Forms.
+The Schedules tab lists root-owned venvs it left out, and Provision and Update
+venv don't offer shared schedules for them.
+
+If you already put `runspec-scheduler` in a root-owned venv, take it out on the
+host, as root:
+
+```bash
+V=/opt/venvs/<root-venv>
+sudo $V/bin/runspec-scheduler install-service --remove --write   # stop the daemon and its keeper
+sudo $V/bin/runspec-scheduler use daemon                         # take its lines off root's crontab
+sudo $V/bin/pip uninstall -y runspec-scheduler
+```
+
 ## How a fire runs
 
 Every fire, from either backend and from **Run now**, runs the same command:

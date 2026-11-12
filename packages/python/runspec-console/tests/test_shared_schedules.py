@@ -67,6 +67,29 @@ class TestSharedSchedules(unittest.TestCase):
         self.assertEqual(by["ops"]["status"]["schedules"][0]["id"], "nightly")
         self.assertEqual(by["web"], {"group": "web", "available": False, "ok": True})
 
+    def test_root_owned_venv_is_left_out(self) -> None:
+        b = _make_bridge(
+            {**REMOTE, "runspec_paths": ["/opt/venvs/root-tools/bin/runspec"]}
+        )
+        b.venv_owner = lambda host, group: {"ok": True, "owner": "root", "self": "u"}
+        with (
+            patch.object(b, "_run_logs") as run,
+            patch.object(b, "_run_scheduler_as") as run_as,
+        ):
+            [r] = b.shared_schedules("prod-1")
+        run.assert_not_called()
+        run_as.assert_not_called()
+        self.assertEqual(
+            r,
+            {
+                "group": "root-tools",
+                "available": False,
+                "ok": True,
+                "owner": "root",
+                "root_owned": True,
+            },
+        )
+
     def test_old_scheduler_hints_upgrade(self) -> None:
         b = _make_bridge({**REMOTE, "runspec_paths": ["/opt/venvs/ops/bin/runspec"]})
         stdout = "✗  Unknown command for 'runspec-scheduler': 'status'\n"
@@ -130,25 +153,17 @@ class TestSharedSchedules(unittest.TestCase):
         self.assertIn("'svc'", r["error"])
         self.assertIn("passwordless sudo", r["error"])
 
-    def test_root_owned_venv_runs_as_the_login_user(self) -> None:
-        b = _make_bridge({**REMOTE, "runspec_paths": ["/opt/venvs/ops/bin/runspec"]})
-        b.venv_owner = lambda host, group: {"ok": True, "owner": "root", "self": "u"}
-        with patch.object(
-            b, "_run_logs", return_value=(0, json.dumps(STATUS), "")
-        ) as direct:
-            [r] = b.shared_schedules("prod-1")
-        direct.assert_called_once()
-        self.assertTrue(r["ok"])
-
     def test_unknown_host(self) -> None:
         self.assertEqual(_make_bridge(REMOTE).shared_schedules("nope"), [])
 
     def test_ok_result_carries_the_venv_owner(self) -> None:
         b = _make_bridge({**REMOTE, "runspec_paths": ["/opt/venvs/ops/bin/runspec"]})
-        b.venv_owner = lambda host, group: {"ok": True, "owner": "root", "self": "u"}
-        with patch.object(b, "_run_logs", return_value=(0, json.dumps(STATUS), "")):
+        b.venv_owner = lambda host, group: {"ok": True, "owner": "svc", "self": "u"}
+        with patch.object(
+            b, "_run_scheduler_as", return_value=(0, json.dumps(STATUS), "")
+        ):
             [r] = b.shared_schedules("prod-1")
-        self.assertEqual(r["owner"], "root")
+        self.assertEqual(r["owner"], "svc")
 
 
 class TestSharedSchedulesAll(unittest.TestCase):

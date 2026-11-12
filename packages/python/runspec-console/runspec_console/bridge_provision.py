@@ -415,6 +415,9 @@ class ProvisionMixin:
         # The daemon comes from runspec-scheduler (or the company's rebranded
         # copy, [provision] scheduler_package); the operator's own pin (if they
         # listed it) still wins over the bare one.
+        if scheduler and prov.root_owned(run_as):
+            raise ValueError(prov.ROOT_SCHEDULER_NOTE)
+        base_packages = prov.install_specs(packages)
         packages = prov.add_scheduler_spec(
             packages, scheduler, config_mod.read_provision()["scheduler_package"]
         )
@@ -426,6 +429,9 @@ class ProvisionMixin:
             "python": python,
             "per_host_python": per_host,
             "packages": prov.install_specs(packages),
+            # what to install where the venv ends up root-owned (the SSH login
+            # is root and no owner was picked): no scheduler there
+            "base_packages": base_packages,
             "scheduler": scheduler,
             "retention": retention,
             "scheduler_settings": sched_settings if scheduler else {},
@@ -670,6 +676,15 @@ class ProvisionMixin:
             if not pf.get("ok"):
                 return _fail("; ".join(pf.get("blockers") or ["preflight failed"]))
             h = self._prov_host(name)
+            packages = plan["packages"]
+            scheduler = plan.get("scheduler", "")
+            if scheduler and prov.root_owned(
+                plan["run_as"] or str(pf.get("user") or "")
+            ):
+                # The venv will be root's: no shared schedules there.
+                res["warnings"].append(prov.ROOT_SCHEDULER_NOTE)
+                packages = plan.get("base_packages", packages)
+                scheduler = ""
             self._prov_audit(
                 "venv.provision.started",
                 host=name,
@@ -677,9 +692,9 @@ class ProvisionMixin:
                 python=pf["python"],
                 python_version=pf.get("version", ""),
                 run_as=plan["run_as"],
-                packages=plan["packages"],
+                packages=packages,
                 folder_by_root=bool(pf.get("handoff")),
-                scheduler=plan.get("scheduler", ""),
+                scheduler=scheduler,
                 retention=plan.get("retention") or None,
                 scheduler_settings=plan.get("scheduler_settings") or None,
             )
@@ -730,7 +745,7 @@ class ProvisionMixin:
                 ("pip", prov.pip_upgrade_argv(dest), env, _PIP_TIMEOUT_S, False),
                 (
                     "install",
-                    mp.pip_install_argv(paths["python"], plan["packages"]),
+                    mp.pip_install_argv(paths["python"], packages),
                     env,
                     _PIP_TIMEOUT_S,
                     True,
@@ -769,7 +784,7 @@ class ProvisionMixin:
                 steps.append(
                     ("access", prov.verify_argv(dest), None, _STEP_TIMEOUT_S, False)
                 )
-            if plan.get("scheduler") and plan.get("scheduler_settings"):
+            if scheduler and plan.get("scheduler_settings"):
                 steps.append(
                     (
                         "settings",
@@ -779,7 +794,7 @@ class ProvisionMixin:
                         False,
                     )
                 )
-            if plan.get("scheduler"):
+            if scheduler:
                 steps += [
                     (
                         "scheduler",
@@ -790,7 +805,7 @@ class ProvisionMixin:
                     ),
                     (
                         "keeper",
-                        prov.scheduler_keeper_argv(dest, plan["scheduler"]),
+                        prov.scheduler_keeper_argv(dest, scheduler),
                         None,
                         _STEP_TIMEOUT_S,
                         False,
@@ -866,7 +881,7 @@ class ProvisionMixin:
                         rescue = self._keeper_rescue(
                             h,
                             dest,
-                            plan["scheduler"],
+                            scheduler,
                             run_as=plan["run_as"],
                             become=plan["become_method"],
                             emit=_emit,
@@ -883,7 +898,7 @@ class ProvisionMixin:
                 elif step == "keeper":
                     kept = prov.parse_keeper(out)
                     res["scheduler"] = {
-                        "manager": str(kept.get("manager") or plan["scheduler"]),
+                        "manager": str(kept.get("manager") or scheduler),
                         "reason": str(kept.get("reason") or ""),
                     }
                     res["warnings"].extend(str(w) for w in kept.get("warnings") or [])
@@ -903,7 +918,7 @@ class ProvisionMixin:
                     "operator": self._prov_operator(),
                     "python": pf["python"],
                     "python_version": pf.get("version", ""),
-                    "packages": plan["packages"],
+                    "packages": packages,
                     "runspec": version,
                     "folder_by_root": bool(pf.get("handoff")),
                     **(
@@ -942,7 +957,7 @@ class ProvisionMixin:
                 path=dest,
                 python=pf["python"],
                 run_as=plan["run_as"],
-                packages=plan["packages"],
+                packages=packages,
                 runspec=version,
             )
             return res
@@ -1444,6 +1459,7 @@ class ProvisionMixin:
 
             applied: list[str] = []
             specs = list(plan["specs"])  # per venv once inspected (scheduler name)
+            sched_choice = str(plan["scheduler"])  # "" for a root-owned venv
 
             def _done(
                 ok: bool, summary: str, h: Any = None, **who: str
@@ -1474,11 +1490,7 @@ class ProvisionMixin:
                             if plan["retention"]
                             else {}
                         ),
-                        **(
-                            {"scheduler": plan["scheduler"]}
-                            if plan["scheduler"]
-                            else {}
-                        ),
+                        **({"scheduler": sched_choice} if sched_choice else {}),
                         **({} if ok else {"error": summary}),
                     },
                     emit=_emit,
@@ -1526,6 +1538,17 @@ class ProvisionMixin:
                 str(info.get("scheduler_dist") or ""),
                 plan.get("scheduler_package") or prov.SCHEDULER_PACKAGE,
             )
+            has_scheduler = bool(info.get("scheduler"))
+            sched_settings = plan.get("scheduler_settings") or None
+            if prov.root_owned(owner):
+                # No shared schedules in a root venv: don't install, set up,
+                # sync or restart a scheduler there (leave one that's there).
+                if sched_choice or sched_settings:
+                    res["warnings"].append(prov.ROOT_SCHEDULER_NOTE)
+                sched_choice, sched_settings, has_scheduler = "", None, False
+                specs = prov.without_scheduler_spec(
+                    specs, plan.get("scheduler_package") or prov.SCHEDULER_PACKAGE
+                )
             self._prov_audit(
                 "venv.update.started",
                 host=name,
@@ -1534,19 +1557,18 @@ class ProvisionMixin:
                 packages=specs,
                 inbox=plan["inbox"],
                 retention=plan["retention"] or None,
-                scheduler=plan["scheduler"],
-                scheduler_settings=plan.get("scheduler_settings") or None,
+                scheduler=sched_choice,
+                scheduler_settings=sched_settings,
             )
-            has_scheduler = bool(info.get("scheduler"))
-            if plan["scheduler"] == prov.SCHEDULER_OFF and not has_scheduler:
+            if sched_choice == prov.SCHEDULER_OFF and not has_scheduler:
                 res["warnings"].append(
                     "No runspec-scheduler in this venv, so there was no daemon to stop."
                 )
-            gets_scheduler = has_scheduler or plan["scheduler"] not in (
+            gets_scheduler = has_scheduler or sched_choice not in (
                 "",
                 prov.SCHEDULER_OFF,
             )
-            if plan.get("scheduler_settings") and not gets_scheduler:
+            if sched_settings and not gets_scheduler:
                 res["warnings"].append(
                     "No runspec-scheduler in this venv, so the schedule time zone "
                     "and package schedules weren't set."
@@ -1556,14 +1578,14 @@ class ProvisionMixin:
                 specs=specs,
                 inbox=plan["inbox"],
                 retention=plan["retention"],
-                scheduler=plan["scheduler"],
+                scheduler=sched_choice,
                 has_scheduler=has_scheduler,
                 acl_user=login if run_as else "",
                 daemon_running=bool(info.get("scheduler_pid")),
                 check_login=bool(run_as),
-                scheduler_settings=plan.get("scheduler_settings") or None,
+                scheduler_settings=sched_settings,
             )
-            off = plan["scheduler"] == prov.SCHEDULER_OFF
+            off = sched_choice == prov.SCHEDULER_OFF
             notes = {
                 "pip": "pip self-upgrade failed; continued with the venv's pip.",
                 "permissions": _permissions_note(root),
@@ -1645,7 +1667,7 @@ class ProvisionMixin:
                         rescue = self._keeper_rescue(
                             h,
                             root,
-                            plan["scheduler"],
+                            sched_choice,
                             run_as=run_as,
                             become=become,
                             emit=_emit,
@@ -1679,7 +1701,7 @@ class ProvisionMixin:
                         )
                     else:
                         res["scheduler"] = {
-                            "manager": str(kept.get("manager") or plan["scheduler"]),
+                            "manager": str(kept.get("manager") or sched_choice),
                             "reason": str(kept.get("reason") or ""),
                         }
                     res["warnings"].extend(str(w) for w in kept.get("warnings") or [])
