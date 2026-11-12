@@ -442,6 +442,15 @@ def test_instructions_explain_approval_and_search_mode(search_mode, monkeypatch)
     assert "prod (web1, web2)" in text
     assert text.endswith("Never reboot on Fridays.")
     assert len(text) <= _INSTRUCTIONS_MAX
+    # Search mode lists no tools, so there are no descriptions to point at.
+    assert "description ends with its approval level" not in text
+
+
+def test_instructions_point_at_approval_line_when_tools_listed(monkeypatch):
+    monkeypatch.setattr(config_mod, "read_mcp_server", lambda: {})
+    monkeypatch.setattr(config_mod, "theme_config", dict)
+    text = ContextBridge()._mcp_server_instructions()
+    assert "description ends with its approval level" in text
 
 
 def test_instructions_capped_at_4096(monkeypatch):

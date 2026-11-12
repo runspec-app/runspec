@@ -19,6 +19,8 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   tools wait for the Approve card. A runnable-style tool whose subcommands differ
   lists them grouped by level. The `[mcp_server] default_autonomy` floor is
   included (`mcp_server.approval_note`).
+- The instructions the server sends a connecting client say so (not in
+  `tool_mode = "search"`, which lists no tools).
 
 ## [0.406.0] — 2026-11-12
 

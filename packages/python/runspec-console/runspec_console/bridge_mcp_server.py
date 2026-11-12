@@ -754,6 +754,12 @@ class McpServerMixin:
                 "runnable on several hosts has one tool per host, prefixed "
                 "with the host name."
             )
+        if cfg.get("tool_mode") != "search":
+            parts.append(
+                "Each tool's description ends with its approval level (per "
+                "subcommand where they differ), so you know before calling "
+                "whether it will wait for the operator's Approve."
+            )
         parts.append(
             "When a required value is missing or unclear and getting it wrong "
             "would matter (which host, sending mail, scheduling, anything "
