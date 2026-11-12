@@ -38,7 +38,7 @@ from typing import Any
 from . import config as config_mod
 from . import conversations as conv_mod
 from . import knowledge as kn
-from . import wiki_drafts, wiki_pages
+from . import wiki_check, wiki_drafts, wiki_pages
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +156,17 @@ class KnowledgeMixin:
         mapping = {p["entity"]: p for p in pages if p.get("entity")}
         self._wiki_pages_memo = (key, mapping)
         return mapping
+
+    def knowledge_wiki_check(self) -> dict[str, Any]:
+        """What in the team wiki needs a look (``wiki_check.check``): pages that
+        clash with a runnable's runspec.toml, stale pages, repeated bullets and
+        installed runnables with no page. Read-only."""
+        try:
+            with self._lock:  # type: ignore[attr-defined]
+                records = list(getattr(self, "_runnables_cache", []) or [])
+        except Exception:  # noqa: BLE001 — no discovery yet: pages-only checks
+            records = []
+        return wiki_check.check(list(self._wiki_page_map().values()), records)
 
     def knowledge_wiki_pages(self) -> dict[str, Any]:
         """The team's wiki pages Pull cached, parsed, for the Knowledge tab:
@@ -359,6 +370,19 @@ class KnowledgeMixin:
                 },
             },
             {
+                "name": "check_wiki",
+                "description": (
+                    "Check the team wiki for what needs a look: pages that mention a "
+                    "--flag the runnable's runspec.toml doesn't have (out of date), "
+                    "pages past their stale_after date or marked deprecated while the "
+                    "tool is still installed, the same bullet on several pages, and "
+                    "installed runnables with no page. Read-only; use it before "
+                    "suggesting page edits, and turn what it finds into propose_fact "
+                    "or a page edit for the operator to review."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
                 "name": "propose_fact",
                 "description": (
                     "Propose a durable fact for the team wiki: where a file or log "
@@ -542,6 +566,8 @@ class KnowledgeMixin:
                     ],
                 }
             return json.dumps(page)
+        if name == "check_wiki":
+            return json.dumps(self.knowledge_wiki_check())
         if name == "wiki_graph":
             g = self._knowledge_query(
                 lambda idx: idx.graph(

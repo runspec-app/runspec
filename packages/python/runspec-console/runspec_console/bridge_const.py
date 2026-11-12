@@ -143,6 +143,7 @@ _PARALLEL_READONLY_BUILTINS = frozenset(
         "wiki_page",
         "wiki_graph",
         "list_wiki_inbox",
+        "check_wiki",
         "repo_list",
         "repo_read",
         "repo_grep",
@@ -259,6 +260,7 @@ _KNOWLEDGE_TOOL_NAMES = frozenset(
         "edit_wiki_fact",
         "retire_wiki_fact",
         "pin_wiki_fact",
+        "check_wiki",
     }
 )
 _KNOWLEDGE_WRITE_TOOL_NAMES = frozenset(

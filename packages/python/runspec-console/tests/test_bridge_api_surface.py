@@ -27,6 +27,7 @@ EXPECTED = {
     "save_memory_sync_config",
     "memory_sync_status",
     "knowledge_wiki_pages",
+    "knowledge_wiki_check",
     "knowledge_drafts",
     "knowledge_draft_text",
     "knowledge_draft_save",

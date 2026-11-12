@@ -9,6 +9,32 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.411.0] — 2026-11-12
+
+### Added
+
+- **The wiki check.** A line at the top of Knowledge → Tools says what in the
+  team wiki needs a look, and opens to the findings:
+  - **out of date**: a page mentions a `--flag` its runnable's `runspec.toml`
+    doesn't have.
+  - **due a check**: past `stale_after`, or `deprecated` while still installed.
+  - **repeated**: the same bullet on several pages.
+  - **without a page**: installed runnables with no page.
+
+  Clicking a finding opens the page or tool. The agent gets the same check as
+  the autonomous, read-only `check_wiki` tool (also over the MCP server). New
+  pure module `wiki_check.py` and bridge method `knowledge_wiki_check`.
+
+### Changed
+
+- **The facts Push button is gone.** Sharing with the team goes through the
+  wiki's pages: **Propose changes** pushes page edits for a merge request.
+  **Add all facts to pages** moves approved team facts onto pages once. Pull
+  still reads existing `facts/*.toml`. The backend `memory_sync_push` stays for
+  older callers.
+- **Pull's result line** now reports pages (new and removed), team facts, and
+  how many of your page edits the team has merged.
+
 ## [0.410.0] — 2026-11-12
 
 ### Added

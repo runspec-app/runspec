@@ -2199,6 +2199,13 @@ export const mockApi: BridgeApi = {
     contrib_branch: 'contrib/dev', path: 'facts/dev.toml', shareable: 3, unpushed: true, team_facts: 5,
     last_push: '', last_push_commit: '', last_pull: '2026-10-04T09:00:00Z', last_pull_commit: 'abc123', last_pull_ref: 'v1.0.0',
   }),
+  knowledge_wiki_check: async () => ({
+    summary: { clash: 1, stale: 0, duplicate: 0, gap: 14 },
+    findings: [
+      { kind: 'clash' as const, entity: 'runnable:tail-log', path: 'runnables/tail-log.md', flags: ['bytes'], message: "runnables/tail-log.md mentions --bytes, which tail-log's runspec.toml doesn't have." },
+      { kind: 'gap' as const, entity: '', path: '', names: ['backup', 'cache-purge', 'check-port', 'deploy', 'failover-drain', 'flush-dns', 'generate-ssh-key', 'get-alerts', 'health-check', 'log-rotate', 'migrate', 'ping-host', 'set-env', 'setup-keys'], message: '14 installed tools have no page.' },
+    ],
+  }),
   knowledge_drafts: async () => ({
     drafted: ['k_3'],
     drafts: [{
