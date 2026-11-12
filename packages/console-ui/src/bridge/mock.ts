@@ -989,7 +989,7 @@ export const mockApi: BridgeApi = {
   // `?brand=0` previews an unbranded console (the runspec gate mark + teal).
   brand_theme: async () => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('brand') === '0'
     ? {}
-    : { accent_color: '#b3001b', brand_name: 'MyCorp Ops', watermark_text: 'MyCorp', watermark_style: 'banner' as const }),
+    : { accent_color: '#b3001b', brand_name: 'MyCorp Ops' }),
   // Dev mode: `?ai=0` on the URL previews the non-AI console.
   ai_enabled: async () => !(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('ai') === '0'),
   // Dev mode: `?disclaimer=1` previews the blocking first-use disclaimer gate.

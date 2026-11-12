@@ -1,5 +1,6 @@
 /**
- * Pure helpers for the Send to terminals bar (SendBar.tsx).
+ * Pure helpers for the Send to terminals bar (SendBar.tsx). Named
+ * sendBarModel so it can't collide with SendBar.tsx on a case-insensitive disk.
  */
 import type { SendToTerminalsResult, TerminalWindow } from '../bridge'
 

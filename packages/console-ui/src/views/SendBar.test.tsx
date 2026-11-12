@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { SendBar } from './SendBar'
 import {
   CONFIRM_OVER, describeResult, historyStep, needsConfirm, pushHistory, signature, tickedIds,
-} from './sendBar'
+} from './sendBarModel'
 import type { TerminalWindow } from '../bridge'
 
 const { terminalWindows, sendToTerminals, focusTerminal } = vi.hoisted(() => ({

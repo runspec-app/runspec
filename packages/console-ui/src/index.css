@@ -39,26 +39,26 @@ html, body, #root {
 :root {
   --rs-accent: #3cc7b6;
   --rs-hover: rgba(255, 255, 255, 0.05);
-  --rs-scroll-thumb: #3a3a3a;
-  --rs-scroll-thumb-hover: #4a4a4a;
+  --rs-scroll-thumb: #4d5860;
+  --rs-scroll-thumb-hover: #5f6b74;
   /* Muted-text hierarchy — keep in sync with ThemeContext.tsx (App.tsx
      re-stamps these on theme change; the values here cover first paint). */
-  --rs-text-secondary: #aaaaaa;
-  --rs-text-muted: #8c8c8c;
-  --rs-text-faint: #6e6e6e;
+  --rs-text-secondary: #c3ccd2;
+  --rs-text-muted: #a9b3ba;
+  --rs-text-faint: #8a959d;
   /* Surface / elevation scale — mirrors ThemeContext.surfaces() (App.tsx
      re-stamps on theme change). Use these for CSS-driven chrome instead of
      hardcoded greys so raw elements and Ant controls share one depth model. */
-  --rs-surface-sunken: #0b0d10;
-  --rs-surface-base: #101216;
-  --rs-surface-raised: #171a1f;
-  --rs-surface-overlay: #1e2228;
-  --rs-border: #252a31;
-  --rs-border-strong: #323844;
-  --rs-divider: rgba(255, 255, 255, 0.06);
-  --rs-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
-  --rs-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5);
-  --rs-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --rs-surface-sunken: #1e2428;
+  --rs-surface-base: #262e33;
+  --rs-surface-raised: #2f383e;
+  --rs-surface-overlay: #39434a;
+  --rs-border: #3b454c;
+  --rs-border-strong: #4d5860;
+  --rs-divider: rgba(255, 255, 255, 0.07);
+  --rs-shadow-sm: 0 1px 2px rgba(6, 10, 13, 0.35);
+  --rs-shadow-md: 0 4px 14px rgba(6, 10, 13, 0.4);
+  --rs-shadow-lg: 0 16px 40px rgba(6, 10, 13, 0.5);
   --rs-radius-sm: 6px;
   --rs-radius-md: 8px;
   --rs-radius-lg: 12px;
@@ -66,22 +66,22 @@ html, body, #root {
   --rs-motion: 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 html[data-theme='light'] {
-  --rs-hover: rgba(0, 0, 0, 0.04);
-  --rs-scroll-thumb: #c9c9c9;
-  --rs-scroll-thumb-hover: #b0b0b0;
-  --rs-text-secondary: #555555;
-  --rs-text-muted: #6b6b6b;
-  --rs-text-faint: #8a8a8a;
-  --rs-surface-sunken: #f0f2f5;
-  --rs-surface-base: #f7f8fa;
-  --rs-surface-raised: #ffffff;
-  --rs-surface-overlay: #ffffff;
-  --rs-border: #e5e8ec;
-  --rs-border-strong: #d3d8df;
-  --rs-divider: rgba(0, 0, 0, 0.06);
-  --rs-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --rs-shadow-md: 0 4px 14px rgba(16, 24, 40, 0.08);
-  --rs-shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.14);
+  --rs-hover: rgba(20, 30, 40, 0.05);
+  --rs-scroll-thumb: #adb4ba;
+  --rs-scroll-thumb-hover: #969ea5;
+  --rs-text-secondary: #3d454c;
+  --rs-text-muted: #525b63;
+  --rs-text-faint: #6e7780;
+  --rs-surface-sunken: #d4d9dd;
+  --rs-surface-base: #e0e4e7;
+  --rs-surface-raised: #eceff1;
+  --rs-surface-overlay: #f5f6f7;
+  --rs-border: #c3c9ce;
+  --rs-border-strong: #adb4ba;
+  --rs-divider: rgba(20, 30, 40, 0.08);
+  --rs-shadow-sm: 0 1px 2px rgba(20, 30, 40, 0.10);
+  --rs-shadow-md: 0 4px 14px rgba(20, 30, 40, 0.12);
+  --rs-shadow-lg: 0 16px 40px rgba(20, 30, 40, 0.18);
 }
 
 body {

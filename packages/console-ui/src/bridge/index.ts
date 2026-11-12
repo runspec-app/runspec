@@ -553,13 +553,10 @@ export interface SeedStatus {
 
 // Validated white-label theme (`[console.theme]`). Every field optional; an
 // empty object means no theme (the default runspec look). `accent_color` is a
-// hex colour → Ant `colorPrimary`; `watermark_logo` is an http(s)/data:image URL.
+// hex colour → Ant `colorPrimary`.
 export interface BrandTheme {
   accent_color?: string
   brand_name?: string
-  watermark_text?: string
-  watermark_logo?: string
-  watermark_style?: 'tiled' | 'banner' | 'center'  // default 'tiled'
 }
 
 // The first-use AI-use disclaimer's state for the gate modal (see bridge.disclaimer).

@@ -70,7 +70,7 @@ work.
 | Section | Example keys | Secret (never seeded) | Notes |
 |---|---|---|---|
 | `[llm]` | `provider`, `model`, `endpoint` | `api_key` (keyring / local-only) | The adapter package's core purpose; the seed names *its own* provider, so a fresh install boots on-brand. |
-| `[console]` branding | `docs_url` (exists); **`theme.accent_color`**, **`theme.watermark_text`**, **`theme.watermark_logo`** (net-new) | — | `docs_url` already honoured; window title auto-derives in `branding.py`. **Theme colour + watermark are delivered by the seed but require frontend rendering** — out of scope for the seed feature itself (see §12). |
+| `[console]` branding | `docs_url` (exists); **`theme.accent_color`** (net-new) | — | `docs_url` already honoured; window title auto-derives in `branding.py`. **Theme colour is delivered by the seed but require frontend rendering** — out of scope for the seed feature itself (see §12). |
 | `[config_sync]` | `url`, `ref`, `credential_id`, `subpath`/`layers`, `preserve` | the credential secret (keyring) | **Bootstraps live updates:** the package ships *where to pull from*, so a reachable install can immediately top up over git. See §7 for the `last_*` interaction. |
 | `[ssh]` | `proxy`, `identityFile`, connection tuning | private key material (on disk / keyring) | Fleet-wide SSH defaults. |
 | `[console]` notifications | `confirm_notifications`, `room_notifications` | — | Existing booleans. |
@@ -197,7 +197,6 @@ docs_url = "https://docs.mycorp.example/console"
 
 [console.theme]          # net-new keys — carried now, rendered later (§12)
 accent_color   = "#b3001b"
-watermark_text = "MyCorp — Internal"
 
 [config_sync]            # bootstrap the live layer
 url           = "https://git.mycorp.example/ops/runspec-config.git"
@@ -363,7 +362,8 @@ seeded; only its *fetch command* is.)
 
 * **Theme rendering.** ✅ **Shipped (0.153.0)** — the seed *delivers*
   `[console.theme]` values, and the console now renders them (accent colour →
-  `colorPrimary` + app icon, watermark, sidebar brand name). See
+  `colorPrimary` + app icon, sidebar brand name; the watermark was removed in
+  0.402.0). See
   `docs/design/console-theme.md`.
 * **Seed-as-bottom-fold-layer of a git pull** (§4) — v1 keeps seed and pull as two
   independent top-ups.

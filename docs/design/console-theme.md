@@ -3,9 +3,13 @@
 > **Status: shipped** — `runspec-console` 0.153.0. The package config seed
 > (`docs/design/config-seed.md`) already *delivers* `[console.theme]` values, but
 > nothing rendered them. This adds the rendering: accent colour, a content
-> watermark, a sidebar brand name, and a brand-coloured app icon — all **read-only
+> watermark (removed in 0.402.0), a sidebar brand name, and a brand-coloured app icon — all **read-only
 > from config** (set by a white-label package's seed or hand-edited), no Settings
 > editor in v1.
+>
+> **0.402.0:** the content watermark (`watermark_text` / `watermark_logo` /
+> `watermark_style`) was removed. Those keys are now ignored; a seed that still
+> sets them loads without error and draws nothing.
 
 ---
 
@@ -17,7 +21,6 @@ The seed can carry the values; this change makes four surfaces honour them:
 | Surface | Key | Where |
 |---|---|---|
 | Accent colour | `accent_color` (hex) | Ant `ConfigProvider` `token.colorPrimary` (`App.tsx`) **+** the generated app icon colour (`app.py _build_icon`) |
-| Content watermark | `watermark_text`, `watermark_logo`, `watermark_style` | `App.tsx` `BrandWatermark`: `tiled` (Ant `<Watermark>`, default), `banner` (single large mark, upper third of the content area), or `center` (single large mark, middle); a logo image is used instead of text when given |
 | Sidebar brand name | `brand_name` | the sidebar title (`App.tsx`) — unset keeps the literal `runspec`, so default installs are unchanged |
 | App icon | `icon` (path or `pkg:` ref) + `accent_color` | `app.py _build_icon` / `_resolve_icon_override` — an explicit `icon` wins (a filesystem path, or `pkg:<module>:<relpath>` for an icon **bundled in a package**, copied into app-data so pywebview gets a stable path even from a zipped wheel); else the generated square is painted in `accent_color` (the "blue square" becomes the brand colour, now emitted as opaque RGBA) |
 | Native title bar | `title_bar_color` (hex) | `app.py _apply_dwm_title_bar` tints the Windows 11 caption via DWM `CAPTION_COLOR`/`TEXT_COLOR` — an **independent** hex, deliberately *not* derived from `accent_color`, so a brand can pair e.g. a blue accent UI with a red title bar; unset → the title bar is left as the system draws it (white on a light Windows theme, no restyle after load). Applied on pywebview's `before_show` (5.3+) so it is there on first paint, with the `started`/`shown` hooks as a backstop. The (caption, text) COLORREFs come from the pure `config.title_bar_colors` (text picked black/white by luminance; dark mode follows the text colour). Windows 11 22000+ only; where Windows refuses the caption colour (Windows 10) nothing else is changed, so the bar stays the system one |
@@ -34,9 +37,6 @@ of `config.toml`, so it flows through the seed/sync merge with no new plumbing.
 [console.theme]
 accent_color   = "#b3001b"                 # hex (#rgb or #rrggbb); drives colorPrimary + icon
 brand_name     = "MyCorp Ops"              # sidebar title (unset → "runspec")
-watermark_text = "MyCorp"                  # faint brand mark behind content
-watermark_logo = "https://…/logo.png"      # optional; a URL or data:image/… (instead of text)
-watermark_style = "banner"                 # tiled (default) | banner (large, upper third) | center
 icon           = "pkg:mycorp_console:app.ico"  # optional; overrides the generated icon — a path OR a pkg:<module>:<relpath> bundled-in-package reference
 title_bar_color = "#b3001b"                # optional; Win11 native caption tint — independent of accent_color
 ```
@@ -45,15 +45,12 @@ Every field is optional; an absent/invalid one falls back (no theme = today's lo
 
 ## 3. Validation (pure, shared)
 
-Two helpers in `config.py`, used by **both** the bridge method and the icon builder
+A helper in `config.py`, used by **both** the bridge method and the icon builder
 so the rules can't drift, and unit-tested directly:
 
 * `valid_accent(value)` → the colour if it matches `^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`,
   else `None`. `colorPrimary` is an Ant token (not raw CSS), but validating keeps a
   garbage value from poisoning the theme and bounds what reaches the icon's RGB math.
-* `valid_image_ref(value)` → the string if it's an `https://`, `http://`, or
-  `data:image/` reference, else `None` — so `watermark_logo` can't smuggle a
-  `javascript:` URL into an `<img>`.
 
 `theme_config()` returns the `[console.theme]` table (or `{}`), mirroring
 `sounds_config()`.
@@ -61,7 +58,7 @@ so the rules can't drift, and unit-tested directly:
 ## 4. Backend — `brand_theme()` + icon
 
 * `Bridge.brand_theme()` (new, in `bridge_config_ssh.py` next to `app_title`):
-  returns `{accent_color, brand_name, watermark_text, watermark_logo}` — each
+  returns `{accent_color, brand_name}` — each
   validated/cleaned, absent keys dropped. Added to the frozen API surface.
 * `app.py _build_icon()`: the cache key includes the resolved colour
   (`runspec_console-<hex>.ico`) so a changed `accent_color` regenerates; an explicit
@@ -74,17 +71,14 @@ so the rules can't drift, and unit-tested directly:
 * Load `brand_theme()` in the existing branding `useEffect`; hold in state.
 * `ConfigProvider` `token`: spread `colorPrimary` from `accent_color` when present.
 * Sidebar title: `brand_name || 'runspec'`.
-* Wrap the content column in `<Watermark content={watermark_text} image={watermark_logo}>`
-  only when one is set; otherwise render children unwrapped (no empty overlay).
 * `brand_theme` added to the bridge interface + mock + a `BrandTheme` type.
 
 ## 6. Out of scope (later)
 
 * A Settings → Appearance editor (operator self-customisation). v1 is config-only.
 * A fuller palette beyond `colorPrimary`.
-* Shipping the watermark logo / icon **inside** the seed package as binary data
-  (today: a URL / data-URL for the logo, a filesystem path for the icon). Bundling
-  binary package data in the seed is a separate change.
+* Shipping the icon **inside** the seed package as binary data — done with the
+  `pkg:<module>:<relpath>` form (0.156.0).
 
 ## 7. Tests
 

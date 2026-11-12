@@ -2,7 +2,7 @@
 test_config_theme.py — the white-label [console.theme] helpers and the
 Bridge.brand_theme() / app icon colour that consume them.
 
-Covers: valid_accent / valid_image_ref validation (the pure rules shared by the
+Covers: valid_accent validation (the pure rules shared by the
 bridge and the icon builder), theme_config shape, brand_theme() passthrough +
 dropping of invalid values, and the icon square taking its colour from
 accent_color (cached per-colour).
@@ -33,25 +33,6 @@ def test_valid_accent_accepts_hex():
 def test_valid_accent_rejects_non_hex():
     for bad in ["red", "b3001b", "#12", "#1234", "#xyzxyz", "", None, 42, "rgb(1,2,3)"]:
         assert cfg.valid_accent(bad) is None
-
-
-def test_valid_image_ref_accepts_url_and_data():
-    assert cfg.valid_image_ref("https://x/logo.png") == "https://x/logo.png"
-    assert cfg.valid_image_ref("http://x/logo.png") == "http://x/logo.png"
-    assert cfg.valid_image_ref("data:image/png;base64,AAAA").startswith("data:image/")
-
-
-def test_valid_image_ref_rejects_other_schemes():
-    for bad in ["javascript:alert(1)", "/etc/passwd", "file:///x", "ftp://x", "", None]:
-        assert cfg.valid_image_ref(bad) is None
-
-
-def test_valid_watermark_style():
-    assert cfg.valid_watermark_style("tiled") == "tiled"
-    assert cfg.valid_watermark_style("banner") == "banner"
-    assert cfg.valid_watermark_style("  center  ") == "center"
-    for bad in ["diagonal", "BANNER", "", None, 1, "tiledd"]:
-        assert cfg.valid_watermark_style(bad) is None
 
 
 def test_theme_config_shape(monkeypatch, tmp_path):
@@ -128,8 +109,7 @@ def test_brand_theme_passes_valid_drops_invalid(monkeypatch, tmp_path):
                 "theme": {
                     "accent_color": "#b3001b",
                     "brand_name": "  MyCorp Ops  ",
-                    "watermark_text": "Internal",
-                    "watermark_logo": "https://x/logo.png",
+                    "watermark_text": "Internal",  # removed in 0.402.0 — ignored
                     "watermark_style": "banner",
                     "icon": "C:/brand/app.ico",  # not a UI field — not returned
                 }
@@ -140,9 +120,6 @@ def test_brand_theme_passes_valid_drops_invalid(monkeypatch, tmp_path):
     assert out == {
         "accent_color": "#b3001b",
         "brand_name": "MyCorp Ops",
-        "watermark_text": "Internal",
-        "watermark_logo": "https://x/logo.png",
-        "watermark_style": "banner",
     }
 
 
@@ -153,7 +130,6 @@ def test_brand_theme_drops_garbage(monkeypatch, tmp_path):
             "console": {
                 "theme": {
                     "accent_color": "octarine",  # invalid hex → dropped
-                    "watermark_logo": "javascript:alert(1)",  # bad scheme → dropped
                     "brand_name": "   ",  # blank → dropped
                 }
             }

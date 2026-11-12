@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react'
-import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, message, Watermark, Modal } from 'antd'
+import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, Input, message, Modal } from 'antd'
 import {
   ThunderboltOutlined,
   AppstoreOutlined,
@@ -38,6 +38,7 @@ import {
   TeamOutlined,
   MinusOutlined,
   SendOutlined,
+  SearchOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { useWaitingCue } from './useWaitingCue'
@@ -96,6 +97,7 @@ import {
   type GroupsMode, type SidebarGroupsState,
 } from './sidebarGroups'
 import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
+import { layoutNavTabs, hostMatches } from './navGroups'
 import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
 
@@ -143,52 +145,6 @@ const SIDEBAR_WIDTH = 180
 const SIDEBAR_MIN = 150
 const SIDEBAR_MAX = 420
 
-// White-label content watermark. `tiled` (default) is Ant's repeated/slanted
-// mark; `banner` / `center` draw a single large faint mark over the content area
-// (banner = upper third, center = middle) — your "brand banner" look. All honour
-// a logo image instead of text, are non-interactive (pointer-events: none), and
-// brighten on the dark UI. A passthrough when no text/logo is set.
-function BrandWatermark(
-  { theme: t, isDark, sidebarLeft = SIDEBAR_WIDTH, children }: { theme: BrandTheme; isDark: boolean; sidebarLeft?: number; children: React.ReactNode },
-) {
-  const text = t.watermark_text
-  const logo = t.watermark_logo
-  if (!text && !logo) return <>{children}</>
-
-  const style = t.watermark_style ?? 'tiled'
-  if (style === 'tiled') {
-    // Theme-aware colour: Ant's default rgba(0,0,0,.15) is invisible on dark.
-    return (
-      <Watermark content={text} image={logo} font={{ color: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)' }}>
-        {children}
-      </Watermark>
-    )
-  }
-
-  // Single large mark over the content area (right of the sidebar).
-  const centered = style === 'center'
-  const markColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'
-  return (
-    <div style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
-      {children}
-      <div aria-hidden style={{
-        position: 'absolute', top: 0, bottom: 0, right: 0, left: sidebarLeft,
-        display: 'flex', justifyContent: 'center',
-        alignItems: centered ? 'center' : 'flex-start',
-        paddingTop: centered ? 0 : '13vh',
-        pointerEvents: 'none', userSelect: 'none', overflow: 'hidden', zIndex: 1,
-      }}>
-        {logo
-          ? <img src={logo} alt="" style={{ maxWidth: '45%', maxHeight: '35%', opacity: isDark ? 0.1 : 0.08 }} />
-          : <span style={{
-              fontSize: 'clamp(28px, 6.5vw, 92px)', fontWeight: 800, letterSpacing: 4,
-              textTransform: 'uppercase', whiteSpace: 'nowrap', color: markColor,
-            }}>{text}</span>}
-      </div>
-    </div>
-  )
-}
-
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
   // Feature flags read once at mount. `ai` is the `[console] ai` off-switch:
@@ -207,6 +163,8 @@ export default function App() {
   // Persisted (write-through) so the layout survives restarts — see
   // sidebarGroups.ts for the pure state logic.
   const [groupsState, setGroupsState] = useState<SidebarGroupsState>(() => loadSidebarGroups())
+  // Sidebar host filter (name or group). Not persisted: a fresh window shows every host.
+  const [hostQuery, setHostQuery] = useState('')
   const updateGroups = (next: SidebarGroupsState) => { saveSidebarGroups(next); setGroupsState(next) }
   const toggleGroup = (g: string) => updateGroups(toggleGroupState(groupsState, g))
   const setAllGroupsMode = (mode: GroupsMode) => updateGroups(setAllGroups(mode))
@@ -335,7 +293,7 @@ export default function App() {
   // on a tracked branch) waiting in the repo? Null / not configured = no badge.
   const [configUpdate, setConfigUpdate] = useState<SyncUpdateCheck | null>(null)
   const [docsUrl, setDocsUrl] = useState<string>('')
-  // White-label theme ([console.theme]) — accent colour, watermark, sidebar brand
+  // White-label theme ([console.theme]) — accent colour, sidebar brand
   // name. Read-only (set by a config seed or by hand); {} = the default look.
   const [brandTheme, setBrandTheme] = useState<BrandTheme>({})
   // First-use AI-use disclaimer ([console.disclaimer]) — a blocking gate shown
@@ -1035,6 +993,8 @@ export default function App() {
     { key: 'rota'      as ViewKey, label: 'Rota',      icon: <ClockCircleOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ], features)
+  // Grouped tab bar + More menu (navGroups.ts); Ctrl+1…9 follows this order.
+  const navLayout = layoutNavTabs(navTabs)
 
   // ── Keyboard shortcuts (shortcuts.ts is the registry) ──────────────────────
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -1065,7 +1025,7 @@ export default function App() {
     help: () => setShortcutsOpen(true),
     settings: () => openSettings(),
     refreshHosts: () => { if (!refreshingHosts) refreshHosts() },
-    switchTab: (i: number) => { const t = navTabs[i]; if (t) setView(t.key) },
+    switchTab: (i: number) => { const t = navLayout.ordered[i]; if (t) setView(t.key) },
     focusComposer: () => focusComposer(false),
     findRunnable: () => focusComposer(true),
     approve: () => confirmByKey('approve'),
@@ -1192,9 +1152,6 @@ export default function App() {
             Tooltip: { colorBgSpotlight: sf.overlay, colorTextLightSolid: isDark ? 'rgba(255,255,255,0.88)' : 'rgba(0,0,0,0.88)' },
           },
         }}>
-        {/* White-label content watermark — style-aware (tiled / banner / center),
-            a passthrough when no watermark text/logo is set. */}
-        <BrandWatermark theme={brandTheme} isDark={isDark} sidebarLeft={sidebarWidth}>
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: contentBg, fontFamily: UI_FONT }}>
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
           {/* Host sidebar — drag its right edge to resize (title, host list, and
@@ -1268,6 +1225,22 @@ export default function App() {
                     ...profiles.map(p => ({ value: p.name, label: p.name })),
                   ]}
                   title="Active host profile"
+                />
+              </div>
+            )}
+            {/* Host filter — on a fleet big enough to scroll. Matches the host
+                name or its group; a match opens a collapsed group. */}
+            {hosts.length > 6 && (
+              <div style={{ padding: '8px 10px 4px', flexShrink: 0 }}>
+                <Input
+                  size="small"
+                  allowClear
+                  value={hostQuery}
+                  onChange={e => setHostQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setHostQuery('') }}
+                  placeholder="Filter hosts"
+                  aria-label="Filter hosts"
+                  prefix={<SearchOutlined style={{ color: textMuted(isDark) }} />}
                 />
               </div>
             )}
@@ -1348,7 +1321,7 @@ export default function App() {
                           : undefined,
                       }}
                     >
-                      <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
+                      <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : textFaint(isDark) }}>●</span>
                       <span style={{
                         fontSize: 14, color: textCol, flex: 1, fontFamily: MONO_FONT,
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -1377,16 +1350,22 @@ export default function App() {
                           </Tooltip>
                         )
                       })()}
-                      {runnablesLoading && <LoadingOutlined style={{ fontSize: 11, color: '#595959' }} spin />}
+                      {runnablesLoading && <LoadingOutlined style={{ fontSize: 11, color: textFaint(isDark) }} spin />}
                     </div>
                   </Dropdown>
                 )
 
                 return (
                   <>
+                    {hostQuery.trim() && !hosts.some(h => hostMatches(h, hostQuery)) && (
+                      <div style={{ padding: '10px 14px', fontSize: 12, color: textMuted(isDark) }}>
+                        No hosts match “{hostQuery.trim()}”
+                      </div>
+                    )}
                     {sortedGroupKeys.map(g => {
-                      const members = groupMap.get(g)!
-                      const collapsed = isGroupCollapsed(groupsState, g)
+                      const members = groupMap.get(g)!.filter(m => hostMatches(m, hostQuery))
+                      if (members.length === 0) return null
+                      const collapsed = !hostQuery.trim() && isGroupCollapsed(groupsState, g)
                       const up = members.filter(m => m.connected).length
                       const down = members.length - up
                       const remoteMembers = members.filter(m => m.name !== 'local')
@@ -1440,7 +1419,7 @@ export default function App() {
                             {collapsed && (
                               <span style={{ display: 'flex', alignItems: 'center', gap: 6, letterSpacing: 0 }}>
                                 <span style={{ color: '#52c41a' }}>● {up}</span>
-                                {down > 0 && <span style={{ color: '#595959' }}>● {down}</span>}
+                                {down > 0 && <span style={{ color: textFaint(isDark) }}>● {down}</span>}
                               </span>
                             )}
                           </div>
@@ -1475,6 +1454,9 @@ export default function App() {
               display: 'flex', flexDirection: 'column', gap: 3,
               fontSize: 12, color: iconCol,
             }}>
+              {/* Denylist + Env files share one row: both act on the hosts
+                  connected right now, so they sit together and gate together. */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
               {/* Denylist: the fleet kill switch for the hosts connected right
                   now. Greyed out while a sweep is in flight (first discovery or a
                   Refresh) so the modal's scope matches the sidebar's green dots. */}
@@ -1491,14 +1473,13 @@ export default function App() {
                   <Tooltip title={tip} placement="topLeft">
                     <Button
                       size="small"
-                      block
                       icon={sweeping ? <LoadingOutlined /> : <StopOutlined />}
                       disabled={disabled}
                       onClick={() => setDenylistOpen(true)}
                       aria-label="Denylist"
-                      style={{ marginBottom: 4, fontSize: 12 }}
+                      style={{ flex: 1, minWidth: 0, fontSize: 12 }}
                     >
-                      Denylist{!sweeping && connectedRemote.length > 0 ? ` · ${connectedRemote.length} connected` : ''}
+                      Denylist
                     </Button>
                   </Tooltip>
                 )
@@ -1511,18 +1492,18 @@ export default function App() {
                   <Tooltip title={sweeping ? 'Waiting for the fleet to finish connecting…' : 'Edit the .runspec_env file of local and connected venvs'} placement="topLeft">
                     <Button
                       size="small"
-                      block
                       icon={sweeping ? <LoadingOutlined /> : <CodeOutlined />}
                       disabled={sweeping}
                       onClick={() => setEnvFilesOpen(true)}
                       aria-label="Env files"
-                      style={{ marginBottom: 4, fontSize: 12 }}
+                      style={{ flex: 1, minWidth: 0, fontSize: 12 }}
                     >
                       Env files
                     </Button>
                   </Tooltip>
                 )
               })()}
+              </div>
               {/* Rooms: live connection state for every configured chat/helpdesk
                   room, so a room server going down is visible at a glance instead
                   of buried in the Dev tab. Hidden entirely when none are set. */}
@@ -1817,24 +1798,69 @@ export default function App() {
               background: headerBg, borderBottom: `1px solid ${borderCol}`,
               display: 'flex', alignItems: 'stretch',
             }}>
-              {navTabs.map(tab => (
-                <button
-                  key={tab.key}
-                  className="rs-nav-tab"
-                  title={navTabs.indexOf(tab) < 9 ? `${tab.label} (Ctrl+${navTabs.indexOf(tab) + 1})` : undefined}
-                  onClick={() => setView(tab.key)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '0 12px', fontSize: 14,
-                    fontWeight: view === tab.key ? 600 : 500,
-                    color: view === tab.key ? titleCol : iconCol,
-                    borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
-                  }}
-                >
-                  {tab.icon}
-                  {tab.label}
-                </button>
+              {navLayout.groups.map((group, gi) => (
+                <React.Fragment key={gi}>
+                  {gi > 0 && <div aria-hidden style={{ width: 1, margin: '12px 6px', background: borderCol, flexShrink: 0 }} />}
+                  {group.map(tab => {
+                    const n = navLayout.ordered.indexOf(tab)
+                    return (
+                      <button
+                        key={tab.key}
+                        className="rs-nav-tab"
+                        title={n < 9 ? `${tab.label} (Ctrl+${n + 1})` : undefined}
+                        onClick={() => setView(tab.key)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
+                          fontWeight: view === tab.key ? 600 : 500,
+                          color: view === tab.key ? titleCol : iconCol,
+                          borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
+                        }}
+                      >
+                        {tab.icon}
+                        {tab.label}
+                      </button>
+                    )
+                  })}
+                </React.Fragment>
               ))}
+              {navLayout.overflow.length > 0 && (() => {
+                // More: the occasional tabs. While one of them is open the
+                // button takes its name and the active underline.
+                const active = navLayout.overflow.find(t => t.key === view)
+                return (
+                  <Dropdown
+                    trigger={['click']}
+                    menu={{
+                      selectedKeys: active ? [active.key] : [],
+                      items: navLayout.overflow.map(t => {
+                        const n = navLayout.ordered.indexOf(t)
+                        return {
+                          key: t.key,
+                          icon: t.icon,
+                          label: n < 9 ? <span>{t.label} <span style={{ color: textMuted(isDark), marginLeft: 8 }}>Ctrl+{n + 1}</span></span> : t.label,
+                          onClick: () => setView(t.key),
+                        }
+                      }),
+                    }}
+                  >
+                    <button
+                      className="rs-nav-tab"
+                      aria-label={active ? `${active.label} (more tabs)` : 'More tabs'}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
+                        fontWeight: active ? 600 : 500,
+                        color: active ? titleCol : iconCol,
+                        borderBottom: active ? `2px solid ${titleCol}` : '2px solid transparent',
+                      }}
+                    >
+                      {active ? <>{active.icon}{active.label}</> : 'More'}
+                      <DownOutlined style={{ fontSize: 10 }} />
+                    </button>
+                  </Dropdown>
+                )
+              })()}
 
               <div style={{ flex: 1 }} />
 
@@ -2014,7 +2040,6 @@ export default function App() {
           </div>
         </div>
         </div>
-        </BrandWatermark>
 
         {/* Modals + the Settings drawer are lazy-loaded and mounted only once
             their open state trips, so their JS stays out of the startup bundle.

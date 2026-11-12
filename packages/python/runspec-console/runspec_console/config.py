@@ -2301,8 +2301,8 @@ def sounds_config() -> dict[str, Any]:
 
 
 # White-label theme (`[console.theme]`) — read-only, set by a config seed or by
-# hand. Rendered by the frontend (accent colour, watermark, sidebar brand name)
-# and the app icon. See docs/design/console-theme.md.
+# hand. Rendered by the frontend (accent colour, sidebar brand name) and the
+# app icon. See docs/design/console-theme.md.
 
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
@@ -2381,31 +2381,6 @@ def valid_accent(value: Any) -> str | None:
     garbage value from poisoning the theme and bounds what reaches the icon's RGB
     math."""
     if isinstance(value, str) and _HEX_COLOR_RE.match(value.strip()):
-        return value.strip()
-    return None
-
-
-def valid_image_ref(value: Any) -> str | None:
-    """Return ``value`` if it's an http(s) or ``data:image/`` reference, else None.
-
-    So ``watermark_logo`` can't smuggle a ``javascript:`` URL into an ``<img>``."""
-    if isinstance(value, str):
-        v = value.strip()
-        if v.startswith(("https://", "http://", "data:image/")):
-            return v
-    return None
-
-
-# How the content watermark is drawn. `tiled` = Ant's repeated/slanted mark
-# (default); `banner` = a single large mark over the content area, upper third;
-# `center` = a single large mark dead-centre. An unknown value falls back to
-# `tiled` in the UI.
-WATERMARK_STYLES: frozenset[str] = frozenset({"tiled", "banner", "center"})
-
-
-def valid_watermark_style(value: Any) -> str | None:
-    """Return ``value`` if it's a known `[console.theme] watermark_style`, else None."""
-    if isinstance(value, str) and value.strip() in WATERMARK_STYLES:
         return value.strip()
     return None
 
