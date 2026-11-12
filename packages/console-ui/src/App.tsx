@@ -1700,6 +1700,7 @@ export default function App() {
             <div style={{
               padding: '4px 24px 14px',
               background: contentBg, flexShrink: 0,
+              width: '100%', maxWidth: 1000, margin: '0 auto', boxSizing: 'border-box',
             }}>
               {!discovery.ready && discovery.total > 0 && (
                 <div style={{

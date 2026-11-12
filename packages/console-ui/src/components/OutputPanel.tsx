@@ -51,6 +51,11 @@ interface CardTheme {
   codeBg: string; toolBg: string; toolBorder: string
   link: string; sub: string
 }
+// Amber marks "waiting for you" (docs/design/brand.md); the confirm panel takes
+// it as a soft tint so it sits on gunmetal and aluminium alike.
+const AWAIT_BORDER = 'color-mix(in srgb, #e3b341 45%, var(--rs-border))'
+const AWAIT_BG = 'color-mix(in srgb, #e3b341 8%, var(--rs-surface-raised))'
+
 function useCardTheme(): CardTheme {
   const isDark = useIsDark()
   const accent = useAccent()
@@ -1159,7 +1164,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
         onScroll={handleScroll}
         style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}
       >
-        <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1000, width: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
           {blocks.map(block => (
             <BlockCard
               key={block.id}
@@ -1324,25 +1329,27 @@ function ToolCallBlock({
 
   return (
     <div data-rs-confirm-gate={awaiting ? '' : undefined} style={{
-      margin: '6px 0',
-      border: `1px solid ${awaiting ? (c.isDark ? '#5a4a1a' : '#ffd591') : c.toolBorder}`,
-      borderRadius: RADIUS.sm, overflow: 'hidden',
+      margin: '2px 0',
+      border: `1px solid ${awaiting ? AWAIT_BORDER : c.toolBorder}`,
+      borderRadius: awaiting ? 16 : 12, overflow: 'hidden',
+      background: awaiting ? AWAIT_BG : c.cardBg,
     }}>
       <div
+        className={canExpand ? 'rs-tool-row' : undefined}
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
-          padding: '6px 12px',
-          background: awaiting ? (c.isDark ? '#241f12' : '#fff7e6') : c.toolBg,
+          padding: awaiting ? '9px 14px' : '6px 12px',
+          background: 'transparent',
           cursor: canExpand ? 'pointer' : 'default',
           userSelect: 'none',
         }}
         onClick={() => canExpand && setExpanded(x => !x)}
       >
         {awaiting
-          ? <PauseCircleOutlined style={{ color: '#e6a23c', fontSize: 13 }} />
+          ? <PauseCircleOutlined style={{ color: '#e6a23c', fontSize: 14 }} />
           : entry.running
             ? <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} />
-            : <ApiOutlined style={{ color: '#52c41a', fontSize: 13 }} />}
+            : <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />}
         {display.via ? (
           <Tooltip title={`Run via ${display.via}`}>
             <Text code style={{ fontSize: 13, flexShrink: 0 }}>{display.name}</Text>
@@ -1435,7 +1442,7 @@ function ToolCallBlock({
       </div>
 
       {awaiting && (
-        <div style={{ padding: '10px 12px', background: c.isDark ? '#1c1810' : '#fffbe6', borderTop: `1px solid ${c.isDark ? '#5a4a1a' : '#ffe7ba'}` }}>
+        <div style={{ padding: '2px 14px 14px' }}>
           <div style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
             The assistant wants to {v}{' '}
             {resolved && <Text code style={{ fontSize: 12 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text>}
@@ -1493,7 +1500,7 @@ function ToolCallBlock({
             // and auto-grow to a generous cap before scrolling.
             <pre style={{
               margin: '0 0 10px', padding: '8px 10px',
-              background: c.codeBg, borderRadius: 4,
+              background: c.codeBg, borderRadius: 10,
               fontFamily: MONO_FONT, fontSize: 12, lineHeight: 1.5, color: c.sub,
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               maxHeight: 340, overflowY: 'auto',
@@ -1521,16 +1528,16 @@ function ToolCallBlock({
                 if (reason.trim()) deny()
               }
             }}
-            style={{ fontSize: 12, marginBottom: 8 }}
+            style={{ fontSize: 12, marginBottom: 10, borderRadius: 10 }}
           />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Tooltip title={`Approve (${shortcutHint('approve')})`}>
-              <Button type="primary" size="small" icon={<CaretRightOutlined />} onClick={approve} data-rs-confirm="approve">
+              <Button type="primary" shape="round" icon={<CaretRightOutlined />} onClick={approve} data-rs-confirm="approve">
                 Approve &amp; {v}
               </Button>
             </Tooltip>
             <Tooltip title={reason.trim() ? `Deny and send your reason to the assistant (${shortcutHint('deny')})` : `Deny (${shortcutHint('deny')})`}>
-              <Button size="small" danger onClick={deny} data-rs-confirm="deny">
+              <Button shape="round" danger onClick={deny} data-rs-confirm="deny">
                 {reason.trim() ? 'Deny with reason' : 'Deny'}
               </Button>
             </Tooltip>
@@ -1625,12 +1632,10 @@ export function PromptMessage({ text }: { text: string }) {
   const fade = 'linear-gradient(to bottom, #000 65%, transparent)'
   return (
     <div data-testid="prompt-message" style={{
-      borderLeft: '3px solid var(--rs-accent)', borderRadius: RADIUS.sm,
-      background: c.rowAlt, padding: '6px 12px', marginBottom: 2,
+      background: c.headerBg, borderRadius: '18px 18px 18px 6px',
+      padding: '9px 15px', marginBottom: 2, maxWidth: 'min(100%, 78ch)',
     }}>
-      <div style={{ fontSize: 11, color: c.dim, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>
-        You
-      </div>
+      <div className="rs-visually-hidden">You</div>
       <div style={clamped ? {
         maxHeight: `${1.6 * PROMPT_CLAMP_LINES}em`, fontSize: 14, overflow: 'hidden',
         maskImage: fade, WebkitMaskImage: fade,
@@ -1674,7 +1679,7 @@ export function ChatTranscript({
 }) {
   const c = useCardTheme()
   return (
-    <div style={{ padding: '10px 14px' }}>
+    <div style={{ padding: '6px 0 10px 2px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       {segments.map((seg, i) =>
         seg.kind === 'text' ? (
           <Markdown key={i} color={c.text}>{seg.text}</Markdown>
@@ -1700,9 +1705,9 @@ export function ChatTranscript({
       {(currentText || !done) && (
         <pre style={{
           margin: 0, padding: 0,
-          fontFamily: MONO_FONT, fontSize: 14,
-          color: c.mono, lineHeight: 1.6,
-          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          fontFamily: 'inherit', fontSize: 14,
+          color: c.text, lineHeight: 1.6,
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
         }}>
           {currentText}
           {!done && <span style={{ color: c.faint }}>▌</span>}
@@ -2066,14 +2071,24 @@ const BlockCard = memo(function BlockCard({
     else if (key === 'rerun' && block.rerunData) onRerun?.(block.rerunData)
   }
 
+  const isChat = block.type === 'chat'
   return (
-    <div style={{ background: c.cardBg, border: `1px solid ${c.cardBorder}`, borderRadius: RADIUS.md, overflow: 'hidden' }}>
-      {/* Header */}
+    <div
+      data-card-kind={block.type}
+      style={isChat
+        ? { background: 'transparent' }
+        : {
+            background: c.cardBg, border: `1px solid ${c.cardBorder}`, borderRadius: RADIUS.lg,
+            overflow: 'hidden', boxShadow: 'var(--rs-shadow-sm)',
+          }}
+    >
+      {/* Header — a chat turn's is a quiet row led by your prompt as a bubble;
+          a run's is the card's title row. */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 14px',
-        background: c.headerBg,
-        borderBottom: collapsed && callArgs.length === 0 ? 'none' : `1px solid ${c.cardBorder}`,
+        padding: isChat ? '2px 0 4px' : '9px 14px',
+        background: 'transparent',
+        borderBottom: isChat || (collapsed && callArgs.length === 0) ? 'none' : `1px solid ${c.cardBorder}`,
         userSelect: 'none',
       }}>
         {/* Collapse toggle */}
@@ -2114,31 +2129,40 @@ const BlockCard = memo(function BlockCard({
         {statusIcon}
         {/* One line: a chat prompt's first line (the full prompt is the "You"
             message in the body), a run's command in mono. */}
-        <Text
-          data-testid="card-title"
-          title={showPrompt ? undefined : block.label}
-          style={{
-            color: c.text, fontSize: 14, cursor: 'pointer', flex: 1, minWidth: 0,
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            ...(block.type === 'run' ? { fontFamily: MONO_FONT } : {}),
-          }}
-          onClick={() => setCollapsed(v => !v)}
-        >
-          {promptTitle(block.label)}
-        </Text>
+        <span style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+          <Text
+            data-testid="card-title"
+            title={showPrompt ? undefined : block.label}
+            style={{
+              color: c.text, fontSize: 14, cursor: 'pointer', minWidth: 0,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              ...(block.type === 'run' ? { fontFamily: MONO_FONT } : {}),
+              // A chat turn's prompt reads as your message: a rounded bubble.
+              // When the full prompt shows below (a long one), or the turn was
+              // fired by a trigger, the header line stays plain.
+              ...(isChat && !showPrompt && !block.trigger ? {
+                background: c.headerBg, padding: '6px 14px',
+                borderRadius: '16px 16px 16px 6px', maxWidth: '100%',
+              } : {}),
+            }}
+            onClick={() => setCollapsed(v => !v)}
+          >
+            {promptTitle(block.label)}
+          </Text>
+        </span>
         {block.operatorOnly && (
           <Tooltip title="A run you launched yourself — saved for your review, never part of the assistant’s context">
-            <Tag color="default" style={{ fontSize: 11, marginLeft: 4 }}>operator run · not sent to agent</Tag>
+            <Tag bordered={false} color="default" style={{ fontSize: 11, marginLeft: 4 }}>operator run · not sent to agent</Tag>
           </Tooltip>
         )}
         {block.trigger?.source === 'mcp' && (
           <Tooltip title="Called by an outside agent (e.g. Claude Code) through the console's MCP server">
-            <Tag color="purple" style={{ fontSize: 11, marginLeft: 4 }}>MCP call</Tag>
+            <Tag bordered={false} color="purple" style={{ fontSize: 11, marginLeft: 4 }}>MCP call</Tag>
           </Tooltip>
         )}
         {block.trigger && block.trigger.source !== 'mcp' && (
           <Tooltip title={`Fired automatically by the “${block.trigger.name}” trigger (${block.trigger.source})`}>
-            <Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>trigger: {block.trigger.name}</Tag>
+            <Tag bordered={false} color="gold" style={{ fontSize: 11, marginLeft: 4 }}>trigger: {block.trigger.name}</Tag>
           </Tooltip>
         )}
         <Text style={{ color: c.dim, fontSize: 12 }}>
@@ -2150,7 +2174,7 @@ const BlockCard = memo(function BlockCard({
         )}
         {toolCount > 0 && (
           <Tooltip title={`${toolCount} tool call${toolCount !== 1 ? 's' : ''} this turn`}>
-            <Tag style={{ fontSize: 12, marginLeft: 4 }}><ApiOutlined style={{ fontSize: 11 }} /> {toolCount}</Tag>
+            <Tag bordered={false} style={{ fontSize: 12, marginLeft: 4 }}><ApiOutlined style={{ fontSize: 11 }} /> {toolCount}</Tag>
           </Tooltip>
         )}
         {block.type === 'chat' && !block.done && (
@@ -2177,6 +2201,7 @@ const BlockCard = memo(function BlockCard({
         )}
         {block.done && block.durationMs !== undefined && (
           <Tag
+            bordered={false}
             style={{ marginLeft: 4, fontSize: 12 }}
             color={block.stopped ? 'default' : block.exitCode === 0 ? 'green' : 'red'}
           >
@@ -2197,7 +2222,7 @@ const BlockCard = memo(function BlockCard({
                 `${cacheCreation.toLocaleString()} cache write (~1.25×) · ` +
                 `Output ${output.toLocaleString()}`
               }>
-                <Tag style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
+                <Tag bordered={false} style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
                   ↑{promptTotal.toLocaleString()} ↓{output.toLocaleString()}
                 </Tag>
               </Tooltip>
@@ -2206,14 +2231,14 @@ const BlockCard = memo(function BlockCard({
                   `${cacheRead.toLocaleString()} tokens served from cache at ~10% cost` +
                   (cacheCreation > 0 ? ` · ${cacheCreation.toLocaleString()} written to cache this turn` : '')
                 }>
-                  <Tag color="green" style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
+                  <Tag bordered={false} color="green" style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
                     ⚡{hitPct}% cached
                   </Tag>
                 </Tooltip>
               )}
               {cost !== null && (
                 <Tooltip title={`Estimated cost at approximate list prices${block.model ? ` · ${block.model}` : ''}. Rates drift — treat as a guide.`}>
-                  <Tag style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
+                  <Tag bordered={false} style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
                     ~{fmtUsd(cost)}
                   </Tag>
                 </Tooltip>
@@ -2390,7 +2415,7 @@ const BlockCard = memo(function BlockCard({
             )}
 
             {showPrompt && (
-              <div style={{ padding: '10px 14px 0' }}>
+              <div style={{ padding: '2px 0 0' }}>
                 <PromptMessage text={block.label} />
               </div>
             )}
