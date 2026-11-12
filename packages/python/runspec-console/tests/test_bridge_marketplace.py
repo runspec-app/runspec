@@ -62,6 +62,8 @@ class _StubBridge:
         self.ssh_reply: tuple[int, str, str] = (0, "", "")
         # the post-pip `runspec-scheduler sync` check: silent = no scheduler
         self.sync_reply: tuple[int, str, str] = (0, "", "")
+        # versions the read-back probe after pip reports, in order (last repeats)
+        self.probe_versions: list[str] = []
 
     def get_config(self) -> dict:
         return {"ssh": {}}
@@ -80,6 +82,21 @@ class _StubBridge:
         self.ssh_stdin.append(stdin)
         if "runspec-scheduler" in command:
             return self.sync_reply
+        if "RSMP" in command and self.probe_versions:
+            v = (
+                self.probe_versions.pop(0)
+                if len(self.probe_versions) > 1
+                else self.probe_versions[0]
+            )
+            dists = {"runspec-acme": v}
+            return (
+                0,
+                "RSMP"
+                + json.dumps(
+                    {"python": "3.12.1", "owner": "svc", "user": "ops", "dists": dists}
+                ),
+                "",
+            )
         return self.ssh_reply
 
     def mcp_credential_options(self):
@@ -729,6 +746,85 @@ def test_install_remote_runs_pip_as_owner_with_index_env_and_events(app, monkeyp
     )
     assert b.refreshed == 1  # new runnables → discovery kicked
     assert b._marketplace_installed is None
+
+
+def _install_expecting(b, expect="1.2.0"):
+    _write_hosts(
+        [
+            {
+                "name": "web-01",
+                "ssh": "ops@web-01",
+                "runspec_paths": ["/opt/venvs/ops/bin/runspec"],
+            }
+        ]
+    )
+    _write_marketplace({"auto_pip": False})
+    b.ssh_reply = (
+        0,
+        "Requirement already satisfied: runspec-acme in /opt/venvs/ops (1.1.0)",
+        "",
+    )
+    out = b.marketplace_install(
+        {
+            "package": "runspec-acme",
+            "upgrade": True,
+            "expect_version": expect,
+            "targets": [{"id": "web-01::/opt/venvs/ops"}],
+        }
+    )
+    return _wait_op(b, out["op"])
+
+
+def _pip_calls(b):
+    return [
+        c
+        for _, c in b.ssh_calls
+        if "install" in shlex.split(c) and "--disable-pip-version-check" in c
+    ]
+
+
+def test_install_that_left_the_old_version_is_not_reported_ok(app):
+    # The host's index doesn't list 1.2.0 yet: pip exits 0 ("already satisfied")
+    # both times, and the venv is reported as not updated, not as a green ok.
+    b = _StubBridge()
+    b.probe_versions = ["1.1.0"]
+    rec = _install_expecting(b)
+    (r,) = rec["results"]
+    assert r["ok"] is False and r["exit_code"] == 0 and r["not_updated"]
+    assert r["installed_version"] == "1.1.0"
+    assert "still 1.1.0" in r["summary"] and "wanted 1.2.0" in r["summary"]
+    pips = _pip_calls(b)
+    assert len(pips) == 2  # once more without pip's cache
+    assert "--no-cache-dir" not in pips[0] and "--no-cache-dir" in pips[1]
+    view = b.marketplace_op(rec["op"])
+    (t,) = view["targets"]
+    assert t["not_updated"] and view["counts"]["failed"] == 1
+
+
+def test_install_retry_without_pip_cache_picks_up_the_new_version(app):
+    b = _StubBridge()
+    b.probe_versions = ["1.1.0", "1.2.0"]
+    rec = _install_expecting(b)
+    (r,) = rec["results"]
+    assert r["ok"] and not r.get("not_updated")
+    assert len(_pip_calls(b)) == 2
+
+
+def test_install_that_updated_runs_pip_once(app):
+    b = _StubBridge()
+    b.probe_versions = ["1.2.0"]
+    rec = _install_expecting(b)
+    (r,) = rec["results"]
+    assert r["ok"] and len(_pip_calls(b)) == 1
+
+
+def test_install_without_expected_version_skips_the_check(app):
+    b = _StubBridge()
+    b.probe_versions = ["1.1.0"]
+    rec = _install_expecting(b, expect="")
+    (r,) = rec["results"]
+    assert r["ok"] and len(_pip_calls(b)) == 1
+    assert not any("RSMP" in c for _, c in b.ssh_calls)
 
 
 def test_uninstall_remote_without_run_as_and_failure_reported(app):

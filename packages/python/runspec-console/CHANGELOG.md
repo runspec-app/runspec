@@ -9,6 +9,11 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.401.2] — 2026-11-12
+
+### Fixed
+- **Marketplace: an update that left a venv on the old version no longer shows a green ok.** When a host's package index doesn't list the new version yet, `pip install -U` says "Requirement already satisfied" and exits 0, so the console used to report ok. This happens with a proxy index such as Nexus, or pip's own cache of the index page. Now, after pip, the console reads back the venv's version and compares it with the version the picker offered as latest. If the venv is still older, pip runs once more without its cache (`--no-cache-dir`), since pip keeps an index page for up to 10 minutes. If the venv is still old after that, it shows an orange **not updated** tag and says which version it has, which was wanted, and that the host's index doesn't offer it yet. This applies only to installs of the latest version; picking a version explicitly is unchanged.
+
 ## [0.401.1] — 2026-11-11
 
 ### Changed

@@ -2462,6 +2462,9 @@ export interface MarketplaceOpPayload {
   repo?: string
   // Also upgrade the runspec library in the same pip run (install only).
   upgrade_runspec?: boolean
+  // The version offered as latest: after pip, a venv still older than this is
+  // reported "not updated" (its host's index doesn't list it yet), not ok.
+  expect_version?: string
 }
 
 export interface MarketplaceOpResult {
@@ -2484,6 +2487,8 @@ export interface MarketplaceOpTargetState {
   state: 'queued' | 'running' | 'done' | 'skipped'
   ok?: boolean
   exit_code?: number | null
+  // pip exited 0 but the venv still has an older version than the one offered.
+  not_updated?: boolean
   summary?: string
   lines?: string[]
 }

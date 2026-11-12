@@ -443,6 +443,7 @@ function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: 
       const payload: MarketplaceOpPayload = {
         package: spec, targets, upgrade, reinstall, repo: entry.repo,
         upgrade_runspec: action === 'install' && !isRunspec && upgradeRunspec,
+        ...(action === 'install' && !version && entry.version ? { expect_version: entry.version } : {}),
       }
       const res = action === 'install' ? await bridge.marketplace_install(payload) : await bridge.marketplace_uninstall(payload)
       onStarted(res.op)
@@ -681,7 +682,7 @@ export function applyProgress(rec: MarketplaceOpRecord, d: Record<string, unknow
     if (t.target !== d.target) return t
     if (d.phase === 'start') return { ...t, state: 'running' as const }
     if (d.phase === 'line') return { ...t, lines: [...(t.lines ?? []), String(d.line)].slice(-400) }
-    if (d.phase === 'done') return { ...t, state: 'done' as const, ok: !!d.ok, exit_code: (d.exit_code as number | null) ?? null, summary: String(d.summary ?? '') }
+    if (d.phase === 'done') return { ...t, state: 'done' as const, ok: !!d.ok, exit_code: (d.exit_code as number | null) ?? null, summary: String(d.summary ?? ''), ...(d.not_updated ? { not_updated: true } : {}) }
     return t
   })
   return { ...rec, targets }
@@ -778,7 +779,9 @@ function OpDetailModal({ opId, onClose }: { opId: string; onClose: () => void })
 
   const statusTag = (t: MarketplaceOpTargetState) => {
     const tag = t.state === 'done'
-      ? { color: t.ok ? 'green' : 'red', text: t.ok ? 'ok' : `failed (exit ${t.exit_code ?? '?'})` }
+      ? t.not_updated
+        ? { color: 'orange', text: 'not updated' }
+        : { color: t.ok ? 'green' : 'red', text: t.ok ? 'ok' : `failed (exit ${t.exit_code ?? '?'})` }
       : TARGET_STATE_TAG[t.state]
     return <Tag color={tag.color} style={{ fontSize: 11, margin: 0 }}>{tag.text}</Tag>
   }
