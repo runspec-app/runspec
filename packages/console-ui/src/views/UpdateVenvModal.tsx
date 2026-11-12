@@ -27,8 +27,11 @@ import {
   retentionProblem,
   type HostProgress,
   type ProgressEvent,
+  ROOT_SCHEDULES_NOTE,
 } from './ProvisionModal'
 import { venvChoices, venvRoot } from './DeprovisionModal'
+
+export { ROOT_SCHEDULES_NOTE }
 
 const { Text } = Typography
 
@@ -91,11 +94,18 @@ export function hasWork(p: VenvUpdatePayload): boolean {
   return !!(p.upgrade_runspec || (p.packages ?? []).length || p.inbox || p.retention || p.scheduler || p.scheduler_settings)
 }
 
+/** Why a root-owned venv's Shared schedules choice is skipped. */
 /** What the chosen options mean for one venv, before anything runs. */
 export function updateNotes(row: VenvUpdateRow, f: UpdateForm): string[] {
   const out: string[] = []
   if (f.retention && !f.upgradeRunspec && !versionAtLeast(row.runspec_version, RETENTION_MIN_RUNSPEC)) {
     out.push(`runspec ${row.runspec_version || '(unknown version)'} here is too old for log cleanup (needs ${RETENTION_MIN_RUNSPEC}); tick Upgrade runspec.`)
+  }
+  const upgrades = f.upgradeRunspec || f.packages.some(x => x.trim())
+  if (row.owner === 'root') {
+    // Root venvs get no shared schedules; the backend skips every scheduler step.
+    if (f.scheduler || schedulerSettingsPayload(f.schedulerSettings)) out.push(ROOT_SCHEDULES_NOTE)
+    return out
   }
   if (f.scheduler === 'off' && !row.scheduler) out.push('No runspec-scheduler in this venv, so there is no daemon to stop.')
   if (schedulerSettingsPayload(f.schedulerSettings) && !row.scheduler && (!f.scheduler || f.scheduler === 'off')) {
@@ -108,7 +118,6 @@ export function updateNotes(row: VenvUpdateRow, f: UpdateForm): string[] {
   if (f.scheduler && f.scheduler !== 'off' && row.backend === 'cron' && !c) {
     out.push("Its schedules move off the owner's crontab and the daemon fires them instead.")
   }
-  const upgrades = f.upgradeRunspec || f.packages.some(x => x.trim())
   if (upgrades && row.scheduler && row.scheduler_pid && f.scheduler !== 'off') {
     out.push('The scheduler daemon is restarted at the end, so it runs the upgraded code.')
   }
@@ -313,8 +322,10 @@ export function UpdateVenvModal({
 
   const retention = cleanup ? { compact_after: compactAfter, delete_after: deleteAfter } : null
   const retentionError = retention ? retentionProblem(retention) : ''
-  const form: UpdateForm = { upgradeRunspec, packages, repo, inbox, retention, scheduler, schedulerSettings: schedSettings, become }
   const ready = (preview ?? []).filter(r => r.ok)
+  // Every ticked venv belongs to root: nothing for Shared schedules to do.
+  const allRoot = ready.length > 0 && ready.every(r => r.owner === 'root')
+  const form: UpdateForm = { upgradeRunspec, packages, repo, inbox, retention, scheduler: allRoot ? '' : scheduler, schedulerSettings: allRoot ? {} : schedSettings, become }
   const payload = buildUpdatePayload(ready.map(r => ({ host: r.host, runspec_path: r.runspec_path })), form)
   const nowRetention = retentionNow(ready)
   const nowRetentionText = retentionNowText(ready)
@@ -499,14 +510,16 @@ export function UpdateVenvModal({
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 8 }}>
               <div>
                 {label('Shared schedules')}
-                <Select value={scheduler} onChange={setScheduler} options={UPDATE_SCHEDULER_OPTIONS} style={{ width: '100%' }} aria-label="Shared schedules" />
-                {hint(scheduler === ''
+                <Select value={allRoot ? '' : scheduler} onChange={setScheduler} options={UPDATE_SCHEDULER_OPTIONS} style={{ width: '100%' }} aria-label="Shared schedules" disabled={allRoot} />
+                {hint(allRoot
+                  ? ROOT_SCHEDULES_NOTE
+                  : scheduler === ''
                   ? 'Schedules keep firing the way they do now.'
                   : off
                     ? "Writes the schedules back to the owner's crontab, then removes the daemon's keepers and stops it."
                     : `Installs runspec-scheduler, moves this venv's schedules from the owner's crontab to its daemon and sets up what restarts it.${scheduler === 'auto' ? ' Per host: systemd --user when lingering is on, else supervisord in the venv.' : ''}`)}
                 {scheduler && preview && moveTotal(ready, scheduler) && <div><Text style={{ fontSize: 12 }}>{moveTotal(ready, scheduler)}</Text></div>}
-                {!off && (
+                {!off && !allRoot && (
                   <div style={{ marginTop: 8 }}>
                     <SchedulerSettingsFields value={schedSettings} onChange={setSchedSettings} leave
                       hint="Needs runspec-scheduler 0.10.0 or later (add runspec-scheduler to the packages to upgrade it)." />

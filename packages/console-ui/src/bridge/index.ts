@@ -1697,6 +1697,7 @@ export interface SharedSchedulesVenv {
   available: boolean               // false = no runspec-scheduler in this venv
   ok: boolean
   owner?: string                   // the venv root's owner ("" = unknown)
+  root_owned?: boolean             // root's venv: left out of shared schedules (0.406.0)
   error?: string
   status?: SharedSchedulesStatus
 }

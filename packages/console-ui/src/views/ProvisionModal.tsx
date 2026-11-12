@@ -50,6 +50,15 @@ export function membersOf(
 }
 
 /** The provision request the form describes (shared by preflight and start). */
+/** Shown wherever a root-owned venv would get shared schedules (0.406.0). */
+export const ROOT_SCHEDULES_NOTE =
+  "Root-owned venv: shared schedules aren't set up here (every fire would run as root). Schedule its runnables from This console instead."
+
+/** True when the venv will belong to root, so it gets no shared schedules. */
+export function rootOwnedRunAs(runAs: string): boolean {
+  return runAs.trim() === 'root'
+}
+
 export function buildPayload(f: {
   hosts: string[]
   parent: string
@@ -323,6 +332,7 @@ export function ProvisionModal({
   const [pythons, setPythons] = useState<ProvisionInterpreter[]>([])
   const [pyLoading, setPyLoading] = useState(false)
   const [runAs, setRunAs] = useState('')
+  const rootOwner = rootOwnedRunAs(runAs)
   const [become, setBecome] = useState<'sudo' | 'su'>('sudo')
   const [packages, setPackages] = useState<string[]>([])
   const [repo, setRepo] = useState('')
@@ -411,8 +421,8 @@ export function ProvisionModal({
   }, [onDone])
 
   const payload = useMemo(
-    () => buildPayload({ hosts: selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler, retention, schedulerSettings: schedSettings }),
-    [selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler, retention, schedSettings],
+    () => buildPayload({ hosts: selected, parent, name, pyMode, pyPath, pyVersion, runAs, become, packages, repo, scheduler: rootOwner ? '' : scheduler, retention, schedulerSettings: schedSettings }),
+    [selected, parent, name, pyMode, pyPath, pyVersion, runAs, rootOwner, become, packages, repo, scheduler, retention, schedSettings],
   )
   // Any change to the request invalidates an earlier preflight.
   useEffect(() => { if (!op) setRows(null) }, [payload, op])
@@ -611,13 +621,15 @@ export function ProvisionModal({
 
         <div>
           {label('Shared schedules')}
-          <Select value={scheduler} onChange={setScheduler} options={SCHEDULER_OPTIONS} style={{ width: '100%' }} aria-label="Shared schedules" />
+          <Select value={rootOwner ? '' : scheduler} onChange={setScheduler} options={SCHEDULER_OPTIONS} disabled={rootOwner} style={{ width: '100%' }} aria-label="Shared schedules" />
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-            {scheduler
+            {rootOwner
+              ? ROOT_SCHEDULES_NOTE
+              : scheduler
               ? `Installs runspec-scheduler, fires this venv's schedules from its daemon (run as the owner) and sets up what restarts it.${scheduler === 'auto' ? ' Per host: systemd --user when lingering is on, else supervisord in the venv.' : ''}`
               : 'Schedules in this venv can still run from the owner\'s crontab (runspec-scheduler sync).'}
           </Text>
-          {scheduler && (
+          {scheduler && !rootOwner && (
             <div style={{ marginTop: 8 }}>
               <SchedulerSettingsFields value={schedSettings} onChange={setSchedSettings} />
             </div>

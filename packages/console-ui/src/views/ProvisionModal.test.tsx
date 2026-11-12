@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { ProvisionModal, buildPayload, joinDest, membersOf, retentionProblem, RETENTION_DEFAULT } from './ProvisionModal'
+import { ProvisionModal, buildPayload, joinDest, membersOf, retentionProblem, rootOwnedRunAs, RETENTION_DEFAULT, ROOT_SCHEDULES_NOTE } from './ProvisionModal'
 import type { ProvisionOptions } from '../bridge'
 
 const { api } = vi.hoisted(() => ({
@@ -162,6 +162,20 @@ describe('ProvisionModal', () => {
     await waitFor(() => expect((provisionBtn() as HTMLButtonElement).disabled).toBe(false))
     await user.click(provisionBtn())
     expect(api.provision_start).toHaveBeenCalledWith(expect.objectContaining({ hosts: ['web-01'] }))
+  })
+
+  it('turns shared schedules off for a root-owned venv', async () => {
+    expect(rootOwnedRunAs(' root ')).toBe(true)
+    expect(rootOwnedRunAs('svc')).toBe(false)
+    const user = userEvent.setup()
+    render(<ProvisionModal open initialHosts={['web-01']} onClose={() => {}} />)
+    await user.type(await screen.findByLabelText('Venv name'), 'root-tools')
+    await user.type(screen.getByLabelText('Run as'), 'root')
+    expect(screen.getByText(ROOT_SCHEDULES_NOTE)).toBeTruthy()
+    expect(document.querySelectorAll('.ant-select-disabled').length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: 'Check hosts' }))
+    expect(api.provision_preflight).toHaveBeenCalledWith(expect.objectContaining({ run_as: 'root' }))
+    expect(api.provision_preflight.mock.calls[0][0].scheduler).toBeUndefined()
   })
 
   it('stacks above the host editor it is opened from', async () => {
