@@ -18,6 +18,14 @@ The plugin carries two things:
   Run a whole session as it with ``claude --agent <plugin>:runspec-operator``,
   or let Claude Code hand it ops tasks.
 
+Claude Desktop can't add a local directory: its **Upload plugin** takes a
+``.zip``. So the plugin is also written as ``{dest}/<name>.zip`` (the plugin at
+the zip root). An uploaded copy doesn't follow the console, so a port or token
+change means uploading the new zip. Desktop's *chat* doesn't take plugins at
+all; its ``claude_desktop_config.json`` runs local servers over stdio only, so
+:func:`desktop_config` builds an entry that reaches the console's HTTP server
+through the ``mcp-remote`` bridge (needs Node's ``npx``).
+
 Pure stdlib; the Bridge decides where and when to render.
 """
 
@@ -25,12 +33,15 @@ from __future__ import annotations
 
 import json
 import shutil
+import zipfile
 from pathlib import Path
 from typing import Any
 
 SERVER_KEY = "console"
 AGENT_NAME = "runspec-operator"
 DIR_NAME = "claude-plugin"
+# Fixed zip timestamps: the same plugin always zips to the same bytes.
+_ZIP_EPOCH = (2020, 1, 1, 0, 0, 0)
 
 
 def plugin_name(slug: str) -> str:
@@ -75,6 +86,30 @@ sending, scheduling, anything destructive), stop and ask instead of guessing.
 """
 
 
+def _zip_plugin(src: Path, dest: Path) -> None:
+    """Zip ``src`` with its contents at the zip root (``.claude-plugin/…``)."""
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(p for p in src.rglob("*") if p.is_file()):
+            info = zipfile.ZipInfo(path.relative_to(src).as_posix(), _ZIP_EPOCH)
+            info.external_attr = 0o644 << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, path.read_bytes())
+
+
+def desktop_config(name: str, url: str, token_required: bool) -> dict[str, Any]:
+    """A ``claude_desktop_config.json`` ``mcpServers`` entry for this console.
+
+    Desktop starts local servers as commands (stdio), so ``mcp-remote`` relays
+    to the HTTP endpoint. The token rides an env var because Desktop on Windows
+    mangles spaces inside ``args``; the placeholder is never the real token."""
+    args = ["-y", "mcp-remote", url, "--allow-http"]
+    entry: dict[str, Any] = {"command": "npx", "args": args}
+    if token_required:
+        args += ["--header", "Authorization:${AUTH_HEADER}"]
+        entry["env"] = {"AUTH_HEADER": "Bearer <your token>"}
+    return {"mcpServers": {name: entry}}
+
+
 def render(
     dest: Path,
     *,
@@ -86,7 +121,8 @@ def render(
 ) -> dict[str, Any]:
     """Write the marketplace + plugin into ``dest`` (replacing what's there)
     and return what the Settings tab shows: the folder, the plugin and
-    marketplace names, the agent's full name and the install commands."""
+    marketplace names, the agent's full name, the install commands, the
+    Claude Desktop zip and a ``claude_desktop_config.json`` entry."""
     dest = Path(dest)
     name = plugin_name(slug)
     if dest.exists():
@@ -142,6 +178,8 @@ def render(
     (plugin_dir / "agents" / f"{AGENT_NAME}.md").write_text(
         _agent(name, brand), encoding="utf-8"
     )
+    zip_path = dest / f"{name}.zip"
+    _zip_plugin(plugin_dir, zip_path)
     return {
         "path": str(dest),
         "plugin": name,
@@ -149,6 +187,10 @@ def render(
         "agent": f"{name}:{AGENT_NAME}",
         "tool_prefix": tool_prefix(name),
         "token_required": token_required,
+        "zip": str(zip_path),
+        "desktop_config": json.dumps(
+            desktop_config(name, url, token_required), indent=2
+        ),
         "commands": [
             f'claude plugin marketplace add "{dest}"',
             f"claude plugin install {name}@{name}",

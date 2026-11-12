@@ -6319,6 +6319,28 @@ export function ClaudePluginPanel({ plugin, onLoad }: { plugin: OwnMcpClaudePlug
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
             The console rewrites it whenever the server starts, so a new port or token reaches Claude Code next time it starts.
           </Typography.Text>
+          {plugin.zip && (
+            <>
+              <Typography.Paragraph style={{ fontSize: 13, margin: '8px 0 2px' }}><strong>Claude Desktop</strong></Typography.Paragraph>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                Plugins (Code and Cowork): Customize → Plugins → Add → Upload plugin, and pick{' '}
+                <Typography.Text code copyable style={{ fontSize: 12 }}>{plugin.zip}</Typography.Text>.
+                An uploaded copy doesn't follow the console: upload it again after changing the port or token.
+              </Typography.Text>
+            </>
+          )}
+          {plugin.desktop_config && (
+            <>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                Chat: Settings → Developer → Edit Config, merge this into <code>claude_desktop_config.json</code> and restart Claude Desktop.
+                It reaches this server through <code>mcp-remote</code>, so Node.js (<code>npx</code>) must be installed.
+                {plugin.token_required && ' Replace <your token> with the token above.'}
+              </Typography.Text>
+              <Typography.Paragraph copyable={{ text: plugin.desktop_config }} style={{ marginBottom: 0 }}>
+                <pre data-testid="desktop-config" style={{ fontSize: 12, margin: 0 }}>{plugin.desktop_config}</pre>
+              </Typography.Paragraph>
+            </>
+          )}
         </Space>
       )}
     </div>

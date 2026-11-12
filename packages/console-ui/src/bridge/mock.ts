@@ -1471,6 +1471,10 @@ export const mockApi: BridgeApi = {
       'claude plugin marketplace add "/home/me/.config/runspec-console/claude-plugin"',
       'claude plugin install runspec-console@runspec-console',
     ],
+    zip: '/home/me/.config/runspec-console/claude-plugin/runspec-console.zip',
+    desktop_config: JSON.stringify({ mcpServers: { 'runspec-console': {
+      command: 'npx', args: ['-y', 'mcp-remote', 'http://127.0.0.1:8765/mcp', '--allow-http'],
+    } } }, null, 2),
   }),
 
   get_sync_config: async () => ({

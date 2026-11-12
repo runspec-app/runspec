@@ -437,6 +437,10 @@ export interface OwnMcpClaudePlugin {
   tool_prefix?: string
   token_required?: boolean
   commands?: string[]
+  // Claude Desktop: the plugin as a .zip for Customize → Plugins → Upload, and
+  // a claude_desktop_config.json entry (via mcp-remote) for Desktop chat.
+  zip?: string
+  desktop_config?: string
 }
 
 // Settings → Config Sync. Where to pull the console's config files from (a git

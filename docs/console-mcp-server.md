@@ -158,6 +158,43 @@ Claude Code the next time it starts. The plugin's tools are named
 `mcp__plugin_<plugin>_console__<tool>`, so an allow rule for them is
 `"mcp__plugin_runspec-console_console__*"`.
 
+### Claude Desktop
+
+Claude Desktop can't add a folder, so the console also writes the plugin as a zip
+next to it: `{app_dir}/claude-plugin/<plugin>.zip` (Settings → MCP Server shows
+the path). In Claude Desktop go to **Customize → Plugins → Add → Upload plugin**
+and pick it. Plugins work in Desktop's **Code** and **Cowork** modes. An uploaded
+copy doesn't follow the console, so upload the new zip after changing the port or
+token.
+
+Desktop's **chat** doesn't use plugins. It runs local MCP servers listed in
+`claude_desktop_config.json` (Settings → Developer → Edit Config), and only ones
+it starts as a command, so the entry relays to the console's HTTP endpoint through
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote) (needs Node.js for
+`npx`). Settings → MCP Server shows the entry to merge in; with a token it looks
+like this:
+
+```json
+{
+  "mcpServers": {
+    "runspec-console": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8765/mcp", "--allow-http",
+               "--header", "Authorization:${AUTH_HEADER}"],
+      "env": { "AUTH_HEADER": "Bearer <your token>" }
+    }
+  }
+}
+```
+
+The token goes through `env` because Desktop on Windows breaks a header with a
+space inside `args`. Restart Claude Desktop after saving.
+
+Custom connectors on claude.ai (and the ones Desktop adds under
+Settings → Connectors) are reached from Anthropic's servers, not from your
+machine, so they can't use a `127.0.0.1` address. Use the plugin or the config
+entry above instead.
+
 Any MCP client that speaks streamable-HTTP works the same way. The console must be
 **running** for the endpoint to be up — this is a desktop, not a daemon; open the
 console when you want the agent to reach the fleet.

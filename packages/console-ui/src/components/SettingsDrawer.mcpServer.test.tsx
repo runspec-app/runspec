@@ -142,6 +142,19 @@ describe('ClaudePluginPanel', () => {
     expect(screen.getByText(/credential store/)).toBeTruthy()
   })
 
+  it('shows the Claude Desktop zip and config entry', () => {
+    const cfg = '{\n  "mcpServers": {}\n}'
+    render(
+      <ClaudePluginPanel
+        onLoad={() => {}}
+        plugin={{ ok: true, agent: 'a:runspec-operator', commands: [], zip: '/x/claude-plugin/runspec-console.zip', desktop_config: cfg }}
+      />,
+    )
+    expect(screen.getByText('/x/claude-plugin/runspec-console.zip')).toBeTruthy()
+    expect(screen.getByTestId('desktop-config').textContent).toBe(cfg)
+    expect(screen.getByText(/Upload plugin/)).toBeTruthy()
+  })
+
   it('shows why the plugin is unavailable', () => {
     render(<ClaudePluginPanel plugin={{ ok: false, reason: 'Start the MCP server first.' }} onLoad={() => {}} />)
     expect(screen.getByText('Start the MCP server first.')).toBeTruthy()
