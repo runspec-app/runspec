@@ -205,7 +205,7 @@ class TermSendMixin:
             height=SEND_BAR_HEIGHT,
             min_size=(560, 180),
             on_top=True,
-            background_color="#101216",
+            background_color="#262e33",
             text_select=True,
         )
         with st["lock"]:

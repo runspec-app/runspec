@@ -14,7 +14,7 @@ The moving parts:
 |---|---|
 | A custom **LLM adapter** entry point (`runspec_console.adapters`) | Makes your gateway a selectable provider — and, when active, the console brands its window title, docs link, and update check from *your* package's metadata |
 | A **config seed** entry point (`runspec_console.config_seed`) | Ships baseline config files as package data, applied on first launch and re-applied on upgrade — works fully offline. **Also a branding source:** an AI-off / adapter-less package (no LLM provider) brands its window title, docs link and update check from *this* package's metadata |
-| **`[console.theme]`** (delivered by the seed) | Accent colour, brand name, icon, watermark, title-bar tint |
+| **`[console.theme]`** (delivered by the seed) | Accent colour, brand name, icon, title-bar tint |
 | **`[project.scripts]`** | A branded launcher command |
 
 A [Config Sync](console-team.md) repo can layer on top of the seed for
@@ -152,8 +152,6 @@ brand_name      = "MyCorp Console"
 accent_color    = "#b3172a"
 icon            = "pkg:mycorp_console:app.ico"   # your bundled icon
 title_bar_color = "#7a0f1d"                      # Windows 11 caption tint (unset = system title bar)
-watermark_text  = "MyCorp internal"
-watermark_style = "banner"                       # tiled | banner | center
 
 # Bootstrap the live config layer: consoles pull day-to-day config from git.
 [config_sync]
@@ -320,9 +318,6 @@ install, pixel-identical.
 | `accent_color` | `#rgb` / `#rrggbb` | UI primary colour **and** the generated app icon |
 | `icon` | file path or `pkg:<module>:<relpath>` | Explicit `.ico`/`.png` app icon (bundle it as package data with the `pkg:` form) |
 | `title_bar_color` | hex | Native Windows 11 caption tint — independent of `accent_color`, so a blue-accent UI can carry a red title bar. Unset leaves the system title bar; Windows 10 and other platforms keep the system title bar too |
-| `watermark_text` | text | Faint watermark behind content |
-| `watermark_logo` | `http(s)`/`data:` image URL | Image watermark |
-| `watermark_style` | `tiled` / `banner` / `center` | Repeated marks, one large upper-third mark, or one centred mark |
 
 The window title, in-app documentation link, and update-check target come
 from your **package metadata** (§1) — the package supplying the active LLM

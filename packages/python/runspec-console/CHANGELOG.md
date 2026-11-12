@@ -9,6 +9,46 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.402.0] — 2026-11-12
+
+### Changed
+
+- **Gunmetal dark theme and satin aluminium light theme.** The dark theme was
+  near-black and the light theme near-white. Dark surfaces are now a gunmetal
+  blue-grey (`#1e2428` shell to `#39434a` popovers) and light surfaces a satin
+  aluminium grey (`#d4d9dd` shell to `#f5f6f7` popovers, no pure white). The
+  text greys are re-tuned so labels and hints still clear 4.5:1 on every
+  surface. The light-theme accent used for text (active tab, sidebar title,
+  links) is a step deeper teal (`#08665c`) so it stays readable on the grey
+  shell; filled buttons keep `#0b7a6e`. The window's pre-paint colour matches
+  the new dark ground.
+- **Grouped tab bar with a More menu.** The top tabs no longer overflow the
+  default window width. They are grouped as Console, Forms, History, Logs ·
+  Schedules, Triggers, Rota · Knowledge, Marketplace, with a thin rule between
+  groups. Files, Specs, Improve, Evals and Dev move into a **More** menu, which
+  takes the open tab's name while one of them is showing (Files also keeps its
+  toolbar button). Ctrl+1…9 now follows the on-screen order.
+- **Sidebar.** A **Filter hosts** box appears when the fleet has more than six
+  hosts; it matches host or group names and opens collapsed groups that
+  contain a match. Denylist and Env files share one row at the bottom of the
+  sidebar instead of two full-width buttons. Disconnected-host dots use the
+  theme's faint grey instead of a fixed `#595959`.
+
+### Fixed
+
+- **The console frontend builds and runs on Windows again.** The Send to
+  terminals bar had `views/SendBar.tsx` beside a helper module
+  `views/sendBar.ts`. On a case-insensitive disk (Windows, default macOS) the
+  two names collide, so the dev app failed to load and the typecheck and many
+  tests failed. The helper module is now `views/sendBarModel.ts`.
+
+### Removed
+
+- **Content watermark.** `[console.theme] watermark_text`, `watermark_logo` and
+  `watermark_style` are no longer read, and `brand_theme()` no longer returns
+  them. A config seed that still sets them loads without error and draws
+  nothing.
+
 ## [0.401.2] — 2026-11-12
 
 ### Fixed

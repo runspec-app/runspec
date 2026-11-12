@@ -446,7 +446,7 @@ def _window_kwargs() -> dict[str, object]:
         "min_size": (1024, 600),
         # Paint the window the dark-theme content colour (App.tsx contentBg) so
         # there's no white flash before the SPA mounts.
-        "background_color": "#101216",  # = ThemeContext.surfaces(dark).base — the pre-paint colour
+        "background_color": "#262e33",  # = ThemeContext.surfaces(dark).base — the pre-paint colour
         # Native "are you sure?" guard so an accidental close doesn't drop an
         # in-progress agent run or chat.
         "confirm_close": True,

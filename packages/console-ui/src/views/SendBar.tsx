@@ -22,7 +22,7 @@ import {
 } from '../ThemeContext'
 import {
   KEY_BUTTONS, describeResult, historyStep, needsConfirm, pushHistory, signature, tickedIds,
-} from './sendBar'
+} from './sendBarModel'
 
 const POLL_MS = 1500
 

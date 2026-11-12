@@ -9,7 +9,7 @@ import { resolve } from 'node:path'
 
 import {
   surfaces, RADIUS, UI_FONT, MONO_FONT, FONT_SIZE, withAlpha, type Surfaces,
-  textSecondary, textMuted, textFaint,
+  textSecondary, textMuted, textFaint, textColor, DEFAULT_ACCENT,
 } from './ThemeContext'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -137,6 +137,13 @@ describe('muted-text contrast floor', () => {
     it(`${theme}: faint marks reach 3:1 on every surface`, () => {
       for (const lvl of levels) {
         expect(contrast(textFaint(isDark), sf[lvl]), `faint on ${lvl}`).toBeGreaterThanOrEqual(3)
+      }
+    })
+    it(`${theme}: primary text and the default accent read as text on every surface`, () => {
+      const accent = isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light
+      for (const lvl of levels) {
+        expect(contrast(textColor(isDark), sf[lvl]), `text on ${lvl}`).toBeGreaterThanOrEqual(7)
+        expect(contrast(accent, sf[lvl]), `accent on ${lvl}`).toBeGreaterThanOrEqual(4.5)
       }
     })
     it(`${theme}: the hierarchy steps down (secondary > muted > faint)`, () => {

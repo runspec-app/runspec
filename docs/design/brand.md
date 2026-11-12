@@ -70,6 +70,9 @@ an approval is waiting, faded bar = running, outlined triangle = paused.
 |---|---|---|
 | Slate | `#111418` | Dark ground, ink on light |
 | Chalk | `#e8ebef` | Text on dark |
+| Gunmetal | `#262e33` | The console's dark ground (surfaces `#1e2428` → `#39434a`) |
+| Satin aluminium | `#e0e4e7` | The console's light ground (surfaces `#d4d9dd` → `#f5f6f7`) |
+| Teal (light text) | `#08665c` | Accent text on the aluminium shell (4.8:1 on its darkest surface) |
 | Teal | `#3cc7b6` | Brand accent on dark |
 | Deep teal | `#0e8f80` | Icon tile, accent on light |
 | Teal (button) | `#0b7a6e` | Filled buttons, links on light (white text 5.2:1) |

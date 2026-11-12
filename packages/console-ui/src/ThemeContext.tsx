@@ -6,7 +6,7 @@ export const useIsDark = () => useContext(ThemeContext)
 
 // Primary text colour for raw (non-antd) elements, so they're readable in both
 // themes (a bare <div> otherwise defaults to black, invisible in dark mode).
-export const textColor = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.88)')
+export const textColor = (isDark: boolean) => (isDark ? '#e8ebef' : '#1b2126')
 
 // Muted-text hierarchy (dark / light) — one canonical pair per role, so
 // identical-purpose text renders identically across tabs and the whole
@@ -17,9 +17,9 @@ export const textColor = (isDark: boolean) => (isDark ? 'rgba(255,255,255,0.85)'
 // marks that carry no information on their own (an empty-cell dash, a caret, an
 // off-state icon), so >= 3:1. Text that says something (an empty-state message,
 // a hint) uses muted, never faint.
-export const textSecondary = (isDark: boolean) => (isDark ? '#aaaaaa' : '#555555')  // readable secondary: labels, descriptions
-export const textMuted = (isDark: boolean) => (isDark ? '#8c8c8c' : '#6b6b6b')      // dim: hints, separators, muted icons, counts
-export const textFaint = (isDark: boolean) => (isDark ? '#6e6e6e' : '#8a8a8a')      // faintest: empty-cell dashes, carets, off-state icons
+export const textSecondary = (isDark: boolean) => (isDark ? '#c3ccd2' : '#3d454c')  // readable secondary: labels, descriptions
+export const textMuted = (isDark: boolean) => (isDark ? '#a9b3ba' : '#525b63')      // dim: hints, separators, muted icons, counts
+export const textFaint = (isDark: boolean) => (isDark ? '#8a959d' : '#6e7780')      // faintest: empty-cell dashes, carets, off-state icons
 // Small warning-toned text ("required" markers). Ant's colorWarning (#faad14) is
 // ~1.9:1 on white, so light uses a deeper orange that clears 4.5:1.
 export const textWarning = (isDark: boolean) => (isDark ? '#ffa940' : '#ad4e00')
@@ -27,8 +27,10 @@ export const textWarning = (isDark: boolean) => (isDark ? '#ffa940' : '#ad4e00')
 // The app's signature accent (sidebar title, active nav tab, links, arg names).
 // A white-label accent_color overrides the built-in runspec teal pair — App.tsx
 // provides the resolved value so every view honours the brand, not just the
-// shell chrome. See docs/design/brand.md.
-export const DEFAULT_ACCENT = { dark: '#3cc7b6', light: '#0b7a6e' }
+// shell chrome. See docs/design/brand.md. The light value is a step deeper
+// than the button teal so accent TEXT (active tab, sidebar title, links) still
+// clears 4.5:1 on the aluminium shell; filled buttons keep BRAND_PRIMARY.
+export const DEFAULT_ACCENT = { dark: '#3cc7b6', light: '#08665c' }
 
 // Ant's colorPrimary (filled buttons, switches, checkboxes) for an unbranded
 // console. Darker than the dark-theme accent so white button text stays legible
@@ -72,8 +74,10 @@ export const FONT_SIZE = { xs: 11, sm: 12, md: 13, lg: 14, xl: 16, xxl: 18, xxxl
 //   base    → content area behind everything
 //   raised  → cards, inputs, tables, panels sitting on the content
 //   overlay → popovers, dropdowns, modals, drawers floating above it all
-// Dark surfaces are a cool near-black (not pure neutral) so any white-label
-// accent sits on it cleanly; light is a soft grey with white cards. App.tsx maps
+// Dark is gunmetal, a blue-grey lifted well off black so long sessions don't
+// read as a void; light is satin aluminium, a machined grey with no pure white,
+// so the shell isn't glaring. Both keep a slight cool bias so any white-label
+// accent sits on them cleanly. App.tsx maps
 // these onto Ant's colorBgLayout / colorBgContainer / colorBgElevated so Ant
 // controls and raw elements share one scale; index.css mirrors them as
 // --rs-surface-* / --rs-border* / --rs-shadow-* vars (keep in sync).
@@ -83,18 +87,18 @@ export interface Surfaces {
   shadowSm: string; shadowMd: string; shadowLg: string
 }
 const DARK_SURFACES: Surfaces = {
-  sunken: '#0b0d10', base: '#101216', raised: '#171a1f', overlay: '#1e2228',
-  border: '#252a31', borderStrong: '#323844', divider: 'rgba(255,255,255,0.06)',
-  shadowSm: '0 1px 2px rgba(0,0,0,0.45)',
-  shadowMd: '0 4px 14px rgba(0,0,0,0.5)',
-  shadowLg: '0 16px 40px rgba(0,0,0,0.6)',
+  sunken: '#1e2428', base: '#262e33', raised: '#2f383e', overlay: '#39434a',
+  border: '#3b454c', borderStrong: '#4d5860', divider: 'rgba(255,255,255,0.07)',
+  shadowSm: '0 1px 2px rgba(6,10,13,0.35)',
+  shadowMd: '0 4px 14px rgba(6,10,13,0.4)',
+  shadowLg: '0 16px 40px rgba(6,10,13,0.5)',
 }
 const LIGHT_SURFACES: Surfaces = {
-  sunken: '#f0f2f5', base: '#f7f8fa', raised: '#ffffff', overlay: '#ffffff',
-  border: '#e5e8ec', borderStrong: '#d3d8df', divider: 'rgba(0,0,0,0.06)',
-  shadowSm: '0 1px 2px rgba(16,24,40,0.06)',
-  shadowMd: '0 4px 14px rgba(16,24,40,0.08)',
-  shadowLg: '0 16px 40px rgba(16,24,40,0.14)',
+  sunken: '#d4d9dd', base: '#e0e4e7', raised: '#eceff1', overlay: '#f5f6f7',
+  border: '#c3c9ce', borderStrong: '#adb4ba', divider: 'rgba(20,30,40,0.08)',
+  shadowSm: '0 1px 2px rgba(20,30,40,0.10)',
+  shadowMd: '0 4px 14px rgba(20,30,40,0.12)',
+  shadowLg: '0 16px 40px rgba(20,30,40,0.18)',
 }
 export const surfaces = (isDark: boolean): Surfaces => (isDark ? DARK_SURFACES : LIGHT_SURFACES)
 
