@@ -354,6 +354,7 @@ def bridge_stub(tmp_path, monkeypatch):
         _knowledge_catalog = Bridge._knowledge_catalog
         _knowledge_local_names = Bridge._knowledge_local_names
         _wiki_page_map = Bridge._wiki_page_map
+        knowledge_wiki_check = Bridge.knowledge_wiki_check
         _knowledge_scoped = Bridge._knowledge_scoped
         knowledge_save_fact = Bridge.knowledge_save_fact
         knowledge_review = Bridge.knowledge_review
@@ -402,6 +403,7 @@ def test_tool_gates_and_exposure(bridge_stub):
         "wiki_graph",
         "propose_fact",
         "list_wiki_inbox",
+        "check_wiki",
     ):
         assert bridge_stub._effective_tool_autonomy(n, {}) == "autonomous"
     for n in ("review_wiki_fact", "edit_wiki_fact", "retire_wiki_fact"):
@@ -1106,3 +1108,37 @@ def test_repo_web_urls(kn):
         "https://github.com/acme/wiki/blob/main/terms/bau.md"
     )
     assert wp.repo_web_url("/srv/git/wiki.git") == ""
+
+
+def test_check_wiki_tool_reads_pages_against_discovery(kn, tmp_path, monkeypatch):
+    import json
+    import threading
+
+    from runspec_console import bridge_knowledge as bk
+    from runspec_console import config as config_mod
+    from runspec_console import wiki_pages
+
+    monkeypatch.setattr(config_mod, "knowledge_dir", lambda: tmp_path / "kd")
+    st = kn.KnowledgeStore(tmp_path / "kd", seed=False)
+    page = (
+        "---\ntype: Runnable\n---\n\n# cron\n\n## Works with\n\n- `remove --line 3`\n"
+    )
+    wiki_pages.write_cache(st.root, {"runnables/cron.md": page.encode()})
+
+    class B(bk.KnowledgeMixin):
+        pass
+
+    b = B()
+    b._memory_migration_checked = True
+    b._lock = threading.Lock()
+    b._runnables_cache = [
+        {
+            "name": "cron",
+            "args": [],
+            "commands": {"remove": {"args": [{"name": "match"}]}},
+        },
+        {"name": "df", "args": []},
+    ]
+    out = json.loads(b._run_knowledge_tool_inner("check_wiki", {}, ""))
+    assert out["summary"] == {"clash": 1, "stale": 0, "duplicate": 0, "gap": 1}
+    assert out["findings"][0]["flags"] == ["line"]

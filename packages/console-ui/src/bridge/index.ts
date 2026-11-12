@@ -1089,6 +1089,22 @@ export interface WikiPage {
   error?: string       // the page couldn't be read cleanly
 }
 
+// The wiki check (runspec_console/wiki_check.py).
+export interface WikiCheckFinding {
+  kind: 'clash' | 'stale' | 'duplicate' | 'gap'
+  entity: string
+  path: string
+  message: string
+  flags?: string[]   // clash: the --flags the runspec.toml doesn't have
+  paths?: string[]   // duplicate: the pages that repeat it
+  names?: string[]   // gap: installed runnables with no page
+}
+
+export interface WikiCheck {
+  summary: { clash: number; stale: number; duplicate: number; gap: number }
+  findings: WikiCheckFinding[]
+}
+
 // A page edit kept on this console until proposed.
 export interface WikiDraft {
   path: string
@@ -1166,6 +1182,8 @@ export interface WikiRefreshResult {
 export interface MemorySyncPullResult {
   ok: boolean; error?: string
   ref?: string; commit?: string; files?: number; facts?: number; added?: number; removed?: number; skipped?: string[]
+  pages?: { pages: number; added: number; removed: number }  // the team wiki's pages
+  drafts_landed?: number  // your page edits the team has now merged
 }
 
 // ── Team knowledge wiki (knowledge.py / bridge_knowledge.py) ─────────────────
@@ -3214,6 +3232,8 @@ export interface BridgeApi {
   memory_sync_status: () => Promise<MemorySyncStatus>
   // The team wiki's pages (OKF Markdown) Memory Sync's Pull cached, parsed.
   knowledge_wiki_pages: () => Promise<WikiPages>
+  // What in the team wiki needs a look (out-of-date flags, stale, repeated, no page).
+  knowledge_wiki_check: () => Promise<WikiCheck>
   // Edits to the team's pages, kept on this console until proposed.
   knowledge_drafts: () => Promise<{ drafts: WikiDraft[]; drafted: string[] }>
   knowledge_draft_text: (path: string, entity?: string) => Promise<{ ok: boolean; error?: string; path?: string; text?: string; base?: string | null; drafted?: boolean }>

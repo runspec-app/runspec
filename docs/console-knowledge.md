@@ -62,6 +62,25 @@ compare view on GitHub). The team reviews it there like any change to the repo.
 Your edits stay on this console until a Pull shows the team's page matching
 them, so you can keep editing and propose again; the same branch updates.
 
+### The wiki check
+
+A line at the top of the Tools view says what in the team wiki needs a look,
+and opens to the details:
+
+- **out of date**: a runnable's page mentions a `--flag` its `runspec.toml`
+  doesn't have (on the runnable or any of its verbs; `--help`, `--debug`,
+  `--env` and `--run-as` always count as known). The page needs updating.
+- **due a check**: a page past its `stale_after` date, or marked `deprecated`
+  while the tool is still installed.
+- **repeated**: the same bullet on more than one page (bullets under 24
+  characters don't count). Keep it in one place.
+- **without a page**: installed runnables the team has no page for. Click one
+  to open it and **Start a page**.
+
+Clicking a finding opens the page. The agent runs the same check with
+`check_wiki` (read-only, no approval), so you can ask it to look over the wiki
+and suggest fixes, which reach you as facts or page edits to review.
+
 The agent gets a runnable's page too. When it searches for or describes the
 runnable, the page's **Works with** and **Watch out for** bullets come first in
 its notes, before facts. `search_wiki` also searches pages, and `wiki_page`
@@ -151,7 +170,7 @@ schedules and runbooks, so a fact tied to those is true here but not
 necessarily there. The console works out a fact's scope and shows it:
 
 - **Team**: about runnables, apps, services, terms, teams and topics, in words
-  that hold anywhere. These are the facts Push shares.
+  that hold anywhere. These are the facts that can go on the team's pages.
 - **This console** (a dashed tag on the fact; the tooltip says why): the fact is
   about a `host:`, `group:`, `profile:`, `trigger:`, `schedule:` or `runbook:`;
   it came from this console's run history or config (Capture); or its text
@@ -258,7 +277,7 @@ your config, and Config Sync stays pull-only.
 | CA bundle, Verify TLS | as for Config Sync, for an internal CA or a TLS-inspecting proxy |
 
 **Test connection** checks the repo is reachable and whether the team branch
-and your branch exist yet. Save, Test, Push and Pull each leave their result on
+and your branch exist yet. Save, Test, Propose and Pull each leave their result on
 screen (under the buttons in Settings, beside them on the Knowledge tab) until
 the next action, so a credential or server error is visible.
 
@@ -268,29 +287,22 @@ from known accounts. Set **Commit email** to the email on your GitLab account
 and push again. The settings are stored as `[memory_sync]` in
 `config.toml`; the secret stays in the keychain.
 
-**Push** (Knowledge tab) shares your approved *team* facts and nothing else.
-It first shows what it will share and what stays on this console, fact by fact,
-with the reason each stays:
+You share with the team through the wiki's pages: **Propose changes** on the
+Tools view (see [Editing pages and proposing them to the team](#editing-pages-and-proposing-them-to-the-team)).
+Your edits reach the team when someone merges `contrib/<lane>` into the team
+branch, so everything is reviewed twice: on your console, then in the merge
+request. Protect the team branch on the repo so merges go through review.
 
-- It writes one file, `facts/<lane>.toml`, on your own branch `contrib/<lane>`.
-  Nothing else in the repo changes and it never force-pushes. Your branch starts
-  from the team branch the first time.
-- Only *approved team* facts go: never the inbox, observed usage, retired
-  facts, this-console facts, or `evidence` ids (they name local runs). A fact
-  whose text now looks like a secret is held back.
-- Each pushed fact is signed by your lane, not by your login and machine name.
-- A pull ignores any this-console fact a teammate pushed from an older
-  console (one about their hosts, groups, schedules or `host:local`).
-- A dot on **Push** means you have approved facts that aren't pushed yet.
+Earlier consoles shared facts directly as `facts/<lane>.toml`. That **Push**
+button is gone (console 0.411.0): use **Add all facts to pages** once to move
+your approved team facts onto the pages, and propose them. Pull still reads any
+`facts/*.toml` already in the repo, so a team can move over at its own pace.
+A pull ignores any this-console fact a teammate shared from an older console
+(one about their hosts, groups, schedules or `host:local`).
 
-Facts reach the team when someone merges `contrib/<lane>` into the team branch
-on the repo, so every fact is reviewed twice: in your inbox, then in the merge.
-Each contributor only ever changes their own file, so merging any number of
-`contrib/*` branches never conflicts. Protect the team branch on the repo so
-merges go through review.
-
-**Pull** reads every `facts/*.toml` on the team branch except your own (those
-facts are already here) into `team/`, replacing what was there. A file that
+**Pull** reads the team's pages (see [Tools](#tools-the-teams-pages)) and every
+`facts/*.toml` on the team branch except your own (those facts are already
+here) into `team/`, replacing what was there. A file that
 isn't valid TOML aborts the pull with nothing written; a file whose name isn't a
 valid lane is skipped. Team facts show in the graph, pages and search like your
 own, and confirmations from the team add to your count.
@@ -300,8 +312,9 @@ only once someone tags the team branch (`v1.4.0`, `v2026.10.12`), the same
 releases that publish the Pages site. "Newest" compares the numbers, so
 `v1.10.0` beats `v1.9.0`; pre-release tags (`v2.0.0-rc1`) and other series
 (`emea-v3`) never count. A repo with no release tag yet refuses the pull and
-says so. Your own facts are unaffected: they are on your console from the moment
-you approve them, and Push still starts your branch from the team branch.
+says so. Your own facts and page edits are unaffected: they are on your console
+from the moment you make them, and Propose still starts your branch from the
+team branch.
 
 When the Knowledge tab opens, and after each pull, the console asks the repo
 (one `ls-remote`, nothing downloaded) whether there's something newer: new

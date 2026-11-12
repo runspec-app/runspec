@@ -5,8 +5,8 @@ description: "The console agent runs runnables through search_runnables, describ
 tags: [runspec, feature]
 status: stable
 generated:
-  by: runspec-console-seed/f40385e8558c
-  at: "2026-11-09"
+  by: runspec-console-seed/2c6197640cb6
+  at: "2026-11-12"
 ---
 # agent
 
@@ -34,7 +34,7 @@ Repos (Settings → Repos) are git checkouts the agent may read and edit locally
 
 Agent action tools: create_document (markdown to a file or host), create_schedule, emit_event, open_url, open_file, reveal_in_folder, play_sound, run_runbook and run_saved_run. fetch_url reads a web page; render_diagram draws Mermaid text to a PNG in the workspace (e.g. for confluence add-diagram --image); console_status reports the hosts, the current time and what is running.
 
-Wiki tools, also offered over the MCP server: search_wiki, wiki_page, wiki_graph, list_wiki_inbox and propose_fact run without approval; review_wiki_fact, edit_wiki_fact and retire_wiki_fact need approval; pin_wiki_fact pins a fact into every chat.
+Wiki tools, also offered over the MCP server: search_wiki, wiki_page, wiki_graph, list_wiki_inbox, check_wiki and propose_fact run without approval; review_wiki_fact, edit_wiki_fact and retire_wiki_fact need approval; pin_wiki_fact pins a fact into every chat.
 
 search_marketplace finds runnable packages that could be installed but are not; the agent can only recommend them, installing stays an operator action in the Marketplace tab.
 

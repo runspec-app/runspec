@@ -1,29 +1,22 @@
-// The Knowledge tab's Memory Sync buttons: pull the team's facts, push your
-// approved ones to your own contrib/ branch. Settings live in Settings → Memory
-// Sync (components/MemorySyncTab.tsx); until a repo is set, one button opens it.
-// The outcome of a push or pull goes to onResult, which the tab shows as its own
-// line under the toolbar (SyncResultBanner) so a long message can't widen the row.
-// When Pull reads release tags, the Pull button shows a dot for a newer tag (one
-// ls-remote when the tab opens and after each pull).
+// The Knowledge tab's Memory Sync button: Pull brings in the team's pages and
+// facts. Sharing goes through Propose changes on the Tools view
+// (KnowledgeEdits.tsx); the old facts Push button is gone (0.411.0). Settings
+// live in Settings → Memory Sync (components/MemorySyncTab.tsx); until a repo is
+// set, one button opens it. The outcome of a pull goes to onResult, which the tab
+// shows as its own line under the toolbar (SyncResultBanner) so a long message
+// can't widen the row. When Pull reads release tags, the Pull button shows a dot
+// for a newer tag (one ls-remote when the tab opens and after each pull).
 
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Badge, Button, Modal, Space, Tooltip, Typography } from 'antd'
-import { CloudDownloadOutlined, CloudUploadOutlined, TeamOutlined } from '@ant-design/icons'
+import { Alert, Badge, Button, Tooltip } from 'antd'
+import { CloudDownloadOutlined, TeamOutlined } from '@ant-design/icons'
 
-import { bridge, type MemorySyncPreview, type MemorySyncStatus, type MemorySyncUpdate } from '../bridge'
+import { bridge, type MemorySyncStatus, type MemorySyncUpdate } from '../bridge'
 import { errorText, type SyncResult } from '../components/MemorySyncTab'
-import { textMuted, textSecondary, useIsDark } from '../ThemeContext'
-
-const { Text } = Typography
-
-/** "1 fact" / "3 facts". */
-export function facts(n: number): string {
-  return `${n} fact${n === 1 ? '' : 's'}`
-}
 
 interface KnowledgeSyncProps {
   onOpenSettings?: () => void
-  // The last push / pull outcome, or null when a new one starts.
+  // The last pull outcome, or null when a new one starts.
   onResult?: (result: SyncResult | null) => void
 }
 
@@ -44,16 +37,27 @@ export function pullTip(status: MemorySyncStatus, update: MemorySyncUpdate | nul
     else if (status.pull_from === 'branch') newer = ` ${status.branch} has new merges.`
     else newer = ` ${update.latest} is ready to pull.`
   }
-  return `Bring in the team's facts from ${status.pull_source || status.branch}. ${last}${newer}`
+  return `Bring in the team's pages and facts from ${status.pull_source || status.branch}. ${last}${newer}`
+}
+
+/** The Pull result line: pages first (the team wiki), then facts. */
+export function pullText(r: {
+  ref?: string; facts?: number; files?: number; added?: number; removed?: number; skipped?: string[]
+  pages?: { pages: number; added: number; removed: number }; drafts_landed?: number
+}): string {
+  const from = r.ref ? ` from ${r.ref}` : ''
+  const parts: string[] = []
+  if (r.pages) parts.push(`${r.pages.pages} page${r.pages.pages === 1 ? '' : 's'} (${r.pages.added} new, ${r.pages.removed} removed)`)
+  parts.push(`${r.facts ?? 0} team fact${r.facts === 1 ? '' : 's'} by ${r.files ?? 0} contributor${r.files === 1 ? '' : 's'}`)
+  const landed = r.drafts_landed ? ` ${r.drafts_landed} of your page edits ${r.drafts_landed === 1 ? 'is' : 'are'} now merged.` : ''
+  const skipped = r.skipped?.length ? ` Skipped ${r.skipped.join(', ')} (not a valid name).` : ''
+  return `Pulled ${parts.join(' and ')}${from}.${landed}${skipped}`
 }
 
 export function KnowledgeSync({ onOpenSettings, onResult }: KnowledgeSyncProps) {
   const [status, setStatus] = useState<MemorySyncStatus | null>(null)
-  const [busy, setBusy] = useState<'' | 'push' | 'pull'>('')
+  const [busy, setBusy] = useState(false)
   const [update, setUpdate] = useState<MemorySyncUpdate | null>(null)
-  // The Push confirmation: what leaves this console and what stays, fact by fact.
-  const [preview, setPreview] = useState<MemorySyncPreview | null>(null)
-  const isDark = useIsDark()
   const setResult = (r: SyncResult | null) => onResult?.(r)
 
   const load = useCallback(() => {
@@ -73,105 +77,35 @@ export function KnowledgeSync({ onOpenSettings, onResult }: KnowledgeSyncProps) 
   if (!status) return null
   if (!status.configured) {
     return (
-      <Tooltip title="Share approved facts with your team through a git repo (Settings → Memory Sync).">
+      <Tooltip title="Share the team wiki through a git repo (Settings → Memory Sync).">
         <Button icon={<TeamOutlined />} onClick={onOpenSettings}>Share with team</Button>
       </Tooltip>
     )
   }
 
-  const openPreview = async () => {
-    setBusy('push')
-    try {
-      setPreview(await bridge.memory_sync_preview())
-    } catch (e) {
-      setResult({ ok: false, text: `Couldn't prepare the push: ${errorText(e)}` })
-    } finally { setBusy('') }
-  }
-
-  const push = async () => {
-    setPreview(null)
-    setBusy('push'); setResult(null)
-    try {
-      const r = await bridge.memory_sync_push()
-      if (!r.ok) setResult({ ok: false, text: `Push failed: ${r.error || 'unknown error'}` })
-      else if (!r.changed) setResult({ ok: true, text: `Nothing new to push: ${r.branch} already has your ${facts(r.facts ?? 0)}.` })
-      else setResult({ ok: true, text: `Pushed ${facts(r.facts ?? 0)} to ${r.branch}. The team sees them once that branch is merged.` })
-      load()
-    } catch (e) {
-      setResult({ ok: false, text: `Push failed: ${errorText(e)}` })
-    } finally { setBusy('') }
-  }
-
   const pull = async () => {
-    setBusy('pull'); setResult(null)
+    setBusy(true); setResult(null)
     try {
       const r = await bridge.memory_sync_pull()
       if (!r.ok) setResult({ ok: false, text: `Pull failed: ${r.error || 'unknown error'}` })
-      else {
-        const skipped = r.skipped?.length ? ` Skipped ${r.skipped.join(', ')} (not a valid name).` : ''
-        const from = r.ref ? ` from ${r.ref}` : ''
-        setResult({ ok: true, text: `Pulled ${r.facts ?? 0} team fact(s)${from} by ${r.files ?? 0} contributor(s): ${r.added ?? 0} new, ${r.removed ?? 0} removed.${skipped}` })
-      }
+      else setResult({ ok: true, text: pullText(r) })
       load(); checkUpdate()
     } catch (e) {
       setResult({ ok: false, text: `Pull failed: ${errorText(e)}` })
-    } finally { setBusy('') }
+    } finally { setBusy(false) }
   }
 
   return (
-    <Space.Compact>
-      <Tooltip title={pullTip(status, update)}>
-        <Button icon={<CloudDownloadOutlined />} loading={busy === 'pull'} onClick={pull}>
-          <Badge dot={!!update?.available && !update.pinned} offset={[6, -2]}>Pull</Badge>
-        </Button>
-      </Tooltip>
-      <Tooltip title={`${status.unpushed ? 'You have approved team facts that are not pushed yet.' : 'Everything approved is pushed.'} Last push: ${when(status.last_push)}.`}>
-        <Button icon={<CloudUploadOutlined />} loading={busy === 'push'} onClick={openPreview}>
-          <Badge dot={status.unpushed} offset={[6, -2]}>Push</Badge>
-        </Button>
-      </Tooltip>
-      <Modal
-        open={!!preview}
-        title={preview ? `Push ${facts(preview.share.length)} to ${preview.branch}?` : ''}
-        okText={preview && preview.share.length > 0 ? `Push ${facts(preview.share.length)}` : 'Push'}
-        okButtonProps={{ disabled: !preview || preview.share.length === 0 }}
-        onOk={push}
-        onCancel={() => setPreview(null)}
-        width={640}
-      >
-        {preview && (
-          <div data-testid="push-preview" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <Text style={{ color: textSecondary(isDark) }}>
-              Only {preview.path} on {preview.branch} changes, signed as {preview.lane}. The team sees these facts once that branch is merged into {status.branch}.
-            </Text>
-            {preview.share.length === 0 ? (
-              <Text style={{ color: textMuted(isDark) }}>No approved team facts to share yet.</Text>
-            ) : (
-              <ul style={{ margin: 0, paddingLeft: 18, maxHeight: 240, overflow: 'auto' }}>
-                {preview.share.map(f => <li key={f.id} style={{ marginBottom: 4 }}>{f.text}</li>)}
-              </ul>
-            )}
-            {preview.kept.length > 0 && (
-              <div>
-                <Text strong>Stays on this console ({facts(preview.kept.length)})</Text>
-                <ul style={{ margin: '4px 0 0', paddingLeft: 18, maxHeight: 180, overflow: 'auto' }}>
-                  {preview.kept.map(f => (
-                    <li key={f.id} style={{ marginBottom: 4 }}>
-                      {f.text} <Text style={{ color: textMuted(isDark), fontSize: 12 }}>({f.reason})</Text>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
-    </Space.Compact>
+    <Tooltip title={pullTip(status, update)}>
+      <Button icon={<CloudDownloadOutlined />} loading={busy} onClick={pull}>
+        <Badge dot={!!update?.available && !update.pinned} offset={[6, -2]}>Pull</Badge>
+      </Button>
+    </Tooltip>
   )
 }
 
-// The last push / pull outcome. It stays until the next one or until dismissed,
-// so a failure (credentials, a refused push) can't slip by.
+// The last pull outcome. It stays until the next one or until dismissed, so a
+// failure (credentials, an unreachable repo) can't slip by.
 export function SyncResultBanner({ result, onClose }: { result: SyncResult | null, onClose: () => void }) {
   if (!result) return null
   return (

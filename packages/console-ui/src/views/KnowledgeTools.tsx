@@ -13,8 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Empty, Input, Space, Spin, Tag, Tooltip, Typography, message } from 'antd'
 import { EditOutlined, ExportOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons'
 
-import { bridge, type KnowledgeFact, type Runnable, type WikiDraft, type WikiPage, type WikiPages } from '../bridge'
+import { bridge, type KnowledgeFact, type Runnable, type WikiCheck, type WikiDraft, type WikiPage, type WikiPages } from '../bridge'
 import { DiffView, PageEditor, ProposeBar } from './KnowledgeEdits'
+import { WikiCheckPanel } from './KnowledgeCheck'
 import { Markdown } from '../components/Markdown'
 import {
   MONO_FONT, RADIUS, surfaces, textColor, textFaint, textMuted, textSecondary, useAccent, useIsDark, withAlpha,
@@ -102,10 +103,12 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
   const [drafts, setDrafts] = useState<WikiDraft[]>([])
   const [drafted, setDrafted] = useState<Set<string>>(new Set())
   const [editing, setEditing] = useState<{ path: string; entity: string } | null>(null)
+  const [check, setCheck] = useState<WikiCheck | null>(null)
 
   const load = useCallback(() => {
     bridge.knowledge_wiki_pages().then(setWiki).catch(() => setWiki({ pages: [], repo_url: '', ref: '', configured: false }))
     bridge.knowledge_drafts().then(r => { setDrafts(r?.drafts ?? []); setDrafted(new Set(r?.drafted ?? [])) }).catch(() => { setDrafts([]) })
+    bridge.knowledge_wiki_check().then(r => setCheck(r?.summary ? r : null)).catch(() => setCheck(null))
   }, [])
   useEffect(() => { if (active) load() }, [active, load])
   useEffect(() => {
@@ -183,6 +186,9 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minHeight: 0 }}>
     <ProposeBar drafts={drafts} configured={!!wiki?.configured} onChanged={load} onOpenSettings={onOpenSettings} />
+    {pages.length > 0 && (
+      <WikiCheckPanel check={check} onOpen={t => { setQuery(''); setFilter('all'); setSelected(t.startsWith('runnable:') ? t.slice(9) : t) }} />
+    )}
     <div data-testid="knowledge-tools" style={{ display: 'flex', flex: 1, minHeight: 0, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, overflow: 'hidden' }}>
       {/* index */}
       <nav aria-label="Tools" style={{ width: 250, flexShrink: 0, background: sf.sunken, borderRight: `1px solid ${sf.border}`, display: 'flex', flexDirection: 'column', minHeight: 0 }}>

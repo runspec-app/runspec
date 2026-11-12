@@ -221,7 +221,7 @@ text = "Agent action tools: create_document (markdown to a file or host), create
 [[fact]]
 kind = "note"
 about = ["app:runspec-console", "feature:agent", "feature:knowledge"]
-text = "Wiki tools, also offered over the MCP server: search_wiki, wiki_page, wiki_graph, list_wiki_inbox and propose_fact run without approval; review_wiki_fact, edit_wiki_fact and retire_wiki_fact need approval; pin_wiki_fact pins a fact into every chat."
+text = "Wiki tools, also offered over the MCP server: search_wiki, wiki_page, wiki_graph, list_wiki_inbox, check_wiki and propose_fact run without approval; review_wiki_fact, edit_wiki_fact and retire_wiki_fact need approval; pin_wiki_fact pins a fact into every chat."
 
 [[fact]]
 kind = "note"
