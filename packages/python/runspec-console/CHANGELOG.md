@@ -9,6 +9,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.410.0] — 2026-11-12
+
+### Added
+
+- **Edit the team's pages from the Knowledge tab, and propose the edits.**
+  Changes to the team wiki's pages are kept on this console as page edits
+  until you propose them.
+  - **Add to page** (inbox facts, and team facts under a page) approves a fact
+    and adds it as a bullet to the right section of its page: **Works with** for
+    how tools connect, **Watch out for** for the rest, **Notes** on other pages.
+    A missing page starts as a new OKF page.
+  - **Add all facts to pages** turns every approved team fact not yet on a page
+    into page edits, once. This is the move from shared facts to pages.
+  - **Edit page** and **Start a page** open the page's Markdown.
+  - An edited page shows its diff with **Edit** and **Discard**, and the index
+    marks it.
+  - **Propose changes** pushes the edits to your `contrib/<lane>` branch in one
+    commit and links the merge request (GitLab) or compare view (GitHub). A
+    later Pull that brings in the merged pages clears those edits.
+
+  Facts that stay on this console are never added to a page. New bridge methods
+  `knowledge_drafts`, `knowledge_draft_text`, `knowledge_draft_save`,
+  `knowledge_draft_discard`, `knowledge_draft_fact`, `knowledge_convert_facts`
+  and `memory_sync_propose`; Pull reports `drafts_landed`.
+
+### Fixed
+
+- A wiki repo given as a local Windows path no longer produces a bogus web link.
+
 ## [0.409.0] — 2026-11-12
 
 ### Added

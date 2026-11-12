@@ -394,3 +394,78 @@ def test_branch_check_update_sees_new_commits(bridge, bare):
     assert not bridge.memory_sync_check_update()["available"]
     _team_file(bare, "bob", "two")
     assert bridge.memory_sync_check_update()["available"]
+
+
+def test_facts_become_page_edits_and_propose_opens_a_merge_request(bridge, bare):
+    from runspec_console import wiki_drafts, wiki_pages
+
+    page = b"---\ntype: Runnable\n---\n\n# cron\n\n## Works with\n\n- run list first\n"
+    gitsync.push_file(bare, "main", "runnables/cron.md", page, LOCAL)
+    assert bridge.memory_sync_pull()["pages"]["pages"] == 1
+    store = bridge._knowledge_store()
+
+    # A pending fact from the inbox: Add to page approves it and edits the page.
+    p = kn.make_fact(
+        kind="pairing",
+        about=["runnable:cron", "runnable:journal-vacuum"],
+        text="run journal-vacuum after clearing old cron output",
+        status="pending",
+        source="agent",
+    )
+    store.propose(p)
+    res = bridge.knowledge_draft_fact(p["id"])
+    assert res == {"ok": True, "path": "runnables/cron.md", "heading": "Works with"}
+    assert store.inbox() == []
+    drafts = bridge.knowledge_drafts()
+    assert [d["path"] for d in drafts["drafts"]] == ["runnables/cron.md"]
+    assert p["id"] in drafts["drafted"]
+
+    # A this-console fact is refused; conversion adds the rest, once.
+    local = _approved("web-01 runs cron at 02:00", ["host:web-01", "runnable:cron"])
+    term = _approved("BAU means business as usual", ["term:BAU"])
+    kn._save(store.root / kn.FACTS_FILE, [*store.own_facts(), local, term])
+    assert bridge.knowledge_draft_fact(local["id"])["ok"] is False
+    got = bridge.knowledge_convert_facts()
+    assert got["ok"] and got["kept_local"] == 1 and got["pages"] >= 1
+    assert "terms/bau.md" in [d["path"] for d in bridge.knowledge_drafts()["drafts"]]
+    assert bridge.knowledge_convert_facts()["facts"] == 0  # nothing twice
+
+    # Propose pushes every draft to contrib/<lane> and links the merge request.
+    out = bridge.memory_sync_propose()
+    assert out["ok"] and out["pages"] == 2 and out["branch"] == "contrib/jason"
+    assert out["merge_request_url"] == ""  # a local path has no web UI
+    pushed = gitsync.fetch_dir(
+        bare, "contrib/jason", LOCAL, "", suffix=".md", recursive=True
+    ).files
+    assert b"journal-vacuum" in pushed["runnables/cron.md"]
+    assert "terms/bau.md" in pushed
+
+    # Once the team merges it, the next Pull clears the drafts.
+    for path, data in pushed.items():
+        if wiki_pages.is_page_path(path):
+            gitsync.push_file(bare, "main", path, data, LOCAL)
+    pulled = bridge.memory_sync_pull()
+    assert pulled["drafts_landed"] == 2
+    assert wiki_drafts.draft_paths(store.root) == []
+
+
+def test_propose_with_nothing_to_propose(bridge):
+    assert bridge.memory_sync_propose() == {
+        "ok": False,
+        "error": "No page edits to propose.",
+    }
+
+
+def test_draft_text_save_and_discard(bridge):
+    got = bridge.knowledge_draft_text("", "runnable:df")
+    assert got["ok"] and got["path"] == "runnables/df.md" and got["base"] is None
+    assert "## Works with" in got["text"]
+    assert bridge.knowledge_draft_save("runnables/df.md", got["text"] + "\n- x\n")[
+        "kept"
+    ]
+    assert (
+        bridge.knowledge_draft_save("runnables/df.md", "password = hunter2abc")["ok"]
+        is False
+    )
+    assert bridge.knowledge_draft_discard("runnables/df.md")["discarded"]
+    assert bridge.knowledge_draft_text("../x.md")["ok"] is False

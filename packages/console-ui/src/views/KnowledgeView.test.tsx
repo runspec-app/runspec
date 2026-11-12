@@ -8,7 +8,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { GraphCanvas, KnowledgeView, staleCheck } from './KnowledgeView'
 import type { KnowledgeFact } from '../bridge'
 
-const { overview, page, review, distill, pin, search, retire } = vi.hoisted(() => ({
+const { overview, page, review, distill, pin, search, retire, draftFact  } = vi.hoisted(() => ({
   pin: vi.fn(),
   search: vi.fn(),
   retire: vi.fn(),
@@ -16,6 +16,7 @@ const { overview, page, review, distill, pin, search, retire } = vi.hoisted(() =
   page: vi.fn(),
   review: vi.fn(),
   distill: vi.fn(),
+  draftFact: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -28,6 +29,7 @@ vi.mock('../bridge', () => ({
       if (p === 'knowledge_pin') return pin
       if (p === 'knowledge_search') return search
       if (p === 'knowledge_retire') return retire
+      if (p === 'knowledge_draft_fact') return draftFact
       return vi.fn(async () => ({ ok: true }))
     },
   }),
@@ -133,6 +135,16 @@ describe('KnowledgeView', () => {
     expect(review).not.toHaveBeenCalled()
     fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
     await waitFor(() => expect(review).toHaveBeenCalledWith('k_p', false))
+  })
+
+  it('adds an inbox fact to its page', async () => {
+    draftFact.mockResolvedValue({ ok: true, path: 'runnables/x.md', heading: 'Watch out for' })
+    render(<KnowledgeView active aiEnabled />)
+    await waitFor(() => expect(overview).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('Inbox'))
+    await waitFor(() => expect(screen.getByText('web-01 has 64GB RAM')).toBeTruthy())
+    fireEvent.click(screen.getByText('Add to page'))
+    await waitFor(() => expect(draftFact).toHaveBeenCalledWith('k_p'))
   })
 
   it('shows search results even when searching from the inbox', async () => {

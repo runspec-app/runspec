@@ -10,10 +10,11 @@
 // editing them happens in the repo.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Empty, Input, Space, Spin, Tag, Tooltip, Typography } from 'antd'
-import { ExportOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons'
+import { Alert, Button, Empty, Input, Space, Spin, Tag, Tooltip, Typography, message } from 'antd'
+import { EditOutlined, ExportOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons'
 
-import { bridge, type KnowledgeFact, type Runnable, type WikiPage, type WikiPages } from '../bridge'
+import { bridge, type KnowledgeFact, type Runnable, type WikiDraft, type WikiPage, type WikiPages } from '../bridge'
+import { DiffView, PageEditor, ProposeBar } from './KnowledgeEdits'
 import { Markdown } from '../components/Markdown'
 import {
   MONO_FONT, RADIUS, surfaces, textColor, textFaint, textMuted, textSecondary, useAccent, useIsDark, withAlpha,
@@ -98,9 +99,13 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
     try { return localStorage.getItem(LAST_TOOL_KEY) ?? '' } catch { return '' }
   })
   const [facts, setFacts] = useState<KnowledgeFact[] | null>(null)
+  const [drafts, setDrafts] = useState<WikiDraft[]>([])
+  const [drafted, setDrafted] = useState<Set<string>>(new Set())
+  const [editing, setEditing] = useState<{ path: string; entity: string } | null>(null)
 
   const load = useCallback(() => {
     bridge.knowledge_wiki_pages().then(setWiki).catch(() => setWiki({ pages: [], repo_url: '', ref: '', configured: false }))
+    bridge.knowledge_drafts().then(r => { setDrafts(r?.drafts ?? []); setDrafted(new Set(r?.drafted ?? [])) }).catch(() => { setDrafts([]) })
   }, [])
   useEffect(() => { if (active) load() }, [active, load])
   useEffect(() => {
@@ -132,6 +137,24 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
   const tool = isPage ? null : tools.find(t => t.name === selected) ?? null
   const page = isPage ? pages.find(p => p.entity === selected) ?? null : tool?.page ?? null
   const entity = isPage ? selected : `runnable:${selected}`
+  const pagePath = page?.path ?? (entity.startsWith('runnable:') ? `runnables/${selected}.md` : '')
+  const draft = drafts.find(d => d.path === pagePath) ?? null
+
+  const addToPage = async (f: KnowledgeFact) => {
+    try {
+      const r = await bridge.knowledge_draft_fact(f.id)
+      if (r.ok) message.success(`Added to ${r.path} under \u201c${r.heading}\u201d. Propose it when you are ready.`)
+      else message.error(r.error || 'Could not add it to a page.')
+    } catch (e) { message.error(String(e)) }
+    load()
+  }
+  const convertAll = async () => {
+    try {
+      const r = await bridge.knowledge_convert_facts()
+      message.success(`${r.facts} fact${r.facts === 1 ? '' : 's'} added to ${r.pages} page${r.pages === 1 ? '' : 's'}.${r.kept_local ? ` ${r.kept_local} stay on this console.` : ''}${r.no_page ? ` ${r.no_page} have no page to go on.` : ''}`)
+    } catch (e) { message.error(String(e)) }
+    load()
+  }
 
   useEffect(() => {
     if (!selected) { setFacts(null); return }
@@ -158,6 +181,8 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
   })
 
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minHeight: 0 }}>
+    <ProposeBar drafts={drafts} configured={!!wiki?.configured} onChanged={load} onOpenSettings={onOpenSettings} />
     <div data-testid="knowledge-tools" style={{ display: 'flex', flex: 1, minHeight: 0, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, overflow: 'hidden' }}>
       {/* index */}
       <nav aria-label="Tools" style={{ width: 250, flexShrink: 0, background: sf.sunken, borderRight: `1px solid ${sf.border}`, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -189,7 +214,8 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
                 <button key={t.name} type="button" aria-current={selected === t.name ? 'true' : undefined}
                   data-testid={`tool-${t.name}`} style={rowStyle(selected === t.name)} onClick={() => setSelected(t.name)}>
                   <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{t.name}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 11 }}>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {drafts.some(d => d.path === `runnables/${t.name}.md`) && <Tooltip title="Edited on this console, not proposed yet"><EditOutlined aria-label="edited" style={{ color: accent }} /></Tooltip>}
                     {t.page
                       ? <span aria-label="has a team page" title="Has a team page" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 4, background: '#52c41a' }} />
                       : <span style={{ color: textFaint(isDark), fontStyle: 'italic' }}>no page</span>}
@@ -243,11 +269,16 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
                 {page.stale_after && page.stale_after < new Date().toISOString().slice(0, 10) && (
                   <Tag bordered={false} color="gold" style={{ margin: 0 }}>check again: stale since {page.stale_after}</Tag>
                 )}
-                {page.url && (
-                  <a href={page.url} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto', color: accent }}>
-                    <ExportOutlined /> Open in repo
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 12 }}>
+                  <a role="button" onClick={() => setEditing({ path: page.path, entity: page.entity })} style={{ color: accent }}>
+                    <EditOutlined /> Edit page
                   </a>
-                )}
+                  {page.url && (
+                    <a href={page.url} target="_blank" rel="noreferrer" style={{ color: accent }}>
+                      <ExportOutlined /> Open in repo
+                    </a>
+                  )}
+                </span>
               </div>
             )}
             <div>
@@ -267,6 +298,20 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
                 </div>
               )}
             </div>
+
+            {draft && (
+              <div data-testid="page-draft" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Text strong style={{ color: textColor(isDark) }}>Your edit to this page</Text>
+                  <Text style={{ fontSize: 12, color: textMuted(isDark) }}>not proposed yet · +{draft.added} −{draft.removed}</Text>
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                    <Button size="small" icon={<EditOutlined />} onClick={() => setEditing({ path: draft.path, entity: draft.entity })}>Edit</Button>
+                    <Button size="small" onClick={() => { bridge.knowledge_draft_discard(draft.path).then(load).catch(load) }}>Discard</Button>
+                  </span>
+                </div>
+                <DiffView diff={draft.diff} />
+              </div>
+            )}
 
             {page?.error && <Alert type="warning" showIcon message={`${page.path}: ${page.error}. It is shown as written.`} />}
 
@@ -294,36 +339,58 @@ export function KnowledgeTools({ runnables, active, onOpenSettings }: {
                     ? <>Add <span style={{ fontFamily: MONO_FONT }}>runnables/{tool?.name}.md</span> to the team wiki with “What it's for”, “Works with” and “Watch out for”, then Pull.</>
                     : <>Set up a team wiki repo to share pages with your team.</>}
                 </div>
-                {!wiki.configured && (
-                  <Button size="small" icon={<TeamOutlined />} style={{ marginTop: 8 }} onClick={() => onOpenSettings?.('memorySync')}>Share with team</Button>
-                )}
+                <Space size={8} style={{ marginTop: 8 }}>
+                  {tool && !draft && (
+                    <Button size="small" icon={<PlusOutlined />} onClick={() => setEditing({ path: `runnables/${tool.name}.md`, entity: `runnable:${tool.name}` })}>Start a page</Button>
+                  )}
+                  {!wiki.configured && (
+                    <Button size="small" icon={<TeamOutlined />} onClick={() => onOpenSettings?.('memorySync')}>Share with team</Button>
+                  )}
+                </Space>
                 {wiki.configured && pages.length === 0 && (
                   <Button size="small" icon={<ReloadOutlined />} style={{ marginTop: 8 }} onClick={() => bridge.memory_sync_pull().then(load).catch(load)}>Pull the team wiki</Button>
                 )}
               </div>
             )}
 
-            <ToolFacts facts={facts} />
+            <ToolFacts facts={facts} drafted={drafted} onAddToPage={addToPage} onConvertAll={convertAll} />
           </>
         )}
       </article>
     </div>
+    {editing && <PageEditor path={editing.path} entity={editing.entity} onClose={() => setEditing(null)} onSaved={load} />}
+    </div>
   )
 }
 
-function ToolFacts({ facts }: { facts: KnowledgeFact[] | null }) {
+function ToolFacts({ facts, drafted, onAddToPage, onConvertAll }: {
+  facts: KnowledgeFact[] | null
+  drafted: Set<string>
+  onAddToPage: (f: KnowledgeFact) => void
+  onConvertAll: () => void
+}) {
   const isDark = useIsDark()
   if (facts === null) return null
   const live = facts.filter(f => f.status !== 'retired')
-  const team = live.filter(f => f.scope !== 'local' && f.status === 'approved')
+  const team = live.filter(f => f.scope !== 'local' && f.status === 'approved' && f.source !== 'seed' && !drafted.has(f.id))
   const local = live.filter(f => f.scope === 'local')
   return (
     <>
       {team.length > 0 && (
         <section>
-          <h3 style={headingStyle(isDark)}>Team facts not on the page yet</h3>
-          <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4, color: textColor(isDark), maxWidth: '76ch' }}>
-            {team.map(f => <li key={f.id}>{f.text}</li>)}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <h3 style={headingStyle(isDark)}>Team facts not on the page yet</h3>
+            <Tooltip title="Every approved team fact (on any page) that isn't on a page yet becomes an edit of its page, for you to review and propose.">
+              <a role="button" onClick={onConvertAll} style={{ fontSize: 12 }}>Add all facts to pages</a>
+            </Tooltip>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6, color: textColor(isDark), maxWidth: '76ch' }}>
+            {team.map(f => (
+              <li key={f.id}>
+                {f.text}{' '}
+                <Button size="small" type="link" icon={<PlusOutlined />} onClick={() => onAddToPage(f)} style={{ padding: 0, height: 'auto' }}>Add to page</Button>
+              </li>
+            ))}
           </ul>
         </section>
       )}

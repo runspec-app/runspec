@@ -245,6 +245,8 @@ def repo_web_url(url: str) -> str:
     """The browsable https URL of a git remote, or ``""`` when it can't be
     worked out (a local path, an odd scheme). Credentials are dropped."""
     url = str(url or "").strip()
+    if "\\" in url or re.match(r"^[A-Za-z]:[\/]", url):
+        return ""  # a local Windows path, not a remote
     if url.startswith(("https://", "http://")):
         scheme, rest = url.split("://", 1)
         rest = rest.split("@", 1)[-1]  # drop user:token@

@@ -275,6 +275,14 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
         <Inbox
           facts={overview?.inbox ?? []}
           onApprove={f => review(f, true)}
+          onAddToPage={async f => {
+            try {
+              const r = await bridge.knowledge_draft_fact(f.id)
+              if (r.ok) message.success(`Added to ${r.path} under \u201c${r.heading}\u201d. Propose it from Tools when you are ready.`)
+              else message.error(r.error || 'Could not add it to a page.')
+            } catch (e) { message.error(String(e)) }
+            reloadAll()
+          }}
           onReject={f => review(f, false)}
           onEdit={f => setEditing({ fact: f, review: true })}
           onEntity={e => { setSelected(e); setTab('graph') }}
@@ -686,10 +694,11 @@ function FactRow({ fact, current, onEntity, onEdit, onRetire, actions, pins }: {
 
 // ── inbox ────────────────────────────────────────────────────────────────────
 
-function Inbox({ facts, onApprove, onReject, onEdit, onEntity, pins }: {
+function Inbox({ facts, onApprove, onAddToPage, onReject, onEdit, onEntity, pins }: {
   facts: KnowledgeFact[]
   pins?: Pins
   onApprove: (f: KnowledgeFact) => void
+  onAddToPage?: (f: KnowledgeFact) => void
   onReject: (f: KnowledgeFact) => void
   onEdit: (f: KnowledgeFact) => void
   onEntity: (e: string) => void
@@ -707,7 +716,14 @@ function Inbox({ facts, onApprove, onReject, onEdit, onEntity, pins }: {
       {facts.map(f => (
         <FactRow key={f.id} fact={f} onEntity={onEntity} pins={pins} actions={
           <Space size={4}>
-            <Button size="small" icon={<CheckOutlined />} onClick={() => onApprove(f)}>Approve</Button>
+            {onAddToPage && f.scope !== 'local' && (
+              <Tooltip title="Approve it and add it to its page in the team wiki, as an edit you propose later">
+                <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => onAddToPage(f)}>Add to page</Button>
+              </Tooltip>
+            )}
+            <Tooltip title={f.scope === 'local' ? 'Approve it as a fact on this console' : 'Approve it as a fact, without adding it to a page'}>
+              <Button size="small" icon={<CheckOutlined />} onClick={() => onApprove(f)}>Approve</Button>
+            </Tooltip>
             <Button size="small" icon={<EditOutlined />} onClick={() => onEdit(f)}>Edit</Button>
             <Popconfirm title="Reject this fact?" description="It leaves the inbox and isn't added to the wiki." okText="Reject" okButtonProps={{ danger: true }} onConfirm={() => onReject(f)}>
               <Button size="small" danger icon={<CloseOutlined />}>Reject</Button>

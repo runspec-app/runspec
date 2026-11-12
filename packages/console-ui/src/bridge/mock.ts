@@ -2199,6 +2199,19 @@ export const mockApi: BridgeApi = {
     contrib_branch: 'contrib/dev', path: 'facts/dev.toml', shareable: 3, unpushed: true, team_facts: 5,
     last_push: '', last_push_commit: '', last_pull: '2026-10-04T09:00:00Z', last_pull_commit: 'abc123', last_pull_ref: 'v1.0.0',
   }),
+  knowledge_drafts: async () => ({
+    drafted: ['k_3'],
+    drafts: [{
+      path: 'runnables/tail-log.md', entity: 'runnable:tail-log', new: false, added: 1, removed: 0,
+      diff: '--- a/runnables/tail-log.md\n+++ b/runnables/tail-log.md\n@@ -9,2 +9,3 @@\n - **before restart-service**: read the log first, a restart loses the stack trace.\n+- After a 502 from http-check, run tail-log on the same host before restarting anything.\n ',
+    }],
+  }),
+  knowledge_draft_text: async (path: string) => ({ ok: true, path, base: null, drafted: false, text: `---\ntype: Runnable\ntitle: "${path.split('/').pop()?.replace('.md', '')}"\nstatus: draft\n---\n\n# ${path.split('/').pop()?.replace('.md', '')}\n\n## What it's for\n\n## Works with\n\n## Watch out for\n` }),
+  knowledge_draft_save: async () => ({ ok: true, kept: true }),
+  knowledge_draft_discard: async () => ({ ok: true, discarded: true }),
+  knowledge_draft_fact: async () => ({ ok: true, path: 'runnables/tail-log.md', heading: 'Works with' }),
+  knowledge_convert_facts: async () => ({ ok: true, facts: 3, pages: 2, kept_local: 1, no_page: 0 }),
+  memory_sync_propose: async () => ({ ok: true, branch: 'contrib/dev', commit: 'abc999', changed: true, pages: 1, merge_request_url: 'https://gitlab.example.com/ops/wiki/-/merge_requests/new?merge_request%5Bsource_branch%5D=contrib%2Fdev&merge_request%5Btarget_branch%5D=main' }),
   knowledge_wiki_pages: async () => ({
     configured: true, repo_url: 'https://gitlab.example.com/ops/wiki', ref: 'v1.4.0',
     pages: [
