@@ -710,7 +710,7 @@ export function TriggersEditor({
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
-          React to a monitored event (<code>source:event</code>) — run a runnable (rule) or an agent turn. Saved to <code>runspec_triggers.toml</code>.
+          When something happens (a new email, a schedule, an alert), run a runnable or hand it to the assistant.
         </Text>
         <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={editing}>Add trigger</Button>
       </div>

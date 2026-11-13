@@ -16,7 +16,7 @@ export const NAV_GROUPS: readonly (readonly string[])[] = [
 ]
 
 /** Tabs that live in the More menu. */
-export const NAV_OVERFLOW: readonly string[] = ['rota', 'specs', 'improve', 'evals', 'dev']
+export const NAV_OVERFLOW: readonly string[] = ['analytics', 'rota', 'specs', 'improve', 'evals', 'dev']
 
 export interface NavLayout<T> {
   /** Non-empty groups, in NAV_GROUPS order. */

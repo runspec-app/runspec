@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Typography, Tooltip, message, Input, Drawer, Spin, Alert, Segmented, Switch } from 'antd'
-import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { Table, Tag, Typography, Tooltip, message, Input, Drawer, Spin, Alert, Segmented, Switch, Button } from 'antd'
+import { BarChartOutlined, RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { RUN_BY_FILTERS, isScheduled, runBy } from '../runBy'
 import type { ColumnType } from 'antd/es/table'
 import type { FilterValue } from 'antd/es/table/interface'
@@ -365,6 +365,8 @@ interface HistoryViewProps {
   activeScope: string[]
   onScopeToggle: (group: string) => void
   active: boolean
+  // Opens the Analytics tab (charts over the same runs).
+  onOpenAnalytics?: () => void
 }
 
 // Remembers the "Show hidden" switch across sessions (a per-viewer convenience).
@@ -414,7 +416,7 @@ export function historyStatusMatches(record: Pick<HistoryRecord, 'exitCode' | 's
   return value === 0 ? record.exitCode === 0 : record.exitCode !== 0
 }
 
-export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, active }: HistoryViewProps) {
+export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, active, onOpenAnalytics }: HistoryViewProps) {
   // History reads one host at a time (local + every connected remote) and merges
   // the results, so each host renders as it arrives. recordsByHost holds each
   // host's slim rows; hostStatus/targets drive the per-host fetch strip.
@@ -821,7 +823,11 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       <OnceHint id="history.rows">
         Open a run (its arrow, or Enter on the row) to see its arguments and log, and to rerun it. In the search, <span style={{ fontFamily: MONO_FONT }}>-name</span> leaves a runnable out.
       </OnceHint>
-      <PageToolbar>
+      <PageToolbar actions={onOpenAnalytics && (
+        <Tooltip title="Charts over these runs: success rate, durations, top runnables">
+          <Button size="small" icon={<BarChartOutlined />} onClick={onOpenAnalytics}>Analytics</Button>
+        </Tooltip>
+      )}>
         <Input
           prefix={<SearchOutlined />}
           placeholder="Search runnable, host, operator… (-name excludes)"

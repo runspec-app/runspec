@@ -45,13 +45,13 @@ describe('CommandInput with AI off', () => {
   it('drops the chat and runbook affordances from the placeholder', () => {
     renderComposer(false)
     expect(screen.queryByPlaceholderText(/ask the assistant/i)).toBeNull()
-    expect(screen.queryByPlaceholderText(/\$ runbooks/)).toBeNull()
-    expect(screen.getByPlaceholderText(/\/ runnables/)).toBeTruthy()
+    expect(screen.queryByPlaceholderText(/\$ runbook/)).toBeNull()
+    expect(screen.getByPlaceholderText(/\/ to run a runnable/)).toBeTruthy()
   })
 
   it('does not send plain text as a chat turn and keeps the draft', () => {
     const onSendChat = renderComposer(false)
-    const el = screen.getByPlaceholderText(/\/ runnables/) as HTMLTextAreaElement
+    const el = screen.getByPlaceholderText(/\/ to run a runnable/) as HTMLTextAreaElement
     fireEvent.change(el, { target: { value: 'restart nginx please' } })
     fireEvent.keyDown(el, { key: 'Enter' })
     expect(onSendChat).not.toHaveBeenCalled()

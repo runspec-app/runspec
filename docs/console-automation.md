@@ -7,7 +7,7 @@ station:
   reminder, a system toast — and run runnables or a headless agent turn.
   *(Windows)*
 - **Schedules** run runnables, runbooks, or agent prompts on a clock.
-- **Rota** is the shared working-hours gate over both, so automation only
+- **Working hours** (the rota) is the shared gate over both, so automation only
   runs while someone is around to approve confirmations.
 
 Everything automated goes through the **same autonomy gate as chat** —
@@ -568,9 +568,9 @@ tab compares models on the same suite without running anything.
 On Claude Haiku 4.x the console sends no thinking/effort (Haiku only supports the
 older thinking format), so `[llm] effort` is simply ignored for it.
 
-## Rota — working hours for automation
+## Working hours (rota) for automation
 
-Because automated runs still need a human for confirmations, the **Rota** tab
+Because automated runs still need a human for confirmations, the **Working hours** tab
 restricts automation to a weekly working-hours grid: outside the window,
 matching events and scheduled fires are **skipped** (dropped, not queued — no
 backlog dump when the window opens). Off by default; per-day on/off with
@@ -594,11 +594,11 @@ can't be read, it falls back to the grid.
 
 Two presence controls layer on top (both **Windows**):
 
-- **Take a break** — a Rota-tab button suspends triggers and schedules for N
+- **Take a break** — a Working hours tab button suspends triggers and schedules for N
   minutes (15/30/60/custom) and auto-resumes, staying paused if the screen is
   still locked at the return time.
 - **Lock auto-suspend** (default **on**) — reactive triggers don't fire while
-  the screen is locked, with a live indicator on the Rota tab. It fails
+  the screen is locked, with a live indicator on the Working hours tab. It fails
   closed (an uncertain probe means paused), applies to all triggers with no
   per-trigger bypass, and exempts schedules (pre-authorised work, not
   reactions-while-away). It's a governance control, not a security boundary;

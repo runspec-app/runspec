@@ -25,11 +25,11 @@ to read, seed, or sync them directly. All files are plain TOML.
 | File | Holds | Synced? | Edited in |
 |---|---|---|---|
 | `config.toml` | All `[section]` settings below | Yes (deep-overlay) | Settings tabs |
-| `runspec_hosts.toml` | `[[host]]` fleet entries | Yes (by `name`) | Settings → Jump Hosts |
+| `runspec_hosts.toml` | `[[host]]` fleet entries | Yes (by `name`) | Settings → Hosts |
 | `runspec_groups.toml` | Group-name registry | Yes | Host editor → Manage groups |
 | `runspec_profiles.toml` | Profile definitions | Yes (active pick is machine-local) | Sidebar / host editor |
 | `runspec_triggers.toml` | `[triggers.<name>]` tables | Yes | Triggers tab |
-| `runspec_rota.toml` | Working-hours rota | No — machine-local | Rota tab |
+| `runspec_rota.toml` | Working-hours rota | No — machine-local | Working hours tab |
 | `runspec_filters.toml` | [Transfer filters](console-hosts.md#filters) — source-side pipelines | Yes | Files tab drop dialog → Manage filters… |
 | `runspec_saved_transfers.toml` | [Saved transfers](console-hosts.md#saved-transfers) — reusable file-gathering scenarios | Yes (by `id`) | Files tab → Save as saved transfer… |
 | `runspec_credentials.toml` | Credential **metadata** (secrets live in the OS keychain) | Yes | Settings → Credentials |
@@ -496,7 +496,7 @@ indexes are `[[marketplace.repos]]` tables (keys documented on that page).
 
 ## `[provision]` {#provision}
 
-Settings for Provision venv and Update venv (Settings → Jump Hosts).
+Settings for Provision venv and Update venv (Settings → Hosts).
 
 | Key | Default | What it does |
 |---|---|---|

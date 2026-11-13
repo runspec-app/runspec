@@ -388,7 +388,10 @@ function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: 
     for (const s of eligible) {
       const inFocus = !focus || focus(s.target)
       const pool = focus ? states.filter(x => focus(x.target)) : states
-      const preselect = inFocus && (action === 'uninstall' ? true : s.state === 'outdated' || (s.state === 'absent' && !pool.some(x => x.installed)))
+      // Uninstall starts with nothing ticked: on a fleet a pre-ticked list is one
+      // click from removing a package from every venv. Install/update keeps its
+      // helpful defaults (outdated venvs, or every venv when none has it).
+      const preselect = inFocus && action !== 'uninstall' && (s.state === 'outdated' || (s.state === 'absent' && !pool.some(x => x.installed)))
       init[s.target.id] = { checked: preselect, run_as: defaultRunAs(s.target), become_method: 'sudo' }
     }
     return init

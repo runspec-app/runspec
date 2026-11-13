@@ -812,7 +812,7 @@ function RunnableCard({ entry, hosts, onPick }: {
         )}
         {argCount > 0 && (
           <StatusTag tone={requiredCount > 0 ? 'info' : 'neutral'}>
-            {argCount} arg{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
+            {argCount} arg{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} required` : ''}
           </StatusTag>
         )}
         {subCount > 0 && (
@@ -892,7 +892,7 @@ function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: 
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
         {argCount > 0 ? (
           <StatusTag tone={requiredCount > 0 ? 'info' : 'neutral'}>
-            {argCount} param{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
+            {argCount} param{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} required` : ''}
           </StatusTag>
         ) : (
           <Tag style={{ fontSize: 11, margin: 0 }}>no params</Tag>
@@ -952,7 +952,7 @@ function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onCli
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
         {paramCount > 0 ? (
           <StatusTag tone={requiredCount > 0 ? 'info' : 'neutral'}>
-            {paramCount} param{paramCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
+            {paramCount} param{paramCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} required` : ''}
           </StatusTag>
         ) : (
           <Tag style={{ fontSize: 11, margin: 0 }}>runs immediately</Tag>

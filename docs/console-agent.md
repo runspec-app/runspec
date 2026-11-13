@@ -67,7 +67,7 @@ which is which.
 | Run any discovered runnable on any connected host, or fan out across a [host group](console-hosts.md#groups) | Store **credentials** (Settings → Credentials — the agent *uses* credentials but never reads, creates, or sees secret values) |
 | Add, update, and remove **[hosts](console-hosts.md)** and the **group** registry (`manage_hosts`, `manage_groups`) | **Model / API** and theme configuration (the agent editing its own model setup is a bootstrap problem) |
 | Create, edit, enable/disable **[triggers](console-automation.md#triggers-windows)** (`manage_triggers`) | **Profiles** registry (sidebar working sets) |
-| Set the working-hours **[rota](console-automation.md#rota-working-hours-for-automation)** (`manage_rota`) | |
+| Set the working-hours **[rota](console-automation.md#working-hours-rota-for-automation)** (`manage_rota`) | |
 | Search and describe runnables (`search_runnables`, `describe_runnable`) | |
 | Save and follow **[runbooks](console-runbooks.md)** | |
 | Create **[schedules](console-automation.md#schedules)** — cron/interval, running a runnable, a prompt, or a runbook | |

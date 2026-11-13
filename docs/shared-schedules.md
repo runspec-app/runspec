@@ -94,7 +94,7 @@ the interval checks in an `ops-daemon` venv.
 
 ### From the console
 
-- **New venv:** Settings → Jump Hosts → **Provision venv…**. Tick
+- **New venv:** Settings → Hosts → **Provision venv…**. Tick
   **Shared schedules** to install runspec-scheduler, move the venv to the daemon
   and set up its keeper. Leave it off and you can still add
   `runspec-scheduler` under Packages to use the cron backend.

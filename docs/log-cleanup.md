@@ -107,7 +107,7 @@ Some common choices:
 
 ## In the console
 
-- **Provision venv…** (Settings → Jump Hosts) sets a policy as the last setup
+- **Provision venv…** (Settings → Hosts) sets a policy as the last setup
   step. **Log cleanup** is ticked by default with 7d and 90d. Change either
   box, or leave a box blank (or type `off`) to switch that step off. Untick
   **Log cleanup** to give the venv no policy.

@@ -376,6 +376,9 @@ describe('MarketplaceView', () => {
     await act(async () => { await user.click(await screen.findByText('Uninstall…')) })
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getAllByRole('checkbox')).toHaveLength(1)
+    // Nothing is ticked up front: the operator picks the venvs to uninstall from.
+    expect((within(dialog).getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
+    await act(async () => { await user.click(within(dialog).getByRole('checkbox')) })
     await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Uninstall runspec-linux on 1 venv/ })) })
     await waitFor(() => expect(uninstall).toHaveBeenCalled())
     expect(uninstall.mock.calls[0][0].targets).toEqual([{ id: 'web-01::/opt/venvs/ops', run_as: 'svc', become_method: 'sudo' }])

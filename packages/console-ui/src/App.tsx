@@ -16,7 +16,7 @@ import {
   FolderOpenOutlined,
   CodeOutlined,
   BellOutlined,
-  ClockCircleOutlined,
+  ClockCircleOutlined, BarChartOutlined,
   KeyOutlined,
   LoadingOutlined,
   BugOutlined,
@@ -66,9 +66,9 @@ const SchedulesView = React.lazy(() => import('./views/SchedulesView').then(m =>
 const RotaView = React.lazy(() => import('./views/RotaView').then(m => ({ default: m.RotaView })))
 const DevView = React.lazy(() => import('./views/DevView').then(m => ({ default: m.DevView })))
 const FilesView = React.lazy(() => import('./views/files/FilesView').then(m => ({ default: m.FilesView })))
-// Analytics is no longer a top-level tab — it's a per-host drawer off the Logs
-// tab (LogsView lazy-loads it there, keeping the heavy @ant-design/plots chunk
-// out of the initial bundle just the same).
+// Analytics is a tab of its own (under More, linked from History and Logs);
+// lazy so the heavy @ant-design/plots chunk loads only when it is opened.
+const AnalyticsView = React.lazy(() => import('./views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
 // Modals + the (large) Settings drawer — mounted only once their open state trips.
 const CopyKeyModal = React.lazy(() => import('./views/CopyKeyModal').then(m => ({ default: m.CopyKeyModal })))
 const TerminalsModal = React.lazy(() => import('./views/TerminalsModal').then(m => ({ default: m.TerminalsModal })))
@@ -101,7 +101,7 @@ import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm,
 import type { PaletteAction } from './components/CommandPalette'
 import { pressable } from './components/kit'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
+type ViewKey = 'console' | 'specs' | 'history' | 'analytics' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -1012,7 +1012,8 @@ export default function App() {
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting} waiting for you`}><BellOutlined /></Badge>
         : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><BellOutlined /></Badge>,
     },
-    { key: 'rota'      as ViewKey, label: 'Rota',      icon: <ClockCircleOutlined /> },
+    { key: 'analytics' as ViewKey, label: 'Analytics', icon: <BarChartOutlined /> },
+    { key: 'rota'      as ViewKey, label: 'Working hours', icon: <ClockCircleOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ], features)
   // Grouped tab bar + More menu (navGroups.ts); Ctrl+1…9 follows this order.
@@ -1678,7 +1679,7 @@ export default function App() {
                 {viewsVisited.current.has('history') && (
                   <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'history'} />
+                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'history'} onOpenAnalytics={() => setView('analytics')} />
                     </Suspense>
                   </div>
                 )}
@@ -1689,7 +1690,7 @@ export default function App() {
                 {viewsVisited.current.has('logs') && (
                   <div className="rs-view" style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} />
+                      <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} onOpenAnalytics={() => setView('analytics')} />
                     </Suspense>
                   </div>
                 )}
@@ -1718,6 +1719,7 @@ export default function App() {
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} activeProfile={activeProfile} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
+                      {view === 'analytics' && <AnalyticsView selectedHost={selectedHost} activeScope={activeScope} active />}
                       {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} activeProfile={activeProfile} onOpenHistory={q => { setHistorySearch(q); setView('history') }} />}
                       {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
                       {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} onOpenSettings={openSettings} runnables={runnables}
