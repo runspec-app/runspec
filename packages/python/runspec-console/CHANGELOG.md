@@ -9,6 +9,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.418.0] — 2026-11-13
+
+### Changed
+
+- **Logs.** One header (title, host, one line on what the tab is for, with
+  **Analytics** and a Refresh icon beside it) instead of a title row with a
+  config-file string in it. Each venv shows **Log cleanup…** and **Runs
+  index…**; Make shared…, Compact… and **Prune…** moved into a **More
+  actions** menu, so deleting logs is never one stray click from the main
+  action. A runnable row has a named View button and the same menu. Status
+  ("home", an unreadable dir) uses the shared tags, and an empty host says so
+  with a Refresh button.
+- **Schedules read in plain words.** The When column shows "Weekdays at 06:15"
+  or "Every hour at :15 · Europe/London" with the cron expression beneath it
+  (`cronText.describeCron`; unusual expressions show as before). Schedule and
+  run states (ok, running, last run failed, being handled, stale line, …) use
+  the shared status tags, so one colour means one thing across tabs; the kind
+  of action (run, runbook, prompt, …) is a quiet label rather than a colour
+  each, and Where reads "group web" / "first up of a, b" / "the assistant".
+  Delete moved behind **More actions** with a confirm; Run now and Edit have
+  names a screen reader can say. With no runspec-scheduler on a connected
+  venv, **New host schedule** is replaced by a line saying what to install,
+  instead of a disabled button. An empty table offers **New schedule**.
+- **Settings.** Every icon-only button (edit, remove, move, test connection,
+  copy key, preview sound, …) has a name that includes its row, and the
+  terminal look's Blink switch is labelled. Empty lists use the shared empty
+  state, status chips (connected, error, synced, secret set, missing, …) use
+  the shared tags, and the SSH key panel uses theme colours (its fixed greens
+  and oranges faded on the light theme; the key text is 12px, was 11px).
+
+### Added
+
+- `--rs-ok` and `--rs-warn` CSS variables (the readable status colours) beside
+  `--rs-danger` and `--rs-waiting`.
+
 ## [0.417.0] — 2026-11-13
 
 ### Changed

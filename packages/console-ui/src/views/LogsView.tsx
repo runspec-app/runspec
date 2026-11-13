@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import {
-  Table, Tag, Typography, Button, Tooltip, message, Modal, Drawer,
-  Input, InputNumber, Switch, Form, Empty, Spin, Alert, Popconfirm,
+  Table, Typography, Button, Tooltip, message, Modal, Drawer,
+  Input, InputNumber, Switch, Form, Spin, Alert, Popconfirm,
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, InboxOutlined, EyeOutlined, FolderOutlined,
@@ -14,6 +14,7 @@ import {
 } from '../bridge'
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT } from '../ThemeContext'
+import { EmptyState, IconAction, PageHeader, RowActions, StatusTag, type RowAction } from '../components/kit'
 import { RunsIndexModal, type RunsIndexTarget } from './RunsIndexModal'
 import { LogCleanupModal, type LogCleanupTarget } from './LogCleanupModal'
 
@@ -25,7 +26,7 @@ const AnalyticsView = lazy(() =>
   import('./AnalyticsView').then(m => ({ default: m.AnalyticsView })),
 )
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 // The backend surfaces the per-user home fallback dir (~/logs) as its own
 // inventory entry under this sentinel group id — never folded into a venv, so a
@@ -367,12 +368,39 @@ function StreamDrawer({ target, onClose }: { target: ViewTarget | null; onClose:
       ) : !result?.ok ? (
         <Alert type="error" showIcon message={result?.error || 'Failed to read logs'} />
       ) : result.records.length === 0 ? (
-        <Empty description="No records" />
+        <EmptyState message="No log records for this runnable yet." />
       ) : (
         <LogStream records={result.records} />
       )}
     </Drawer>
   )
+}
+
+// A venv's actions: the cleanup policy is what the operator comes here for, the
+// runs index sits beside it, and the one-off jobs (make shared, compact, prune)
+// wait behind More, so Prune is never one stray click from the main action.
+function VenvActions({ group, home, onShare, onIndex, onCleanup, onCompact, onPrune }: {
+  group: string
+  home: boolean
+  onShare: () => void; onIndex: () => void; onCleanup: () => void; onCompact: () => void; onPrune: () => void
+}) {
+  const cleanup: RowAction = {
+    key: 'cleanup', label: 'Log cleanup…', icon: <ClearOutlined />, onClick: onCleanup,
+    tip: "This venv's log cleanup policy: compress and delete old runs automatically (runspec 0.80.0+). View, change, preview or apply it.",
+  }
+  const index: RowAction = {
+    key: 'index', label: 'Runs index…', icon: <DatabaseOutlined />, onClick: onIndex,
+    tip: "Inspect and maintain this dir's runs index (runspec_runs.db) — the fast History read: prune, reap orphans, reindex",
+  }
+  const more: RowAction[] = []
+  if (!home) more.push({ key: 'share', label: 'Make shared…', icon: <ShareAltOutlined />, onClick: onShare })
+  more.push(
+    { key: 'compact', label: 'Compact…', icon: <InboxOutlined />, onClick: onCompact },
+    { key: 'prune', label: 'Prune…', icon: <DeleteOutlined />, danger: true, onClick: onPrune },
+  )
+  return home
+    ? <RowActions primary={index} more={more} testId={`venv-actions-${group}`} />
+    : <RowActions primary={cleanup} secondary={[index]} more={more} testId={`venv-actions-${group}`} />
 }
 
 // ── main view ─────────────────────────────────────────────────────────────────
@@ -440,7 +468,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
       dataIndex: 'archives',
       key: 'archives',
       align: 'right',
-      render: (n: number) => n > 0 ? <Tag color="geekblue">{n}</Tag> : <Text type="secondary">0</Text>,
+      render: (n: number) => n > 0 ? n : <Text type="secondary">0</Text>,
     },
     {
       title: 'Size',
@@ -462,16 +490,13 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
       key: 'actions',
       align: 'right',
       render: (_: unknown, r: LogStatusRunnable) => (
-        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-          <Tooltip title="View merged stream">
-            <Button size="small" type="text" icon={<EyeOutlined />} onClick={() => setViewTarget({ host, group: v.group, runnable: r.runnable })} />
-          </Tooltip>
-          <Tooltip title="Compact this runnable">
-            <Button size="small" type="text" icon={<InboxOutlined />} onClick={() => setMaintTarget({ host, group: v.group, runnable: r.runnable, verb: 'compact' })} />
-          </Tooltip>
-          <Tooltip title="Prune this runnable">
-            <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => setMaintTarget({ host, group: v.group, runnable: r.runnable, verb: 'prune' })} />
-          </Tooltip>
+        <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+          <IconAction label={`View ${r.runnable} log`} tip="View the merged log" icon={<EyeOutlined />}
+            onClick={() => setViewTarget({ host, group: v.group, runnable: r.runnable })} />
+          <RowActions more={[
+            { key: 'compact', label: 'Compact…', icon: <InboxOutlined />, onClick: () => setMaintTarget({ host, group: v.group, runnable: r.runnable, verb: 'compact' }) },
+            { key: 'prune', label: 'Prune…', icon: <DeleteOutlined />, danger: true, onClick: () => setMaintTarget({ host, group: v.group, runnable: r.runnable, verb: 'prune' }) },
+          ]} />
         </div>
       ),
     },
@@ -479,21 +504,24 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <Title level={5} style={{ margin: 0 }}>Logs — {host}</Title>
-        <Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading}>Refresh</Button>
-        <Tooltip title="Run analytics for this host — charts, success rate, durations and top runnables, scanned over the connection this tab just warmed">
-          <Button size="small" icon={<BarChartOutlined />} onClick={() => setAnalyticsOpen(true)}>Analytics</Button>
-        </Tooltip>
-        <Text type="secondary" style={{ fontSize: 13 }}>
-          Per-invocation audit logs ({'store = "per-run"'}) — view, compact, and prune per venv.
-        </Text>
-      </div>
+      <PageHeader
+        title={<>Logs <span style={{ fontFamily: MONO_FONT, fontWeight: 500, color: 'var(--rs-text-muted)' }}>{host}</span></>}
+        description="Each run's own log file, per venv: read them, compress old ones, delete the oldest."
+        actions={<>
+          <Tooltip title="Run analytics for this host — charts, success rate, durations and top runnables, scanned over the connection this tab just warmed">
+            <Button size="small" icon={<BarChartOutlined />} onClick={() => setAnalyticsOpen(true)}>Analytics</Button>
+          </Tooltip>
+          <IconAction label="Refresh" tip="Read this host's logs again" icon={<ReloadOutlined spin={loading} />} onClick={refresh} />
+        </>}
+      />
 
       {loading && venvs.length === 0 ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>
       ) : shown.length === 0 ? (
-        <Empty description="No per-invocation logs found on this host" />
+        <EmptyState
+          message={activeScope.length > 0 ? 'No run logs in the venvs in scope on this host.' : 'No run logs on this host yet.'}
+          action={{ label: 'Refresh', icon: <ReloadOutlined />, onClick: refresh }}
+        />
       ) : (
         shown.map(v => (
           <div key={v.group} style={{ marginBottom: 28 }}>
@@ -501,47 +529,25 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
               <FolderOutlined style={{ color: 'var(--rs-text-muted)' }} />
               <Text strong style={{ fontFamily: MONO_FONT }}>{v.group}</Text>
               {v.group === HOME_GROUP && (
-                <Tooltip title="Your home log dir (~/logs) — the per-user fallback runspec writes to when a venv's own logs dir isn't writable. Personal to your login on this host (the venv dirs above are the shared ones); pruning here affects only ~/logs.">
-                  <Tag>home</Tag>
-                </Tooltip>
+                <StatusTag tone="neutral" tip="Your home log dir (~/logs) — the per-user fallback runspec writes to when a venv's own logs dir isn't writable. Personal to your login on this host (the venv dirs above are the shared ones); pruning here affects only ~/logs.">home</StatusTag>
               )}
               {v.ok ? (
                 <Text type="secondary" style={{ fontSize: 13 }}>
                   {v.total_files ?? 0} file(s), {humanSize(v.total_bytes)}
                 </Text>
               ) : (
-                <Tag color="red">{v.error || 'unavailable'}</Tag>
+                <StatusTag tone="failed">{v.error || 'unavailable'}</StatusTag>
               )}
               <div style={{ flex: 1 }} />
-              {v.ok && (
-                <>
-                  {v.group !== HOME_GROUP && (
-                    <Tooltip title="Make this venv's logs/ dir group-shared (2775 + setgid) so the runs index and audit logs are writable across the console group — the repair for a venv whose logs/ isn't group-writable">
-                      <Button size="small" icon={<ShareAltOutlined />} onClick={() => setShareTarget({ host, venv: v.group })}>
-                        Make shared…
-                      </Button>
-                    </Tooltip>
-                  )}
-                  <Tooltip title="Inspect and maintain this dir's runs index (runspec_runs.db) — the fast History read: prune, reap orphans, reindex">
-                    <Button size="small" icon={<DatabaseOutlined />} onClick={() => setIndexTarget({ host, group: v.group })}>
-                      Runs index…
-                    </Button>
-                  </Tooltip>
-                  {v.group !== HOME_GROUP && (
-                    <Tooltip title="This venv's log cleanup policy: compress and delete old runs automatically (runspec 0.80.0+). View, change, preview or apply it.">
-                      <Button size="small" icon={<ClearOutlined />} onClick={() => setCleanupTarget({ host, group: v.group })}>
-                        Log cleanup…
-                      </Button>
-                    </Tooltip>
-                  )}
-                  <Button size="small" icon={<InboxOutlined />} onClick={() => setMaintTarget({ host, group: v.group, verb: 'compact' })}>
-                    Compact…
-                  </Button>
-                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setMaintTarget({ host, group: v.group, verb: 'prune' })}>
-                    Prune…
-                  </Button>
-                </>
-              )}
+              {v.ok && <VenvActions
+                group={v.group}
+                home={v.group === HOME_GROUP}
+                onShare={() => setShareTarget({ host, venv: v.group })}
+                onIndex={() => setIndexTarget({ host, group: v.group })}
+                onCleanup={() => setCleanupTarget({ host, group: v.group })}
+                onCompact={() => setMaintTarget({ host, group: v.group, verb: 'compact' })}
+                onPrune={() => setMaintTarget({ host, group: v.group, verb: 'prune' })}
+              />}
             </div>
             {v.ok && (
               <Table

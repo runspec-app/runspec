@@ -445,7 +445,9 @@ a skipped fire shows as *skipped* rather than as a success.
 #### Adding and editing host schedules
 
 On **All**, **Host cron** and **Host daemon**, **New host schedule** adds a
-schedule to a venv's runspec-scheduler, and each host row has **Edit**,
+schedule to a venv's runspec-scheduler (when no connected venv has
+runspec-scheduler, the button's place says so: install it from the
+Marketplace first), and each host row has **Edit**,
 **Pause** / **Resume** and **Remove** (on runspec-scheduler 0.10.0, Pause and
 Resume change only `enabled`). The dialog asks for:
 

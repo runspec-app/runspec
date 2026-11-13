@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Empty, Table, Slider, Progress } from 'antd'
+import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
+import { EmptyState, StatusTag, type StatusTone } from './kit'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo, type OwnMcpClaudePlugin } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -360,15 +361,15 @@ export function SoundsTab() {
               </Typography.Text>
               {s.exists === false && (
                 <Tooltip title="This sound's file isn't on this machine (it came from Config Sync). It will play only where the file is present.">
-                  <Tag color="warning" style={{ fontSize: 11, marginInlineEnd: 0 }}>missing</Tag>
+                  <StatusTag tone="attention">missing</StatusTag>
                 </Tooltip>
               )}
               <span style={{ flex: 1 }} />
               <Tooltip title="Preview this sound">
-                <Button size="small" type="text" icon={<SoundOutlined />} onClick={() => bridge.preview_sound(`sound:${s.id}`).catch(() => {})} />
+                <Button aria-label={`Preview ${s.label}`} size="small" type="text" icon={<SoundOutlined />} onClick={() => bridge.preview_sound(`sound:${s.id}`).catch(() => {})} />
               </Tooltip>
               <Popconfirm title={`Remove "${s.label}"?`} onConfirm={() => deleteNamedSound(s.id)} okText="Remove" okButtonProps={{ danger: true }}>
-                <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                <Button aria-label={`Remove ${s.label}`} size="small" type="text" danger icon={<DeleteOutlined />} />
               </Popconfirm>
             </div>
           ))}
@@ -405,7 +406,7 @@ export function SoundsTab() {
                 style={{ width: 230 }}
               />
               <Tooltip title="Preview this cue (plays the current selection, saved or not)">
-                <Button
+                <Button aria-label={`Preview the ${c.label ?? c.key} sound`}
                   size="small" type="text" icon={<SoundOutlined />}
                   onClick={() => bridge.test_sound(c.key, choices[c.key] ?? c.def).catch(() => {})}
                 />
@@ -1271,7 +1272,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
               padding: '6px 10px', borderRadius: RADIUS.sm, marginBottom: 10,
               background: ageDays >= 90 ? 'rgba(250,140,22,0.1)' : 'rgba(250,219,20,0.08)',
               border: `1px solid ${ageDays >= 90 ? 'rgba(250,140,22,0.3)' : 'rgba(250,219,20,0.3)'}`,
-              fontSize: 13, color: ageDays >= 90 ? '#fa8c16' : '#d4b106',
+              fontSize: 13, color: 'var(--rs-warn)',
             }}>
               {ageDays >= 90 ? `Key is ${ageDays} days old — rotation recommended.` : `Key is ${ageDays} days old — consider rotating soon.`}
             </div>
@@ -1332,7 +1333,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
             ) : keyPath && (
               <Popconfirm
                 title="Rotate SSH key?"
-                icon={disconnected.length > 0 ? <KeyOutlined style={{ color: '#fa8c16' }} /> : undefined}
+                icon={disconnected.length > 0 ? <KeyOutlined style={{ color: 'var(--rs-warn)' }} /> : undefined}
                 description={
                   disconnected.length === 0 ? (
                     <span style={{ fontSize: 13 }}>
@@ -1341,7 +1342,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
                     </span>
                   ) : (
                     <span style={{ fontSize: 13, maxWidth: 320, display: 'inline-block' }}>
-                      <strong style={{ color: '#fa8c16' }}>
+                      <strong style={{ color: 'var(--rs-warn)' }}>
                         {disconnected.length} host{disconnected.length !== 1 ? 's' : ''} disconnected:
                       </strong>{' '}
                       <span style={{ fontFamily: MONO_FONT }}>{disconnected.join(', ')}</span>.<br />
@@ -1403,7 +1404,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
             <div style={{ marginBottom: 10 }}>
               {rotationResult.perHost.map(h => {
                 const icon = h.skipped ? '⚠' : h.verified ? '✓' : '✗'
-                const color = h.skipped ? '#d4b106' : h.verified ? '#52c41a' : '#ff4d4f'
+                const color = h.skipped ? 'var(--rs-warn)' : h.verified ? 'var(--rs-ok)' : 'var(--rs-danger)'
                 return (
                   <div key={h.host} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 3 }}>
                     <span style={{ color, fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{icon} {h.host}</span>
@@ -1430,9 +1431,9 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
               <Typography.Paragraph
                 copyable={{ tooltips: ['Copy', 'Copied!'] }}
                 style={{
-                  fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
-                  background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
-                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+                  fontFamily: MONO_FONT, fontSize: 12, padding: '6px 10px',
+                  background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)',
+                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: 'var(--rs-text-secondary)',
                 }}
               >
                 {`echo "${rotationResult.publicKey}" >> ~/.ssh/authorized_keys`}
@@ -1449,9 +1450,9 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
               <Typography.Paragraph
                 copyable={{ tooltips: ['Copy', 'Copied!'] }}
                 style={{
-                  fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
-                  background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
-                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+                  fontFamily: MONO_FONT, fontSize: 12, padding: '6px 10px',
+                  background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)',
+                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: 'var(--rs-text-secondary)',
                 }}
               >
                 {authorizedKeysLine}
@@ -1468,9 +1469,9 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
               <Typography.Paragraph
                 copyable={{ text: storedPublicKey, tooltips: ['Copy', 'Copied!'] }}
                 style={{
-                  fontFamily: MONO_FONT, fontSize: 11, padding: '6px 10px',
-                  background: 'rgba(255,255,255,0.04)', border: '1px solid #333',
-                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: '#52c41a',
+                  fontFamily: MONO_FONT, fontSize: 12, padding: '6px 10px',
+                  background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)',
+                  borderRadius: 4, wordBreak: 'break-all', margin: 0, color: 'var(--rs-text-secondary)',
                 }}
               >
                 {`echo "${storedPublicKey}" >> ~/.ssh/authorized_keys`}
@@ -1727,7 +1728,7 @@ function GroupsManager({
             </Popconfirm>
           </Space>
         ))}
-        {rows.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No groups yet" />}
+        {rows.length === 0 && <EmptyState message="No groups yet" />}
         <Space.Compact style={{ marginTop: 4 }}>
           <Input
             size="small"
@@ -1831,7 +1832,7 @@ function ProfilesManager({
             </Popconfirm>
           </Space>
         ))}
-        {rows.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No profiles yet" />}
+        {rows.length === 0 && <EmptyState message="No profiles yet" />}
         <Space.Compact style={{ marginTop: 4 }}>
           <Input
             size="small"
@@ -1917,12 +1918,12 @@ function LocalVenvsTab() {
             The venvs the console will discover locally (own venv first). Save to refresh after editing the globs.
           </Typography.Paragraph>
           {resolved.length === 0 ? (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No local venvs resolved yet" />
+            <EmptyState message="No local venvs resolved yet" />
           ) : (
             <div>
               {resolved.map(r => (
                 <div key={r.path} style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
-                  <Tag color="blue">{r.venv_name}</Tag>
+                  <StatusTag tone="neutral" mono>{r.venv_name}</StatusTag>
                   <Text style={{ fontSize: 13, fontFamily: MONO_FONT, wordBreak: 'break-all' }}>{r.path}</Text>
                   {r.path === ownVenv && <Text type="secondary" style={{ fontSize: 12 }}>(console's own venv)</Text>}
                 </div>
@@ -2065,7 +2066,7 @@ function AgentToolsTab() {
                 { label: <span><VisibilityDot color="#ff4d4f" />Hide everywhere</span>, value: 'all' },
               ]}
             />
-            {via && <Tooltip title="Hidden by a pattern in the Advanced lists below — edit it there."><Tag color="orange">via pattern</Tag></Tooltip>}
+            {via && <StatusTag tone="info" tip="Hidden by a pattern in the Advanced lists below — edit it there.">via pattern</StatusTag>}
           </Space>
         )
       },
@@ -2100,7 +2101,7 @@ function AgentToolsTab() {
       </Space>
 
       {rows.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No runnables discovered yet" />
+        <EmptyState message="No runnables discovered yet" />
       ) : (
         <Table<RunnableRow>
           size="small"
@@ -2617,8 +2618,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
           <div key={h.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)', background: accentRow(h) }}>
             {opts.reorder && (
               <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-                <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostUp(h)} disabled={isEditing || opts.idx === 0} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
-                <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || opts.idx === opts.count - 1} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
+                <Button aria-label={`Move ${h.name} up`} type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostUp(h)} disabled={isEditing || opts.idx === 0} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
+                <Button aria-label={`Move ${h.name} down`} type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveHostDown(h)} disabled={isEditing || opts.idx === opts.count - 1} style={{ padding: '0 3px', color: 'var(--rs-text-faint)', height: 14, lineHeight: 1 }} />
               </div>
             )}
             <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 110, flexShrink: 0 }}>{h.name}</Text>
@@ -2633,20 +2634,18 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               if (!r) return null
               const ok = r.runspec_ok
               const sshOnly = r.connected && !r.runspec_ok
-              const color = ok ? 'success' : sshOnly ? 'warning' : 'error'
+              const tone: StatusTone = ok ? 'ok' : sshOnly ? 'attention' : 'failed'
               const label = ok ? `✓ ${r.runnable_count} runnable${r.runnable_count !== 1 ? 's' : ''}` : sshOnly ? '✓ SSH · runspec failed' : '✗ failed'
               const detail = r.stderr || r.stdout || `exit ${r.exit_code}`
               return (
-                <Tooltip title={<pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', maxWidth: 340 }}>{detail}</pre>} placement="left">
-                  <Tag color={color} style={{ margin: 0, cursor: 'default', fontSize: 12 }}>{label}</Tag>
-                </Tooltip>
+                <StatusTag tone={tone} tip={<pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', maxWidth: 340 }}>{detail}</pre>}>{label}</StatusTag>
               )
             })()}
             <Tooltip title="Test connection">
-              <Button type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+              <Button aria-label={`Test connection to ${h.name}`} type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             </Tooltip>
             <Tooltip title="Copy SSH public key (authorize this machine)">
-              <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+              <Button aria-label={`Copy SSH key to ${h.name}`} type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             </Tooltip>
             <Tooltip title="Provision a runspec venv on this host">
               <Button type="text" size="small" icon={<CloudServerOutlined />} onClick={() => setProvisionHosts([h.name])} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} aria-label={`Provision a venv on ${h.name}`} />
@@ -2667,7 +2666,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 {shown.length} of {hosts.length} host{hosts.length === 1 ? '' : 's'} match
               </Text>
               {shown.length === 0 ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No hosts match" />
+                <EmptyState message="No hosts match" />
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   {shown.map(h => hostRow(h, { idx: 0, count: 1, showGroup: true, reorder: false }))}
@@ -2905,9 +2904,9 @@ export function FiltersTab() {
             <Text type="secondary" title={f.pipeline} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {f.pipeline}
             </Text>
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(f)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+            <Button aria-label={`Edit ${f.name}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(f)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Popconfirm title={`Remove ${f.name}?`} onConfirm={() => remove(f.name)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
+              <Button aria-label={`Remove ${f.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </Popconfirm>
           </div>
         ))}
@@ -3029,7 +3028,7 @@ function SelfServiceTab() {
           <div title={it.name} style={{ fontFamily: MONO_FONT, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
           {it.description && <div title={it.description} style={{ fontSize: 11, color: 'var(--rs-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.description}</div>}
         </div>
-        {it.missing && <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>missing</Tag>}
+        {it.missing && <StatusTag tone="attention">missing</StatusTag>}
       </div>
     )
   }
@@ -3043,9 +3042,9 @@ function SelfServiceTab() {
       key: gk,
       label: (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Tag color={isOrphan ? 'orange' : 'geekblue'} style={{ margin: 0, fontFamily: MONO_FONT, fontSize: 12 }}>
+          <StatusTag tone={isOrphan ? 'attention' : 'neutral'} mono>
             {isOrphan ? 'not discovered' : gk}
-          </Tag>
+          </StatusTag>
           <Text type="secondary" style={{ fontSize: 12 }}>{onCount}/{all.length} on</Text>
           <span style={{ flex: 1 }} />
           {!isOrphan && (
@@ -3125,11 +3124,11 @@ function SelfServiceTab() {
       </div>
 
       {totalDiscovered === 0 && orphaned.length === 0 && (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No runnables discovered yet" />
+        <EmptyState message="No runnables discovered yet" />
       )}
 
       {panels.length === 0 && q && (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No runnables match "${query}"`} />
+        <EmptyState message={`No runnables match "${query}"`} />
       )}
 
       {panels.length > 0 && (
@@ -3313,18 +3312,18 @@ export function ReposTab() {
             <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
             <Tag style={{ margin: 0, fontSize: 11 }}>{r.ref}</Tag>
             {r.checked_out
-              ? <Tag color="green" style={{ margin: 0, fontSize: 11 }} title={`Checked out at ${r.commit}${r.checkout_dir ? ` — ${r.checkout_dir}` : ''}`}>synced {r.commit}</Tag>
+              ? <StatusTag tone="ok" tip={`Checked out at ${r.commit}${r.checkout_dir ? ` — ${r.checkout_dir}` : ''}`}>synced {r.commit}</StatusTag>
               : <Tag style={{ margin: 0, fontSize: 11 }}>not synced</Tag>}
-            {r.path && <Tag color="blue" style={{ margin: 0, fontSize: 11 }} title={`Custom checkout: ${r.path}`}>custom</Tag>}
+            {r.path && <StatusTag tone="info" tip={`Custom checkout: ${r.path}`}>custom</StatusTag>}
             <Text type="secondary" title={`${r.url}${credLabel(r.credential_id) ? ` — auth: ${credLabel(r.credential_id)}` : ''}`} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {r.url}
             </Text>
             <Tooltip title="Sync now (clone / fetch)">
-              <Button type="text" size="small" icon={syncing === r.name ? <LoadingOutlined /> : <ReloadOutlined />} onClick={() => sync(r.name)} disabled={isEditing || engineMissing || syncing !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+              <Button aria-label={`Sync ${r.name} now`} type="text" size="small" icon={syncing === r.name ? <LoadingOutlined /> : <ReloadOutlined />} onClick={() => sync(r.name)} disabled={isEditing || engineMissing || syncing !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             </Tooltip>
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+            <Button aria-label={`Edit ${r.name}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Popconfirm title={`Remove ${r.name}?`} description={r.path ? 'Your custom dev-folder checkout is left untouched.' : 'The app-data checkout on disk is also deleted.'} onConfirm={() => remove(r.name)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
+              <Button aria-label={`Remove ${r.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </Popconfirm>
           </div>
         ))}
@@ -3496,10 +3495,10 @@ export function MarketplaceTab() {
               <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)' }}>
                 <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
                 <Tag style={{ margin: 0, fontSize: 11 }}>{r.pip_role === 'extra' ? 'extra-index-url' : 'index-url'}</Tag>
-                {r.is_pypi && <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>public</Tag>}
+                {r.is_pypi && <StatusTag tone="info">public</StatusTag>}
                 <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.url}</Text>
                 <Tooltip title="Declare this index below to customise it (name, explicit packages, credential…) — a declared repo with the same URL takes over.">
-                  <Button type="text" size="small" icon={<EditOutlined />} disabled={isEditing} onClick={() => { startAdd(); form.setFieldsValue({ name: r.name, url: r.url }) }} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+                  <Button aria-label={`Customise ${r.name}`} type="text" size="small" icon={<EditOutlined />} disabled={isEditing} onClick={() => { startAdd(); form.setFieldsValue({ name: r.name, url: r.url }) }} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
                 </Tooltip>
               </div>
             ))}
@@ -3517,13 +3516,13 @@ export function MarketplaceTab() {
             <Switch size="small" checked={r.enabled} disabled={isEditing || saving} onChange={v => toggleRepo(r, v)} aria-label={`enable ${r.name}`} />
             <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
             {r.scan ? <Tag style={{ margin: 0, fontSize: 11 }}>scan {(r.patterns.length ? r.patterns : cfg.patterns).join(' ')}</Tag> : <Tag style={{ margin: 0, fontSize: 11 }}>no scan</Tag>}
-            {r.packages.length > 0 && <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>{r.packages.length} named</Tag>}
-            {r.credential && <Tag color="gold" style={{ margin: 0, fontSize: 11 }} title={credLabel(r.credential)}>auth: {credLabel(r.credential) || r.credential}</Tag>}
+            {r.packages.length > 0 && <StatusTag tone="info">{r.packages.length} named</StatusTag>}
+            {r.credential && <StatusTag tone="info" tip={credLabel(r.credential)}>auth: {credLabel(r.credential) || r.credential}</StatusTag>}
             {r.pip_arg !== 'auto' && <Tag style={{ margin: 0, fontSize: 11 }}>{r.pip_arg}</Tag>}
             <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.url}</Text>
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+            <Button aria-label={`Edit ${r.name}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Popconfirm title={`Remove ${r.name}?`} onConfirm={() => removeRepo(r)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
+              <Button aria-label={`Remove ${r.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </Popconfirm>
           </div>
         ))}
@@ -3814,19 +3813,19 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
             <Text style={{ fontSize: 13, minWidth: 110, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</Text>
             <Tag style={{ margin: 0, fontSize: 11 }}>{c.kind}</Tag>
             {c.has_secret
-              ? <Tag color="green" style={{ margin: 0, fontSize: 11 }}>secret set</Tag>
+              ? <StatusTag tone="ok">secret set</StatusTag>
               : <Tag style={{ margin: 0, fontSize: 11 }}>no secret</Tag>}
             {c.write_to_files && (
               <Tooltip title={`The agent may write this into files as {{secret:${c.id}}}`}>
-                <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>into files</Tag>
+                <StatusTag tone="attention">into files</StatusTag>
               </Tooltip>
             )}
             <Text type="secondary" title={c.username} style={{ fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {c.username}
             </Text>
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(c)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+            <Button aria-label={`Edit ${c.label}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(c)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Popconfirm title={`Remove ${c.label}?`} onConfirm={() => remove(c.id)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
+              <Button aria-label={`Remove ${c.label}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </Popconfirm>
           </div>
           <CredentialUsageLine usage={guide?.usage[c.id]} onFix={hint => startFix(c, hint)} onOpenTab={onOpenTab} />
@@ -4151,7 +4150,7 @@ function TeamsSection() {
                 <Tag style={{ margin: 0, fontSize: 11 }}>protected</Tag>
               ) : (
                 <Popconfirm title={`Remove team ${t.name}?`} onConfirm={() => remove(t.slug)} okText="Remove" cancelText="Cancel" placement="left">
-                  <Button type="text" size="small" icon={<DeleteOutlined />} danger style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+                  <Button aria-label={`Remove team ${t.name}`} type="text" size="small" icon={<DeleteOutlined />} danger style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
                 </Popconfirm>
               )}
             </div>
@@ -4505,7 +4504,7 @@ export function ConfigSyncTab() {
                   <div key={`${o.file}:${o.path}:${i}`} style={{ fontFamily: MONO_FONT, fontSize: 12, marginTop: 3 }}>
                     <Tag style={{ margin: '0 4px 0 0', fontSize: 11 }}>{o.file}</Tag>
                     <span>{o.path}</span>: local <code>{o.local || '(empty)'}</code> → seed <code>{o.seed || '(empty)'}</code>
-                    {o.preserved && <Tag color="green" style={{ marginLeft: 6, fontSize: 11 }}>protected</Tag>}
+                    {o.preserved && <StatusTag tone="info" style={{ marginLeft: 6 }}>protected</StatusTag>}
                   </div>
                 )
                 return (
@@ -4791,7 +4790,7 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
       </Button>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {runbooks.length === 0 && <Empty description="No runbooks yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+        {runbooks.length === 0 && <EmptyState message="No runbooks yet" />}
         {runbooks.map(s => (
           <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
             <span style={{ minWidth: 200 }}>
@@ -4803,9 +4802,9 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
             {(s.args ?? []).length > 0 && (
               <Tag style={{ fontSize: 11, margin: 0 }}>{(s.args ?? []).length} param{(s.args ?? []).length !== 1 ? 's' : ''}</Tag>
             )}
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
+            <Button aria-label={`Edit ${s.id}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
             <Popconfirm title={`Remove ${s.id}?`} onConfirm={() => remove(s.id)}>
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
+              <Button aria-label={`Remove ${s.id}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
             </Popconfirm>
           </div>
         ))}
@@ -4867,9 +4866,9 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
                       <Form.Item name={[field.name, 'title']} noStyle>
                         <Input size="small" placeholder="Optional title" />
                       </Form.Item>
-                      <Tooltip title="Move up"><Button type="text" size="small" icon={<UpOutlined />} disabled={index === 0} onClick={() => move(index, index - 1)} /></Tooltip>
-                      <Tooltip title="Move down"><Button type="text" size="small" icon={<DownOutlined />} disabled={index === fields.length - 1} onClick={() => move(index, index + 1)} /></Tooltip>
-                      <MinusCircleOutlined onClick={() => remove(field.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+                      <Tooltip title="Move up"><Button aria-label="Move step up" type="text" size="small" icon={<UpOutlined />} disabled={index === 0} onClick={() => move(index, index - 1)} /></Tooltip>
+                      <Tooltip title="Move down"><Button aria-label="Move step down" type="text" size="small" icon={<DownOutlined />} disabled={index === fields.length - 1} onClick={() => move(index, index + 1)} /></Tooltip>
+                      <Tooltip title="Remove step"><Button aria-label="Remove step" type="text" size="small" icon={<MinusCircleOutlined />} onClick={() => remove(field.name)} style={{ color: 'var(--rs-text-muted)' }} /></Tooltip>
                     </div>
                     <Form.Item name={[field.name, 'text']} noStyle rules={[{ required: true, whitespace: true, message: 'Step text is required' }]}>
                       <Input.TextArea autoSize={{ minRows: 2 }} style={{ fontFamily: MONO_FONT, fontSize: 13 }}
@@ -5221,7 +5220,7 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
       </Button>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {savedRuns.length === 0 && <Empty description="No saved runs yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+        {savedRuns.length === 0 && <EmptyState message="No saved runs yet" />}
         {savedRuns.map(s => (
           <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
             <span style={{ minWidth: 200 }}>
@@ -5233,10 +5232,10 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
             {(s.params ?? []).length > 0 && (
               <Tag style={{ fontSize: 11, margin: 0 }}>{(s.params ?? []).length} param{(s.params ?? []).length !== 1 ? 's' : ''}</Tag>
             )}
-            {s.argsError && <Tag color="red" style={{ fontSize: 11, margin: 0 }}>invalid</Tag>}
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
+            {s.argsError && <StatusTag tone="failed">invalid</StatusTag>}
+            <Button aria-label={`Edit ${s.id}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
             <Popconfirm title={`Remove ${s.id}?`} onConfirm={() => remove(s.id)}>
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
+              <Button aria-label={`Remove ${s.id}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
             </Popconfirm>
           </div>
         ))}
@@ -5697,7 +5696,7 @@ export function TelemetryTab() {
                     onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
                   <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!enabled}
                     onChange={e => setHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
-                  <Button icon={<MinusCircleOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => prev.filter((_, j) => j !== i))} />
+                  <Button aria-label="Remove header" icon={<MinusCircleOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => prev.filter((_, j) => j !== i))} />
                 </div>
               ))}
               <Button size="small" icon={<PlusOutlined />} disabled={!enabled} onClick={() => setHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
@@ -5834,7 +5833,7 @@ export function TelemetryTab() {
                 onChange={e => setMetricsHeaders(prev => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
               <Input.Password placeholder="value" style={{ width: 300 }} value={h.v} disabled={!metricsEnabled}
                 onChange={e => setMetricsHeaders(prev => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
-              <Button icon={<MinusCircleOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => prev.filter((_, j) => j !== i))} />
+              <Button aria-label="Remove header" icon={<MinusCircleOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => prev.filter((_, j) => j !== i))} />
             </div>
           ))}
           <Button size="small" icon={<PlusOutlined />} disabled={!metricsEnabled} onClick={() => setMetricsHeaders(prev => [...prev, { k: '', v: '' }])}>Add header</Button>
@@ -6036,8 +6035,8 @@ function McpHeaderCredEditor({ rows, options, onChange }: {
 
 function McpServerStatusTag({ st }: { st?: McpServerStatus }) {
   if (!st) return <Tag>unknown</Tag>
-  if (st.connected) return <Tag color="green">connected · {st.tool_count} tool{st.tool_count === 1 ? '' : 's'}</Tag>
-  if (st.error) return <Tooltip title={st.error}><Tag color="red">error</Tag></Tooltip>
+  if (st.connected) return <StatusTag tone="ok">connected · {st.tool_count} tool{st.tool_count === 1 ? '' : 's'}</StatusTag>
+  if (st.error) return <StatusTag tone="failed" tip={st.error}>error</StatusTag>
   return <Tag>not connected</Tag>
 }
 
@@ -6298,7 +6297,7 @@ export function McpTab() {
       </Text>
 
       {servers.length === 0
-        ? <Empty description="No MCP servers configured" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ? <EmptyState message="No MCP servers configured" />
         : <Table size="small" rowKey="name" dataSource={servers} columns={columns} pagination={false} />}
 
       <Modal
@@ -6650,7 +6649,7 @@ export function McpServerTab() {
           )}
           {status?.running ? (
             <Space direction="vertical" size={2}>
-              <Space><Tag color="green">running</Tag><Typography.Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{status.url}</Typography.Text></Space>
+              <Space><StatusTag tone="ok">running</StatusTag><Typography.Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{status.url}</Typography.Text></Space>
               <Typography.Text type="secondary" style={{ fontSize: 13 }}>{status.tools} tool(s){status.builtins ? ` + ${status.builtins} built-in(s)` : ''} · auth {status.auth ? 'on' : 'off'}</Typography.Text>
               <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
                 Connect Claude Code:&nbsp;
@@ -6760,11 +6759,11 @@ export function VoiceTab() {
           <div style={{ marginBottom: 14 }}>
             {cfg.available ? (
               <Space size={8}>
-                <Tag color="green">dictation available</Tag>
-                <Tag color={cfg.model_loaded ? 'blue' : undefined}>{cfg.model_loaded ? 'engine loaded — next press is instant' : 'engine not loaded'}</Tag>
+                <StatusTag tone="ok">dictation available</StatusTag>
+                <StatusTag tone={cfg.model_loaded ? 'info' : 'neutral'}>{cfg.model_loaded ? 'engine loaded — next press is instant' : 'engine not loaded'}</StatusTag>
               </Space>
             ) : (
-              <Tag color="orange" style={{ whiteSpace: 'normal' }}>unavailable — {cfg.reason}</Tag>
+              <StatusTag tone="attention" style={{ whiteSpace: 'normal' }}>unavailable — {cfg.reason}</StatusTag>
             )}
           </div>
 

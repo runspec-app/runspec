@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Popconfirm, Collapse, Typography, message } from 'antd'
+import { Table, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type SharedSchedulesVenv, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
 import { useIsDark, useAccent, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
@@ -10,7 +10,8 @@ import { SoundSelect } from '../components/SoundSelect'
 import { ModelSelect } from '../components/ModelSelect'
 import { initialFormValues, validateArgs } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
-import { AllSchedulesView } from './AllSchedulesView'
+import { AllSchedulesView, WhenCell } from './AllSchedulesView'
+import { EmptyState, IconAction, RowActions, StatusTag } from '../components/kit'
 import { ScheduleScopeCards } from './ScheduleScopeCards'
 import { collectRows, scopeCounts, type ScheduleScope } from './allSchedules'
 import {
@@ -1038,6 +1039,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
 
   const dimCol = textMuted(isDark)
   const keyCol = accent
+  const whereStyle = { fontFamily: MONO_FONT, fontSize: 13 }
   const whenText = (w: ScheduleWhen) => {
     const base = w.every ? `every ${w.every}` : (w.cron ?? '')
     return w.timezone ? `${base}  (${w.timezone})` : base
@@ -1071,20 +1073,23 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
     )
   }
 
+  // The kind of action is a quiet label, not a colour each: colour is kept for
+  // status, so a "runbook" chip can't read as a warning.
+  const kind = (label: string) => <StatusTag tone="neutral">{label}</StatusTag>
   const actionCell = (s: Schedule) =>
     s.action === 'event'
-      ? <Space size={6}><Tag color="purple">event</Tag><code>{s.event}</code></Space>
+      ? <Space size={6}>{kind('event')}<code>{s.event}</code></Space>
       : s.action === 'prompt'
-          ? <Space size={6}><Tag color="cyan">prompt</Tag><span style={{ color: dimCol, fontSize: 13 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
+          ? <Space size={6}>{kind('prompt')}<span style={{ color: dimCol, fontSize: 13 }}>{(s.prompt ?? '').slice(0, 48)}{(s.prompt ?? '').length > 48 ? '…' : ''}</span></Space>
           : s.action === 'runbook'
-          ? <Space size={6}><Tag color="gold">runbook</Tag><code>{s.runbook}</code></Space>
+          ? <Space size={6}>{kind('runbook')}<code>{s.runbook}</code></Space>
           : s.action === 'saved_run'
-          ? <Space size={6}><Tag color="blue">saved run</Tag><code>{s.saved_run}</code></Space>
+          ? <Space size={6}>{kind('saved run')}<code>{s.saved_run}</code></Space>
           : s.action === 'saved_transfer'
-          ? <Space size={6}><Tag color="green">saved transfer</Tag><code>{s.saved_transfer}</code></Space>
+          ? <Space size={6}>{kind('saved transfer')}<code>{s.saved_transfer}</code></Space>
           : s.action === 'eval'
-          ? <Space size={6}><Tag color="magenta">evals</Tag><code>{s.eval_fixture}</code></Space>
-          : <Space size={6}><Tag>run</Tag><code>/{s.runnable}{s.command?.length ? ` ${s.command.join(' ')}` : ''}</code></Space>
+          ? <Space size={6}>{kind('evals')}<code>{s.eval_fixture}</code></Space>
+          : <Space size={6}>{kind('run')}<code>/{s.runnable}{s.command?.length ? ` ${s.command.join(' ')}` : ''}</code></Space>
 
   const columns = [
     {
@@ -1113,22 +1118,27 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       render: (_: unknown, s: Schedule) =>
         s.action === 'runnable'
           ? (s.group
-              ? <Tag color="geekblue">group: {s.group}</Tag>
+              ? <span style={whereStyle}><span style={{ color: dimCol }}>group </span>{s.group}</span>
               : (s.hosts?.length
-                  ? <Tag color="geekblue">any: {s.hosts.join(', ')}</Tag>
-                  : (s.host ? <Tag>{s.host}</Tag> : <span style={{ color: dimCol }}>—</span>)))
+                  ? <span style={whereStyle}><span style={{ color: dimCol }}>first up of </span>{s.hosts.join(', ')}</span>
+                  : (s.host ? <span style={whereStyle}>{s.host}</span> : <span style={{ color: dimCol }}>—</span>)))
           : (s.action === 'prompt' || s.action === 'runbook' || s.action === 'eval')
-          ? <Tag color="cyan">agent</Tag>
+          ? <span style={{ color: dimCol, fontSize: 13 }}>the assistant</span>
           : s.action === 'saved_run'
-          ? <Tag color="blue">preset target</Tag>
+          ? <span style={{ color: dimCol, fontSize: 13 }}>the saved run's target</span>
           : s.action === 'saved_transfer'
-          ? <Tag color="green">transfer source</Tag>
+          ? <span style={{ color: dimCol, fontSize: 13 }}>the transfer's source</span>
           : <span style={{ color: dimCol }}>—</span>,
     },
         {
       title: 'Schedule',
       key: 'schedule',
-      render: (_: unknown, s: Schedule) => <code style={{ fontSize: 13 }}>{whenText(s.when)}</code>,
+      render: (_: unknown, s: Schedule) => s.when.every
+        ? <code style={{ fontSize: 13 }}>{whenText(s.when)}</code>
+        : <span>
+            <WhenCell when={s.when.cron ?? ''} />
+            {s.when.timezone && <span style={{ fontSize: 12, color: dimCol }}> ({s.when.timezone})</span>}
+          </span>,
     },
     {
       title: 'Details',
@@ -1140,7 +1150,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       dataIndex: 'nextRun',
       key: 'nextRun',
       render: (v: string | undefined, s: Schedule) => {
-        if (s.enabled === false) return <span style={{ color: dimCol }}>paused</span>
+        if (s.enabled === false) return <StatusTag tone="neutral">paused</StatusTag>
         if (!v) return <span style={{ color: dimCol }}>—</span>
         return (
           <Tooltip title={new Date(v).toLocaleString()}>
@@ -1155,15 +1165,12 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       width: 132,
       render: (_: unknown, s: Schedule) => (
         <Space size={2}>
-          <Tooltip title="Run now">
-            <Button type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => handleRunNow(s)} />
-          </Tooltip>
-          <Tooltip title="Edit">
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(s)} />
-          </Tooltip>
-          <Popconfirm title="Delete this schedule?" okText="Delete" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(s.id)}>
-            <Button danger type="text" size="small" icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <IconAction label={`Run ${s.name || 'schedule'} now`} tip="Run now" icon={<PlayCircleOutlined />} onClick={() => handleRunNow(s)} />
+          <IconAction label={`Edit ${s.name || 'schedule'}`} tip="Edit" icon={<EditOutlined />} onClick={() => openEdit(s)} />
+          <RowActions more={[{
+            key: 'delete', label: 'Delete', icon: <DeleteOutlined />, danger: true,
+            confirm: 'Delete this schedule?', onClick: () => handleDelete(s.id),
+          }]} />
         </Space>
       ),
     },
@@ -1176,6 +1183,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       rowKey="id"
       size="small"
       pagination={false}
+      locale={{ emptyText: <EmptyState message="No schedules on this console yet." action={{ label: 'New schedule', icon: <PlusOutlined />, onClick: openNew }} /> }}
       rowClassName={s => (s.enabled === false ? 'rs-schedule-disabled' : '')}
       expandable={{
         rowExpandable: s => Object.keys(detailFor(s)).length > 0,
@@ -1254,9 +1262,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
           ),
           extra: (
             <Space size={8} onClick={e => e.stopPropagation()}>
-              <Tooltip title="Reload schedules">
-                <ReloadOutlined onClick={reload} style={{ color: dimCol }} />
-              </Tooltip>
+              <IconAction label="Reload schedules" icon={<ReloadOutlined />} onClick={reload} />
               <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openNew}>
                 New schedule
               </Button>

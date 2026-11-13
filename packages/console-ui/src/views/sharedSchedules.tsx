@@ -1,8 +1,9 @@
-import { Tag, Typography, Tooltip, Alert } from 'antd'
+import { Typography, Tooltip, Alert } from 'antd'
 import type { SharedSchedule, SharedScheduleOutput, SharedScheduleRun } from '../bridge'
 import { isScheduled } from '../runBy'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { timeoutLabel } from './allSchedules'
+import { StatusTag, type StatusTone } from '../components/kit'
 
 const { Text } = Typography
 
@@ -14,8 +15,8 @@ const { Text } = Typography
 // here even when the runnable logs nothing itself. The list itself is the
 // Schedules tab's All schedules view (AllSchedulesView.tsx).
 
-export const RUN_COLOR: Record<string, string> = {
-  completed: 'green', failed: 'red', crashed: 'volcano', running: 'blue', skipped: 'default',
+export const RUN_TONE: Record<string, StatusTone> = {
+  completed: 'ok', failed: 'failed', crashed: 'failed', running: 'running', skipped: 'neutral',
 }
 
 export function relTime(iso: string | null | undefined, now = Date.now()): string {
@@ -30,7 +31,7 @@ export function relTime(iso: string | null | undefined, now = Date.now()): strin
 
 function RunTag({ run }: { run: SharedScheduleRun }) {
   const label = run.status === 'failed' && run.exit_code != null ? `exit ${run.exit_code}` : run.status
-  return <Tag color={RUN_COLOR[run.status] ?? 'default'}>{label}</Tag>
+  return <StatusTag tone={RUN_TONE[run.status] ?? 'neutral'}>{label}</StatusTag>
 }
 
 function OutputBlock({ title, text }: { title: string; text: string }) {
