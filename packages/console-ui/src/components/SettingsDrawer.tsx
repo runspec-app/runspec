@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
-import { EmptyState, StatusTag, type StatusTone } from './kit'
+import { EmptyState, StatusTag, withLabel, type StatusTone } from './kit'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo, type OwnMcpClaudePlugin } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -19,7 +19,7 @@ import {
   runnableSelectOptions, TargetFormItems, runnablesForTarget, splitFixedAndOpen,
   type Target,
 } from '../views/RunnableAction'
-import { MONO_FONT, RADIUS, textMuted, textSecondary, useAccent, useIsDark, withAlpha } from '../ThemeContext'
+import { MONO_FONT, RADIUS, textColor, textMuted, textSecondary, useAccent, useIsDark, withAlpha } from '../ThemeContext'
 import { ModelSelect } from './ModelSelect'
 import {
   copilotModelIds, groupProviderOptions, providerKeys, switchProvider,
@@ -285,7 +285,7 @@ export function SoundsTab() {
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
       <span style={{ fontSize: 14 }}>{label}</span>
-      {control}
+      {withLabel(control, label)}
     </div>
   )
 
@@ -2360,7 +2360,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
       />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
-          Saved to <code>jump_hosts.toml</code>. Hosts are probed on startup.
+          Saved to <code>runspec_hosts.toml</code>. Hosts are probed on startup.
         </Text>
         <Space size={6}>
           <Button size="small" icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()} disabled={isEditing}>Import</Button>
@@ -5597,7 +5597,7 @@ export function TelemetryTab() {
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
       <span style={{ fontSize: 14, flexShrink: 0 }}>{label}</span>
-      {control}
+      {withLabel(control, label)}
     </div>
   )
 
@@ -5923,7 +5923,7 @@ function ChatHistoryTab() {
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
       <span style={{ fontSize: 14 }}>{label}</span>
-      {control}
+      {withLabel(control, label)}
     </div>
   )
 
@@ -6548,7 +6548,7 @@ export function McpServerTab() {
   const row = (label: string, control: ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
       <span style={{ fontSize: 14 }}>{label}</span>
-      {control}
+      {withLabel(control, label)}
     </div>
   )
 
@@ -6739,7 +6739,7 @@ export function VoiceTab() {
     <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
       <div style={{ width: 200, paddingTop: 5, flexShrink: 0 }}><Text style={{ fontSize: 13 }}>{label}</Text></div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {control}
+        {withLabel(control, label)}
         {hint && <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 12 }}>{hint}</Text></div>}
       </div>
     </div>
@@ -6886,8 +6886,11 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
                 onClick={() => onSelect(item.key)}
                 style={{
                   fontWeight: active ? 600 : 500,
-                  color: active ? accent : textSecondary(isDark),
-                  background: active ? withAlpha(accent, isDark ? 0.12 : 0.08) : undefined,
+                  // The selection reads through weight, the bar and a quiet
+                  // fill; the text stays the strong text colour (a red brand as
+                  // text on its own tint was 3.9:1 and looked like a warning).
+                  color: active ? textColor(isDark) : textSecondary(isDark),
+                  background: active ? 'var(--rs-hover)' : undefined,
                   borderLeft: `2px solid ${active ? accent : 'transparent'}`,
                   borderRadius: `0 ${RADIUS.sm}px ${RADIUS.sm}px 0`,
                 }}

@@ -59,6 +59,22 @@ describe('SessionStrip', () => {
     expect(screen.queryAllByLabelText('Close session')).toHaveLength(1)
   })
 
+  it('is one keyboard stop: Tab lands on the selected chip, arrows move, Enter opens', () => {
+    const { onSelect } = renderStrip(
+      [sess({ id: 'c1', label: 'chat' }), sess({ id: 'w1', kind: 'trigger', interactive: false, label: 'waiting one', state: 'running' })],
+      { c1: 'idle', w1: 'waiting' },
+    )
+    expect(chip('c1').tabIndex).toBe(0)
+    expect(chip('w1').tabIndex).toBe(-1)
+    chip('c1').focus()
+    fireEvent.keyDown(chip('c1'), { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(chip('w1'))
+    fireEvent.keyDown(chip('w1'), { key: 'Enter' })
+    expect(onSelect).toHaveBeenCalledWith('w1')
+    fireEvent.keyDown(chip('w1'), { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(chip('c1'))
+  })
+
   it('selects on click and closes a finished automation session immediately', () => {
     const { onSelect, onClose } = renderStrip(
       [sess({ id: 'c1', label: 'chat' }), sess({ id: 't1', kind: 'trigger', interactive: false, label: 'done one', state: 'done' })],

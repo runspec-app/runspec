@@ -9,7 +9,7 @@
 //   EmptyState   one line saying why it's empty, plus at most one action
 
 import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, SyntheticEvent } from 'react'
-import { useState } from 'react'
+import { cloneElement, isValidElement, useState } from 'react'
 import { Button, Dropdown, Modal, Tooltip, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 import { CloseOutlined, EllipsisOutlined, InfoCircleOutlined } from '@ant-design/icons'
@@ -117,6 +117,19 @@ export function pressable(onActivate: () => void, opts: { label?: string; expand
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate() }
     },
   }
+}
+
+/** Give a form control the name its row shows, unless it already has one, so
+ *  a switch or select beside a text label isn't read as "switch, off". */
+export function withLabel(control: ReactNode, label: string): ReactNode {
+  if (!isValidElement(control)) return control
+  const props = control.props as Record<string, unknown>
+  // Leave alone a control that is already named, or a wrapper (a plain element
+  // or anything with children: a field plus its button) whose inner control
+  // carries its own name.
+  if (props['aria-label'] || props['aria-labelledby'] || props.id) return control
+  if (typeof control.type === 'string' || props.children != null) return control
+  return cloneElement(control as React.ReactElement<Record<string, unknown>>, { 'aria-label': label })
 }
 
 // ── IconAction ───────────────────────────────────────────────────────────────

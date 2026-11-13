@@ -9,6 +9,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.423.0] — 2026-11-13
+
+### Fixed
+
+- **Session chips work from the keyboard.** The chip row is one Tab stop (the
+  selected chip); the arrow keys, Home and End move between chips and Enter or
+  Space opens one, so a keyboard user can reach the chat that's waiting for
+  approval. Focus shows a ring.
+- **Every run-dialog field has a name.** Each argument's control (select,
+  switch, number, password, text, date, slider, colour) is named after the
+  argument, and the credentials picker is labelled, so a screen reader says
+  which field it is. Settings switches and selects are named after their row
+  (the Notifications switches had no name).
+- **The selected tab isn't the brand colour.** The current top tab, the More
+  button and the selected Settings section show their selection through
+  weight and the accent bar; their text stays the normal text colour (a red
+  brand as text read like an alert, and the Settings one was 3.9:1). The
+  current top tab is announced as the current page.
+- **Links, warning text and the Stop button** used Ant's derived shades of the
+  raw colours (links 3.7–4.4:1, warning text 4.0:1, Stop 4.3:1); they now use
+  the readable accent, warning and danger colours (5.7:1 or more).
+- Settings → Hosts said hosts are saved to `jump_hosts.toml`; the file is
+  `runspec_hosts.toml`.
+
+### Added
+
+- `withLabel()` in `components/kit.tsx` names a form control after its row
+  label unless it already has a name.
+
 ## [0.422.0] — 2026-11-13
 
 ### Changed

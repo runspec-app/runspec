@@ -1584,12 +1584,16 @@ export default function App() {
                         key={tab.key}
                         className="rs-nav-tab"
                         title={n < 9 ? `${tab.label} (Ctrl+${n + 1})` : undefined}
+                        aria-current={view === tab.key ? 'page' : undefined}
                         onClick={() => setView(tab.key)}
                         style={{
                           display: 'flex', alignItems: 'center', gap: 6,
                           padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
                           fontWeight: view === tab.key ? 600 : 500,
-                          color: view === tab.key ? titleCol : iconCol,
+                          // Selected reads through weight and the accent bar; the
+                          // text stays neutral so a red brand doesn't make the
+                          // current tab look like an alert.
+                          color: view === tab.key ? textColor(isDark) : iconCol,
                           borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
                         }}
                       >
@@ -1627,7 +1631,7 @@ export default function App() {
                         display: 'flex', alignItems: 'center', gap: 6,
                         padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
                         fontWeight: active ? 600 : 500,
-                        color: active ? titleCol : iconCol,
+                        color: active ? textColor(isDark) : iconCol,
                         borderBottom: active ? `2px solid ${titleCol}` : '2px solid transparent',
                       }}
                     >

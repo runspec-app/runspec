@@ -648,6 +648,7 @@ function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
                 mode="multiple"
                 value={credentialIds}
                 onChange={vs => setCredentialIds(vs as string[])}
+                aria-label="Credentials to pass"
                 placeholder="Select credentials to pass…"
                 style={{ width: '100%' }}
                 options={creds.map(c => ({ label: c.label, value: c.id }))}
