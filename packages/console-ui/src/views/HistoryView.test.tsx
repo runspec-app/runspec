@@ -150,8 +150,8 @@ describe('HistoryView', () => {
     // Both hosts' runs merge into the table…
     expect(await screen.findByText('backup')).toBeTruthy()
     expect(await screen.findByText('deploy')).toBeTruthy()
-    // …and the per-host fetch strip appears (only shown for >1 host).
-    expect(screen.getByText('Per-host fetch:')).toBeTruthy()
+    // …and the hosts line appears (only shown for >1 host), quiet when all answered.
+    expect(await screen.findByText('2 hosts · all loaded')).toBeTruthy()
   })
 
   it('a failing host does not block the others (isolated per-host reads)', async () => {
@@ -161,8 +161,8 @@ describe('HistoryView', () => {
     render(<HistoryView {...PROPS} />)
     // local's run still renders despite web-01 failing…
     expect(await screen.findByText('backup')).toBeTruthy()
-    // …and the failed host is marked in the strip.
-    expect(await screen.findByText('failed')).toBeTruthy()
+    // …and the failed host gets its own chip.
+    expect(await screen.findByText('web-01 · failed')).toBeTruthy()
   })
 
   it('refetches (once, debounced) on a runspec:run_end event', async () => {
@@ -303,7 +303,8 @@ describe('HistoryView', () => {
     ])
     const { rerender } = render(<HistoryView {...PROPS} />)
     await screen.findByText('backup')
-    expect(screen.getByText('Label')).toBeTruthy()
+    // (The scrolling table also renders a hidden measure row, hence getAll.)
+    expect(screen.getAllByText('Label').length).toBeGreaterThan(0)
     expect(screen.getByText('tui')).toBeTruthy()
     // The search box matches the label too.
     rerender(<HistoryView {...PROPS} search="tui" />)
@@ -314,7 +315,7 @@ describe('HistoryView', () => {
   it('hides the Label column when no run carries a label', async () => {
     render(<HistoryView {...PROPS} />)
     await screen.findByText('backup')
-    expect(screen.queryByText('Label')).toBeNull()
+    expect(screen.queryAllByText('Label')).toHaveLength(0)
   })
 
   it('fetches and shows the run log lines on demand when a row is expanded', async () => {

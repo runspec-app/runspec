@@ -9,6 +9,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.417.0] — 2026-11-13
+
+### Changed
+
+- **History reads calmer.** The per-host fetch strip is one quiet line ("3
+  hosts · all loaded", details on hover); a host gets its own chip only while
+  it is loading, slow, failing or showing a stale cache. Status uses one set of
+  outlined tags (ok, exit N, didn't start, skipped, inbox) that read at 4.5:1 in
+  both themes. In an expanded run, **Rerun** is the button and **Edit &
+  rerun** / **View full log** sit beside it, quieter; the log's copy and
+  ask-the-assistant buttons have names a screen reader can say, and log lines
+  use theme colours (they were fixed greys that faded on the light theme). An
+  empty table says why (no runs in the window, or none match the search) with
+  one button to widen the window or clear the search, and a narrow window
+  scrolls the table sideways instead of squeezing columns to one letter. A
+  one-time tip explains clicking a run and `-name` in the search.
+- **Console header.** **New chat** is the one button; **History** sits beside
+  it, quieter, and Collapse all / Expand all moved into a **More actions** menu.
+  The running strip above the cards uses the theme surface and the accent
+  instead of a fixed green, and each Cancel button names the run it cancels.
+
+### Added
+
+- Shared building blocks for every tab (`components/kit.tsx`): `StatusTag`
+  (ok / running / waiting / attention / failed / info / neutral), `IconAction`
+  (an icon button that must have a label), `RowActions` (one primary, quiet
+  secondaries, the rest behind More with an optional confirm), `PageToolbar`,
+  `PageHeader`, `OnceHint` (a tip shown until dismissed) and `EmptyState`.
+  Console and History use them now; the other tabs follow.
+
 ## [0.416.2] — 2026-11-13
 
 ### Fixed
