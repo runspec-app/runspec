@@ -299,3 +299,20 @@ describe('LlmTab switching providers', () => {
     expect(copilotStatus).toHaveBeenCalledWith({ api_key: '', api_key_command: '', cli_path: '' })
   })
 })
+
+describe('LlmTab first run', () => {
+  it('says what to do when no provider is set, and drops the note once one is', async () => {
+    getConfig.mockReset().mockResolvedValue({ llm: {} })
+    defaultSystemPrompt.mockReset().mockResolvedValue(DEFAULT_PROMPT)
+    render(<LlmTab />)
+    expect(await screen.findByText('Pick a provider to turn on the assistant')).toBeTruthy()
+  })
+
+  it('shows no first-run note when a provider is configured', async () => {
+    getConfig.mockReset().mockResolvedValue(INITIAL_CONFIG)
+    defaultSystemPrompt.mockReset().mockResolvedValue(DEFAULT_PROMPT)
+    render(<LlmTab />)
+    await screen.findByDisplayValue('https://gateway.corp/my-chain')
+    expect(screen.queryByText('Pick a provider to turn on the assistant')).toBeNull()
+  })
+})

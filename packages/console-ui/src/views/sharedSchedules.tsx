@@ -4,6 +4,7 @@ import { isScheduled } from '../runBy'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { timeoutLabel } from './allSchedules'
 import { StatusTag, type StatusTone } from '../components/kit'
+import { fmtWhen } from '../when'
 
 const { Text } = Typography
 
@@ -19,14 +20,9 @@ export const RUN_TONE: Record<string, StatusTone> = {
   completed: 'ok', failed: 'failed', crashed: 'failed', running: 'running', skipped: 'neutral',
 }
 
+// The console's one date format (when.tsx); kept under this name for callers.
 export function relTime(iso: string | null | undefined, now = Date.now()): string {
-  if (!iso) return '—'
-  const t = new Date(iso).getTime()
-  if (Number.isNaN(t)) return iso
-  const s = Math.round((t - now) / 1000)
-  const a = Math.abs(s)
-  const v = a < 60 ? `${a}s` : a < 3600 ? `${Math.round(a / 60)}m` : a < 86400 ? `${Math.round(a / 3600)}h` : `${Math.round(a / 86400)}d`
-  return s >= 0 ? `in ${v}` : `${v} ago`
+  return fmtWhen(iso, now)
 }
 
 function RunTag({ run }: { run: SharedScheduleRun }) {

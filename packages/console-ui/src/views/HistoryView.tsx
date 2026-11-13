@@ -9,6 +9,7 @@ import { bridge, type HistoryRecord, type HistoryLogLine, type HistorySyncState,
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT, RADIUS, statusText, textColor, useAccent, useIsDark, withAlpha } from '../ThemeContext'
 import { EmptyState, IconAction, OnceHint, PageToolbar, RowActions, StatusTag, type RowAction, type StatusTone } from '../components/kit'
+import { When, fullWhen } from '../when'
 
 // History shows real runnable runs only, with who initiated each (operator vs the
 // assistant). Whole agent turns and individual built-in tool calls are agent
@@ -315,7 +316,7 @@ function RunningNowStrip({ rows, accent }: { rows: RunningRun[]; accent: string 
         const argStr = Object.entries(r.args ?? {}).map(([k, v]) => `--${k}=${String(v)}`).join(' ')
         const tip = [
           `${r.group ? r.group + '/' : ''}${r.runnable} on ${r.host}`,
-          `started ${new Date(r.startTs).toLocaleString()}`,
+          `started ${fullWhen(r.startTs)}`,
           r.operator ? `by ${r.operator}` : '',
           r.runAs ? `as ${r.runAs}` : '',
           r.account && r.account !== r.operator && r.account !== r.runAs ? `OS account ${r.account}` : '',
@@ -812,7 +813,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       title: 'Time',
       dataIndex: 'ts',
       key: 'ts',
-      render: (ts: string) => new Date(ts).toLocaleString(),
+      render: (ts: string) => <When t={ts} />,
       sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
       defaultSortOrder: 'descend',
     },

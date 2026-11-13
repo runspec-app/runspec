@@ -35,6 +35,7 @@ import { KnowledgeSync, SyncResultBanner } from './KnowledgeSync'
 import { KnowledgeTools } from './KnowledgeTools'
 import { pageTargetFor } from './KnowledgeEdits'
 import type { SyncResult } from '../components/MemorySyncTab'
+import { When } from '../when'
 
 const RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 days' },
@@ -370,7 +371,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
             )}
             {overview && (
               <Text style={{ color: textMuted(isDark), fontSize: 12 }}>
-                Last captured {overview.captured_at ? new Date(overview.captured_at).toLocaleString() : 'never'}{overview.capturing ? ' (capturing now…)' : ''} · stored in <span style={{ fontFamily: MONO_FONT }}>{overview.dir}</span>
+                Last captured {overview.captured_at ? <When t={overview.captured_at} /> : 'never'}{overview.capturing ? ' (capturing now…)' : ''} · stored in <span style={{ fontFamily: MONO_FONT }}>{overview.dir}</span>
               </Text>
             )}
           </div>

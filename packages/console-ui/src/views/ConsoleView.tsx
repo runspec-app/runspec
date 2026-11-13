@@ -10,6 +10,7 @@ import { useSessions } from '../useSessions'
 import { SessionStrip } from '../components/SessionStrip'
 import { cardHasOwnSession, cardLabel, sessionStatus, type Session } from '../sessions'
 import { READ_ONLY_SESSION_HINT } from '../components/CommandInput'
+import { fmtWhen } from '../when'
 
 const { Text } = Typography
 
@@ -133,12 +134,6 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
   })
 }
 
-function fmtWhen(iso: string): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return ''
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
 
 interface ConsoleViewProps {
   inFlight: InFlightRecord[]

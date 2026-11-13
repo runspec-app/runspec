@@ -12,6 +12,7 @@ import {
   DRAG_MIME, LOCAL, joinPath, humanSize, humanTime, nextSelection, targetHost, targetLabel,
   type DragPayload, type PaneTarget, type Side,
 } from './filesModel'
+import { fullWhen } from '../../when'
 
 const { Text } = Typography
 const ADHOC = '__adhoc__'
@@ -406,7 +407,7 @@ export function FilePane({
                     <Text style={{ fontFamily: MONO_FONT, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</Text>
                   </span>
                   <span style={{ textAlign: 'right', fontSize: 12, color: 'var(--rs-text-secondary)' }}>{isFile ? humanSize(e.size) : ''}</span>
-                  <span style={{ textAlign: 'right', fontSize: 12, color: 'var(--rs-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{humanTime(e.mtime)}</span>
+                  <span style={{ textAlign: 'right', fontSize: 12, color: 'var(--rs-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={e.mtime ? fullWhen(e.mtime * 1000) : undefined}>{humanTime(e.mtime)}</span>
                 </div>
               )
             })}

@@ -10,6 +10,7 @@ import {
   type ParamRowState, detectDates, templatizeDates, widenToRotations, missingParams,
   rowsFromParams, paramsFromRows, slugify, defaultValues, filterParamName, isPlaceholder,
 } from './savedTransfers'
+import { When } from '../when'
 
 const { Text } = Typography
 
@@ -488,7 +489,7 @@ function PreviewList({ preview }: { preview: SavedTransferPreview }) {
             <div key={f.path} style={{ fontSize: 12, fontFamily: MONO_FONT, display: 'flex', gap: 8 }}>
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pull ? f.path : `${f.path} → ${f.dest}`}>{f.path}</span>
               <Text type="secondary" style={{ fontSize: 12 }}>{humanBytes(f.size)}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{new Date(f.mtime * 1000).toLocaleString()}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}><When t={f.mtime * 1000} /></Text>
             </div>
           ))}
           {s.unmatched.map(u => <div key={u}><Text type="warning" style={{ fontSize: 12 }}>No match for <Text code>{u}</Text></Text></div>)}

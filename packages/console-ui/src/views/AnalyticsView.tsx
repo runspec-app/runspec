@@ -10,6 +10,7 @@ import {
   durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown,
 } from './analytics'
 import { EmptyState, StatusTag } from '../components/kit'
+import { When } from '../when'
 
 const { Text } = Typography
 
@@ -135,18 +136,21 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
       sorter: (a, b) => a.count - b.count, defaultSortOrder: 'descend',
       render: (c: number) => <StatusTag tone="failed">{c}</StatusTag> },
     { title: 'Last seen', dataIndex: 'lastTs', key: 'lastTs',
-      render: (t: string) => <Text type="secondary" style={{ fontSize: 13 }}>{new Date(t).toLocaleString()}</Text> },
+      render: (t: string) => <Text type="secondary" style={{ fontSize: 13 }}><When t={t} /></Text> },
   ]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Filter bar */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-        <Segmented
-          options={RANGE_OPTIONS}
-          value={sinceDays}
-          onChange={(v) => setSinceDays(v as number)}
-        />
+        <Tooltip title="Charts read the history cache, which keeps the last 30 days. For older runs, use History → Runs (90d or All).">
+          <Segmented
+            aria-label="Chart range"
+            options={RANGE_OPTIONS}
+            value={sinceDays}
+            onChange={(v) => setSinceDays(v as number)}
+          />
+        </Tooltip>
         <Select
           mode="multiple" allowClear aria-label="Filter by group" placeholder={activeScope.length ? `scope: ${activeScope.join(', ')}` : 'All groups'}
           style={{ minWidth: 160 }} value={groupFilter} onChange={setGroupFilter}

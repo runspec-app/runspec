@@ -2023,7 +2023,7 @@ export default function App() {
                 <div
                   role="button"
                   tabIndex={0}
-                  aria-label="Refresh hosts and tools"
+                  aria-label="Refresh hosts and runnables"
                   aria-busy={refreshingHosts}
                   onClick={() => { if (!refreshingHosts) refreshHosts() }}
                   onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && !refreshingHosts) { e.preventDefault(); refreshHosts() } }}
@@ -2036,11 +2036,11 @@ export default function App() {
                   <span>
                     <span style={{
                       fontVariantNumeric: 'tabular-nums',
-                      color: countFlash ? '#52c41a' : titleCol,
+                      color: countFlash ? 'var(--rs-ok)' : titleCol,
                       fontWeight: countFlash ? 600 : 400,
                       transition: 'color 0.6s ease, font-weight 0.6s ease',
                     }}>{catalogue.distinct}</span>
-                    {' '}tool{catalogue.distinct === 1 ? '' : 's'}
+                    {' '}runnable{catalogue.distinct === 1 ? '' : 's'}
                     {catalogue.venvCount > 0 && <span> · {catalogue.venvCount} venv{catalogue.venvCount === 1 ? '' : 's'}</span>}
                     {(refreshingHosts || (!discovery.ready && discovery.total > 0)) && (
                       <span style={{ opacity: 0.7 }}> · {discovery.done}/{discovery.total} hosts</span>

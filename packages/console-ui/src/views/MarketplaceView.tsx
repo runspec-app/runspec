@@ -16,6 +16,7 @@ import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textColor, textSecon
 import { antTone, RowActions, StatusTag, type StatusTone } from '../components/kit'
 import { Markdown } from '../components/Markdown'
 import { hasTargetTokens, hostPasses, parseSearch, type ParsedSearch } from '../searchTokens'
+import { fmtWhen } from '../when'
 
 export { parseSearch, type ParsedSearch }
 
@@ -252,7 +253,7 @@ function DetailsModal({ entry, onClose }: { entry: MarketplaceEntry | null; onCl
     ['Depends on', (entry.requires_dist || []).join(', ') || '—'],
     ['License', entry.license || '—'],
     ['Author', entry.author || '—'],
-    ['Released', entry.upload_time ? new Date(entry.upload_time).toLocaleString() : '—'],
+    ['Released', entry.upload_time ? fmtWhen(entry.upload_time) : '—'],
     ['Metadata read from', entry.metadata_source || '—'],
   ]
   return (
