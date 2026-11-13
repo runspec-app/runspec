@@ -16,7 +16,7 @@ import {
   FolderOpenOutlined,
   CodeOutlined,
   BellOutlined,
-  ClockCircleOutlined, BarChartOutlined,
+  ClockCircleOutlined, BarChartOutlined, ControlOutlined,
   KeyOutlined,
   LoadingOutlined,
   BugOutlined,
@@ -96,12 +96,12 @@ import {
   type GroupsMode, type SidebarGroupsState,
 } from './sidebarGroups'
 import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
-import { layoutNavTabs, hostMatches } from './navGroups'
+import { layoutNavTabs, hostMatches, groupViews, parentOf } from './navGroups'
 import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
-import { pressable } from './components/kit'
+import { pressable, SectionSwitch } from './components/kit'
 
-type ViewKey = 'console' | 'specs' | 'history' | 'analytics' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
+type ViewKey = 'console' | 'automation' | 'quality' | 'specs' | 'history' | 'analytics' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -242,6 +242,11 @@ export default function App() {
   // first-paint bundle until then. Mirrors the settingsVisited latch; a ref (not
   // state) since latching never needs to force a re-render (the
   // `view` state change that reveals a tab already triggers one).
+  // The section each parent tab showed last (Automation → Triggers, …), so the
+  // tab reopens where the operator left it. Per viewer, best effort.
+  const lastSection = useRef<Record<string, string>>((() => {
+    try { return JSON.parse(localStorage.getItem('rs.nav.sections') || '{}') as Record<string, string> } catch { return {} }
+  })())
   const viewsVisited = useRef<Set<string>>(new Set(['console']))
   viewsVisited.current.add(view)
   const [copyKeyHost, setCopyKeyHost] = useState<string | null>(null)
@@ -505,6 +510,13 @@ export default function App() {
     window.addEventListener('runspec:config_sync_changed', check)
     return () => { clearInterval(t); window.removeEventListener('runspec:config_sync_changed', check) }
   }, [])
+
+  useEffect(() => {
+    const p = parentOf(view)
+    if (p === view) return
+    lastSection.current = { ...lastSection.current, [p]: view }
+    try { localStorage.setItem('rs.nav.sections', JSON.stringify(lastSection.current)) } catch { /* storage blocked */ }
+  }, [view])
 
   // An AI-only tab can't stay selected once the flag resolves to off.
   useEffect(() => { if (!aiEnabled && AI_ONLY_VIEWS.has(view)) setView('console') }, [aiEnabled, view])
@@ -975,7 +987,7 @@ export default function App() {
     root.setProperty('--rs-shadow-lg', s.shadowLg)
   }, [isDark, titleCol, danger.text])
 
-  const navTabs = visibleNavTabs([
+  const viewTabs = visibleNavTabs([
     {
       key: 'console' as ViewKey,
       label: 'Console',
@@ -984,7 +996,7 @@ export default function App() {
         : <ThunderboltOutlined />,
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
-    { key: 'logs'      as ViewKey, label: 'Logs',      icon: <FileTextOutlined /> },
+    { key: 'logs'      as ViewKey, label: 'Log files', icon: <FileTextOutlined /> },
     { key: 'files'     as ViewKey, label: 'Files',     icon: <FolderOpenOutlined /> },
     { key: 'knowledge' as ViewKey, label: 'Knowledge', icon: <DeploymentUnitOutlined /> },
     { key: 'improve'   as ViewKey, label: 'Improve',   icon: <BulbOutlined /> },
@@ -1012,12 +1024,42 @@ export default function App() {
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting} waiting for you`}><BellOutlined /></Badge>
         : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><BellOutlined /></Badge>,
     },
-    { key: 'analytics' as ViewKey, label: 'Analytics', icon: <BarChartOutlined /> },
+    { key: 'analytics' as ViewKey, label: 'Charts',    icon: <BarChartOutlined /> },
     { key: 'rota'      as ViewKey, label: 'Working hours', icon: <ClockCircleOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
   ], features)
+  // The tab bar shows one tab per parent (navGroups NAV_SECTIONS): Automation
+  // holds Schedules / Triggers / Working hours, History holds Runs / Charts /
+  // Log files, Forms holds Run / Specs, Quality holds Improve / Evals. Each view
+  // keeps its own key, so code that opens 'triggers' still lands in the right
+  // place; the parent tab opens the section used last.
+  const automationIcon = triggerAwaiting > 0
+    ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting} waiting for you`}><ControlOutlined /></Badge>
+    : scheduleRunning > 0
+      ? <Badge count={scheduleRunning} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${scheduleRunning} scheduled run${scheduleRunning === 1 ? '' : 's'} in progress`}><ControlOutlined /></Badge>
+      : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><ControlOutlined /></Badge>
+  const PARENT_META: Record<string, { label: string; icon: React.ReactNode }> = {
+    forms: { label: 'Forms', icon: <FormOutlined /> },
+    history: { label: 'History', icon: <HistoryOutlined /> },
+    automation: { label: 'Automation', icon: automationIcon },
+    quality: { label: 'Quality', icon: <ExperimentOutlined /> },
+  }
+  const navTabs = groupViews(viewTabs.map(t => t.key)).map(g => {
+    const meta = PARENT_META[g.key]
+    if (!meta) return { ...viewTabs.find(t => t.key === g.key)!, sections: [] as { key: string; label: string }[] }
+    return { key: g.key as ViewKey, label: meta.label, icon: meta.icon, sections: g.sections }
+  })
   // Grouped tab bar + More menu (navGroups.ts); Ctrl+1…9 follows this order.
   const navLayout = layoutNavTabs(navTabs)
+  const currentTab = parentOf(view)
+  // Open a tab: a parent opens the section used last (remembered per viewer),
+  // else its first visible section.
+  const openTab = (key: string) => {
+    const secs = navTabs.find(t => t.key === key)?.sections ?? []
+    if (secs.length === 0) { setView(key as ViewKey); return }
+    const last = lastSection.current[key]
+    setView((secs.some(s => s.key === last) ? last : secs[0].key) as ViewKey)
+  }
 
   // ── Keyboard shortcuts (shortcuts.ts is the registry) ──────────────────────
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -1048,7 +1090,7 @@ export default function App() {
     help: () => setShortcutsOpen(true),
     settings: () => openSettings(),
     refreshHosts: () => { if (!refreshingHosts) refreshHosts() },
-    switchTab: (i: number) => { const t = navLayout.ordered[i]; if (t) setView(t.key) },
+    switchTab: (i: number) => { const t = navLayout.ordered[i]; if (t) openTab(t.key) },
     focusComposer: () => focusComposer(false),
     findRunnable: () => focusComposer(true),
     approve: () => confirmByKey('approve'),
@@ -1077,10 +1119,20 @@ export default function App() {
     act('theme', isDark ? 'Switch to light theme' : 'Switch to dark theme', toggleTheme)
     act('docs', 'Open documentation', () => { bridge.open_docs().catch(console.error) })
     act('help', 'Keyboard shortcuts', () => setShortcutsOpen(true), shortcutHint('help'))
-    navTabs.forEach((t, i) => out.push({
-      id: `tab:${t.key}`, label: t.label, group: 'Go to', icon: t.icon,
-      hint: i < 9 ? `Ctrl+${i + 1}` : undefined, run: () => setView(t.key),
-    }))
+    // Go to: every tab, plus each section by name ("Automation › Triggers").
+    navLayout.ordered.forEach((t, i) => {
+      out.push({
+        id: `tab:${t.key}`, label: t.label, group: 'Go to', icon: t.icon,
+        hint: i < 9 ? `Ctrl+${i + 1}` : undefined, run: () => openTab(t.key),
+      })
+      if (t.sections.length > 1) for (const sec of t.sections) {
+        const leaf = viewTabs.find(v => v.key === sec.key)
+        out.push({
+          id: `tab:${sec.key}`, label: `${t.label} › ${sec.label}`, group: 'Go to', icon: leaf?.icon,
+          keywords: [leaf?.label ?? ''], run: () => setView(sec.key as ViewKey),
+        })
+      }
+    })
     // One row per runnable name (the fleet can have it on many hosts); open
     // its form, preferring the selected host's copy.
     const byName = new Map<string, Runnable[]>()
@@ -1584,17 +1636,17 @@ export default function App() {
                         key={tab.key}
                         className="rs-nav-tab"
                         title={n < 9 ? `${tab.label} (Ctrl+${n + 1})` : undefined}
-                        aria-current={view === tab.key ? 'page' : undefined}
-                        onClick={() => setView(tab.key)}
+                        aria-current={currentTab === tab.key ? 'page' : undefined}
+                        onClick={() => openTab(tab.key)}
                         style={{
                           display: 'flex', alignItems: 'center', gap: 6,
                           padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
-                          fontWeight: view === tab.key ? 600 : 500,
+                          fontWeight: currentTab === tab.key ? 600 : 500,
                           // Selected reads through weight and the accent bar; the
                           // text stays neutral so a red brand doesn't make the
                           // current tab look like an alert.
-                          color: view === tab.key ? textColor(isDark) : iconCol,
-                          borderBottom: view === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
+                          color: currentTab === tab.key ? textColor(isDark) : iconCol,
+                          borderBottom: currentTab === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
                         }}
                       >
                         {tab.icon}
@@ -1607,7 +1659,7 @@ export default function App() {
               {navLayout.overflow.length > 0 && (() => {
                 // More: the occasional tabs. While one of them is open the
                 // button takes its name and the active underline.
-                const active = navLayout.overflow.find(t => t.key === view)
+                const active = navLayout.overflow.find(t => t.key === currentTab)
                 return (
                   <Dropdown
                     trigger={['click']}
@@ -1619,7 +1671,7 @@ export default function App() {
                           key: t.key,
                           icon: t.icon,
                           label: n < 9 ? <span>{t.label} <span style={{ color: textMuted(isDark), marginLeft: 8 }}>Ctrl+{n + 1}</span></span> : t.label,
-                          onClick: () => setView(t.key),
+                          onClick: () => openTab(t.key),
                         }
                       }),
                     }}
@@ -1661,6 +1713,22 @@ export default function App() {
             {/* View area */}
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
+                {(() => {
+                  const tab = navTabs.find(t => t.key === currentTab)
+                  if (!tab || tab.sections.length < 2) return null
+                  return (
+                    <SectionSwitch
+                      label={tab.label}
+                      sections={tab.sections.map(sec => ({
+                        ...sec,
+                        count: sec.key === 'triggers' ? triggerAwaiting : sec.key === 'schedules' ? scheduleRunning : 0,
+                        countTone: sec.key === 'triggers' ? 'waiting' : 'running',
+                      }))}
+                      value={view}
+                      onChange={k => setView(k as ViewKey)}
+                    />
+                  )
+                })()}
                 <div className="rs-view" style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                   <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
                 </div>
@@ -1683,7 +1751,7 @@ export default function App() {
                 {viewsVisited.current.has('history') && (
                   <div className="rs-view" style={{ display: view === 'history' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'history'} onOpenAnalytics={() => setView('analytics')} />
+                      <HistoryView search={historySearch} onSearchChange={setHistorySearch} onRerun={handleHistoryRerun} onAskLlm={aiEnabled ? handleAskLlm : undefined} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'history'} />
                     </Suspense>
                   </div>
                 )}

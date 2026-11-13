@@ -83,10 +83,17 @@ No configuration is needed for the first start. You'll see:
 - a **sidebar** listing hosts — just `local` (this machine) for now;
 - the **Console** tab — the agent chat (empty until you add an API key in the
   next step);
-- **Forms** — every discovered runnable as a typed run dialog;
-- **Triggers**, **Schedules**, **Working hours** — automation, covered in
-  [Automation](console-automation.md);
-- **History** — past runs and conversations.
+- **Forms** — every discovered runnable as a typed run dialog (**Run**), and
+  each runnable's full spec (**Specs**);
+- **History** — past runs (**Runs**), charts over them (**Charts**) and the
+  log files behind them (**Log files**);
+- **Automation** — **Schedules**, **Triggers** and **Working hours**, covered
+  in [Automation](console-automation.md);
+- **Files**, **Knowledge**, **Marketplace**, and under **More**, **Quality**
+  (**Improve** and **Evals**) and **Dev**.
+
+A tab that holds several views shows a switch at the top and reopens the one
+you used last; Ctrl+K finds any of them by name ("Automation › Triggers").
 
 Open **Forms** and you'll see the runnables from `runspec-windows`
 (or whatever runspec packages are installed in the environment). The console

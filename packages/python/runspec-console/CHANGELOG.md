@@ -9,6 +9,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.424.0] — 2026-11-13
+
+### Changed
+
+- **Seven tabs instead of fifteen.** Related views now share a tab, with a
+  switch at the top that remembers the one you used last:
+  - **Automation**: Schedules, Triggers, Working hours (the gate over both).
+    Its tab badge shows what's waiting for you, else what's running; the
+    switch shows the counts per section.
+  - **History**: Runs, Charts (was Analytics), Log files (was Logs).
+  - **Forms**: Run, Specs.
+  - **Quality** (under More): Improve, Evals.
+  The tab bar is Console, Forms, History, Files | Automation | Knowledge,
+  Marketplace, with Quality and Dev under More; Ctrl+1…9 follows it. Every
+  section is still reachable from Ctrl+K by name ("Automation › Triggers"), and
+  anything that opened a view directly (Approve from another tab, "recent
+  runs" from Knowledge) lands in the right section. With AI off, Automation
+  shows Schedules alone and Quality is hidden.
+
+### Added
+
+- `SectionSwitch` in `components/kit.tsx` and `NAV_SECTIONS` / `parentOf` /
+  `groupViews` in `navGroups.ts` (the tab → section map).
+
 ## [0.423.0] — 2026-11-13
 
 ### Fixed
