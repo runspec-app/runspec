@@ -102,6 +102,52 @@ const LIGHT_SURFACES: Surfaces = {
 }
 export const surfaces = (isDark: boolean): Surfaces => (isDark ? DARK_SURFACES : LIGHT_SURFACES)
 
+const _hex6 = (hex: string): string | null => {
+  const h = hex.trim().replace('#', '')
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h
+  return /^[0-9a-fA-F]{6}$/.test(full) ? full.toLowerCase() : null
+}
+const _lum = (full: string) => {
+  const n = parseInt(full, 16)
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(v => {
+    const c = v / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+}
+/** WCAG 2 contrast ratio between two '#rgb'/'#rrggbb' colours (1 when unparseable). */
+export function contrastRatio(a: string, b: string): number {
+  const x = _hex6(a), y = _hex6(b)
+  if (!x || !y) return 1
+  const [hi, lo] = [_lum(x), _lum(y)].sort((p, q) => q - p)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/**
+ * The accent as TEXT: the colour unchanged when it already reads at 4.5:1 on
+ * every surface of the theme, else mixed toward white (dark) or black (light)
+ * just far enough that it does. A white-label accent_color is chosen for fills
+ * (buttons, the logo), and a deep brand red on gunmetal reads at ~2:1 — so
+ * links, active tabs and highlighted text use this, while colorPrimary keeps
+ * the brand colour as given.
+ */
+export function readableAccent(hex: string, isDark: boolean, min = 4.5): string {
+  const full = _hex6(hex)
+  if (!full) return hex
+  const sf = surfaces(isDark)
+  const bgs = [sf.sunken, sf.base, sf.raised, sf.overlay]
+  const worst = (c: string) => Math.min(...bgs.map(bg => contrastRatio(c, bg)))
+  if (worst('#' + full) >= min) return '#' + full
+  const n = parseInt(full, 16)
+  const rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  const target = isDark ? 255 : 0
+  for (let t = 0.04; t <= 1.0001; t += 0.04) {
+    const mixed = '#' + rgb.map(v => Math.round(v + (target - v) * t).toString(16).padStart(2, '0')).join('')
+    if (worst(mixed) >= min) return mixed
+  }
+  return isDark ? '#ffffff' : '#000000'
+}
+
 /** 'rgba(r,g,b,a)' from a '#rgb'/'#rrggbb' hex — for accent-tinted hover fills. */
 export function withAlpha(hex: string, alpha: number): string {
   const h = hex.replace('#', '')

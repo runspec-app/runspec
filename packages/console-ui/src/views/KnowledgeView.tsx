@@ -9,11 +9,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Badge, Button, Checkbox, Empty, Form, Input, Modal, Popconfirm, Select, Space, Spin, Tabs,
+  Alert, Badge, Button, Checkbox, Drawer, Dropdown, Empty, Form, Input, Modal, Popconfirm, Select, Space, Spin, Tabs,
   Tag, Tooltip, Typography, message,
 } from 'antd'
 import {
-  BulbOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, ExpandOutlined,
+  ApartmentOutlined, BulbOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, DownOutlined, EditOutlined, ExpandOutlined, FileSearchOutlined,
   CloseCircleOutlined, PlusOutlined, PushpinFilled, PushpinOutlined, ReloadOutlined,
   ZoomInOutlined, ZoomOutOutlined,
 } from '@ant-design/icons'
@@ -22,8 +22,9 @@ import {
   bridge, type KnowledgeEdge, type KnowledgeFact, type KnowledgeFactInput,
   type KnowledgeNode, type KnowledgeOverview, type KnowledgePage, type Runnable,
 } from '../bridge'
+import { resolveScoped, shortcutHint, type ShortcutId } from '../shortcuts'
 import {
-  MONO_FONT, RADIUS, surfaces, textColor, textMuted, textSecondary, useAccent,
+  MONO_FONT, RADIUS, surfaces, textColor, textMuted, textSecondary,
   useIsDark, withAlpha,
 } from '../ThemeContext'
 import {
@@ -73,13 +74,24 @@ interface KnowledgeViewProps {
   onOpenSettings?: (tab: string) => void
   // Discovered runnables, for the Tools view's index and page headers.
   runnables?: Runnable[]
+  // A tool page's actions: its run form, a prefilled question, its History.
+  onRunTool?: (name: string) => void
+  onAskAbout?: (name: string) => void
+  onRecentRuns?: (name: string) => void
 }
 
-export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [] }: KnowledgeViewProps) {
+export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [], onRunTool, onAskAbout, onRecentRuns }: KnowledgeViewProps) {
   const isDark = useIsDark()
   const [overview, setOverview] = useState<KnowledgeOverview | null>(null)
   const [loading, setLoading] = useState(false)
-  const [tab, setTab] = useState<'tools' | 'graph' | 'inbox'>('tools')
+  const [tab, setTab] = useState<'tools' | 'inbox'>('tools')
+  // The fact graph opens over the tab (from a page's Show connections, an
+  // entity tag, or the Fact graph button), not as a view of its own.
+  const [graphOpen, setGraphOpen] = useState(false)
+  const showGraph = (entity?: string) => {
+    if (entity !== undefined) { setSelected(entity); setResults(null); setQuery('') }
+    setGraphOpen(true)
+  }
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [selected, setSelected] = useState<string>('')
   const [page, setPage] = useState<KnowledgePage | null>(null)
@@ -101,6 +113,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
   const [toolFocus, setToolFocus] = useState<{ target: string; n: number } | null>(null)
   const openWikiPage = (entity: string) => {
     setToolFocus(prev => ({ target: entity, n: (prev?.n ?? 0) + 1 }))
+    setGraphOpen(false)
     setTab('tools')
   }
 
@@ -234,45 +247,59 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
     <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, height: '100%', boxSizing: 'border-box' }}>
       <Tabs
         activeKey={tab}
-        onChange={k => setTab(k as 'tools' | 'graph' | 'inbox')}
+        onChange={k => setTab(k as 'tools' | 'inbox')}
         items={[
           { key: 'tools', label: 'Tools' },
           { key: 'inbox', label: <Badge count={inboxCount} size="small" offset={[8, -2]}>Inbox</Badge> },
-          { key: 'graph', label: 'Fact graph' },
         ]}
-        tabBarExtraContent={<KnowledgeSync onOpenSettings={() => onOpenSettings?.('memorySync')} onResult={setSyncResult} />}
+        tabBarExtraContent={
+          <Space size={8}>
+            <Tooltip title="Every fact drawn as a graph, with fact search and the facts pinned into the agent's context">
+              <Button icon={<ApartmentOutlined />} onClick={() => showGraph()}>
+                Fact graph{overview?.pinned?.length ? <span style={{ color: textMuted(isDark) }}> · {overview.pinned.length} pinned</span> : null}
+              </Button>
+            </Tooltip>
+            <KnowledgeSync onOpenSettings={() => onOpenSettings?.('memorySync')} onResult={setSyncResult} />
+          </Space>
+        }
         style={{ marginBottom: -8 }}
       />
       <SyncResultBanner result={syncResult} onClose={() => setSyncResult(null)} />
 
       {tab === 'tools' ? (
-        <KnowledgeTools runnables={runnables} active={active} onOpenSettings={onOpenSettings} focus={toolFocus} />
+        <KnowledgeTools runnables={runnables} active={active} onOpenSettings={onOpenSettings} focus={toolFocus}
+          onRunTool={onRunTool} onAskAbout={aiEnabled ? onAskAbout : undefined} onRecentRuns={onRecentRuns}
+          onShowConnections={showGraph} />
       ) : loading && !overview ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin /></div>
-      ) : tab === 'inbox' ? (
+      ) : (
         <Inbox
           toolbar={
             <Space wrap>
-              <Text style={{ color: textSecondary(isDark) }}>
-                {s ? `${s.approved} facts · ${s.observed} observed` : ''}
+              <Text style={{ color: textColor(isDark) }}>
+                <b>{(overview?.inbox ?? []).length}</b> waiting for review
+                {s ? <span style={{ color: textMuted(isDark) }}> · {s.approved} facts in the wiki</span> : null}
               </Text>
-              <Tooltip title="How far back Capture usage and Suggest from chats read.">
-                <Select
-                  aria-label="History range"
-                  value={rangeDays}
-                  onChange={v => setRange(v)}
-                  options={RANGE_OPTIONS}
-                  style={{ width: 130 }}
-                />
-              </Tooltip>
-              <Tooltip title="Reads this console's run history (which tools run one after another) and config (triggers, schedules, runbooks, file filters). What it finds stays on this console. No AI.">
-                <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture usage</Button>
-              </Tooltip>
-              {aiEnabled && (
-                <Tooltip title="Ask the model to suggest facts from your saved chats in the range. Chats already read are skipped, so re-running only reads what is new. Suggestions land here for you to review.">
-                  <Button icon={<BulbOutlined />} loading={busy === 'distill'} onClick={distill}>Suggest from chats</Button>
-                </Tooltip>
-              )}
+              <Dropdown trigger={['click']} menu={{
+                items: [
+                  { key: 'capture', icon: <ReloadOutlined />, label: <FindItem title="Capture usage" note="Run history and config on this console. No AI." /> },
+                  ...(aiEnabled ? [{ key: 'distill', icon: <BulbOutlined />, label: <FindItem title="Suggest from chats" note="The model reads your saved chats; ones already read are skipped." /> }] : []),
+                  { type: 'divider' as const },
+                  { type: 'group' as const, label: 'Read the last', children: RANGE_OPTIONS.map(o => ({
+                    key: `range:${o.value}`, label: o.label,
+                    icon: o.value === rangeDays ? <CheckOutlined /> : <span style={{ display: 'inline-block', width: 14 }} />,
+                  })) },
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'capture') capture()
+                  else if (key === 'distill') distill()
+                  else if (key.startsWith('range:')) setRange(Number(key.slice(6)))
+                },
+              }}>
+                <Button icon={<FileSearchOutlined />} loading={busy === 'capture' || busy === 'distill'}>
+                  Find facts <span style={{ color: textMuted(isDark) }}>· {rangeLabel(rangeDays)}</span> <DownOutlined />
+                </Button>
+              </Dropdown>
               <Button icon={<PlusOutlined />} onClick={() => setEditing({})}>Add fact</Button>
             </Space>
           }
@@ -288,11 +315,17 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
           }}
           onReject={f => review(f, false)}
           onEdit={f => setEditing({ fact: f, review: true })}
-          onEntity={e => { setSelected(e); setTab('graph') }}
+          onEntity={e => showGraph(e)}
           pins={pins}
         />
-      ) : (
-        <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
+      )}
+
+      <Drawer open={graphOpen} onClose={() => setGraphOpen(false)} title="Fact graph" width="88%" destroyOnHidden
+        styles={{ body: { display: 'flex', flexDirection: 'column', padding: 16 } }}>
+        {!overview ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin /></div>
+        ) : (
+        <div data-testid="fact-graph" style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <Input.Search
@@ -354,7 +387,8 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
             pins={pins}
           />
         </div>
-      )}
+        )}
+      </Drawer>
 
       {editing && (
         <FactEditor
@@ -404,7 +438,6 @@ export function GraphCanvas({ nodes, edges, selected, onSelect, onClear, isStale
   isStale?: ((entity: string) => boolean) | null
 }) {
   const isDark = useIsDark()
-  const accent = useAccent()
   const sf = surfaces(isDark)
   const [hover, setHover] = useState('')
   const [size, setSize] = useState({ w: GRAPH_W, h: GRAPH_H })
@@ -485,7 +518,7 @@ export function GraphCanvas({ nodes, edges, selected, onSelect, onClear, isStale
             const faded = !!isStale && (isStale(e.source) || isStale(e.target))
             return (
               <line key={`${e.source}|${e.target}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                stroke={lit ? accent : textMuted(isDark)}
+                stroke={lit ? textColor(isDark) : textMuted(isDark)}
                 strokeOpacity={near ? (lit ? 0.9 : 0.08) : faded ? 0.15 : 0.35}
                 strokeDasharray={faded ? '4 3' : undefined}
                 strokeWidth={(0.8 + (e.weight / maxEdge) * 2.5) / Math.max(1, view.k)} />
@@ -506,7 +539,7 @@ export function GraphCanvas({ nodes, edges, selected, onSelect, onClear, isStale
                 onMouseEnter={() => setHover(n.id)}
                 onMouseLeave={() => setHover('')}
                 onClick={() => onSelect(n.id)}>
-                {isSel && <circle r={r + 5} fill="none" stroke={accent} strokeWidth={2} />}
+                {isSel && <circle r={r + 5} fill="none" stroke={textColor(isDark)} strokeWidth={2} />}
                 <circle r={r} fill={typeColor(n.type)} fillOpacity={n.pending || stale ? 0.35 : 0.9}
                   stroke={n.pending || stale ? typeColor(n.type) : sf.raised} strokeDasharray={n.pending || stale ? '3 2' : undefined} strokeWidth={1.5} />
                 {showLabel && (
@@ -709,6 +742,19 @@ function FactRow({ fact, current, onEntity, onEdit, onRetire, actions, pins }: {
 
 // ── inbox ────────────────────────────────────────────────────────────────────
 
+// One line in the Find facts menu: what it does, and what it reads.
+function FindItem({ title, note }: { title: string; note: string }) {
+  const isDark = useIsDark()
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.35, padding: '2px 0' }}>
+      <span>{title}</span>
+      <span style={{ fontSize: 12, color: textMuted(isDark) }}>{note}</span>
+    </div>
+  )
+}
+
+const INBOX_HINT_KEY = 'rs.knowledge.inboxHintSeen'
+
 function Inbox({ facts, toolbar, onApprove, onAddToPage, onReject, onEdit, onEntity, pins }: {
   facts: KnowledgeFact[]
   toolbar?: React.ReactNode
@@ -721,36 +767,79 @@ function Inbox({ facts, toolbar, onApprove, onAddToPage, onReject, onEdit, onEnt
 }) {
   const isDark = useIsDark()
   const sf = surfaces(isDark)
+  const [cursor, setCursor] = useState(0)
+  const [hint, setHint] = useState(() => { try { return !localStorage.getItem(INBOX_HINT_KEY) } catch { return true } })
+  const dismissHint = () => { setHint(false); try { localStorage.setItem(INBOX_HINT_KEY, '1') } catch { /* private window */ } }
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([])
+  const at = Math.min(cursor, Math.max(facts.length - 1, 0))
+
+  // J/K move, P/A/E/R act on the highlighted fact (shortcuts.ts, scope 'inbox').
+  const latest = useRef({ facts, at, onApprove, onAddToPage, onEdit })
+  latest.current = { facts, at, onApprove, onAddToPage, onEdit }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing) return
+      const id = resolveScoped(e, 'inbox')
+      const { facts: fs, at: i, onApprove: approve, onAddToPage: add, onEdit: edit } = latest.current
+      if (!id || fs.length === 0) return
+      const f = fs[i]
+      e.preventDefault()
+      if (id === 'inboxNext') setCursor(Math.min(i + 1, fs.length - 1))
+      else if (id === 'inboxPrev') setCursor(Math.max(i - 1, 0))
+      else if (id === 'inboxApprove') approve(f)
+      else if (id === 'inboxEdit') edit(f)
+      else if (id === 'inboxAddToPage') { if (add && f.scope !== 'local' && pageTargetFor(f)) add(f) }
+      else if (id === 'inboxReject') rowRefs.current[i]?.querySelector<HTMLElement>('[data-rs-reject]')?.click()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  useEffect(() => { rowRefs.current[at]?.scrollIntoView?.({ block: 'nearest' }) }, [at])
+
+  const keys = (id: ShortcutId) => ` (${shortcutHint(id)})`
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflow: 'auto' }}>
       {toolbar}
+      {hint && facts.length > 0 && (
+        <Alert type="info" showIcon closable onClose={dismissHint} style={{ maxWidth: 900 }}
+          message={<span style={{ display: 'block', maxWidth: '72ch' }}>
+            Facts come from the agent, an MCP client such as Claude Code, or your chats. Nothing joins the wiki until you review it:
+            {' '}<b>Add to page</b> puts it on its page in the team wiki, <b>Approve</b> keeps it as a fact.
+            {' '}Keys: J and K move, then P, A, E or R.
+          </span>} />
+      )}
       {facts.length === 0 ? (
         <Empty style={{ marginTop: 40 }} description={<span style={{ color: textSecondary(isDark) }}>No facts waiting for review.</span>} />
       ) : (
-    <div style={{ maxWidth: 900, background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, padding: '4px 14px' }}>
-      <div style={{ color: textSecondary(isDark), padding: '8px 0' }}>
-        Proposed by the agent, by an MCP client such as Claude Code, or suggested from your chats. Nothing joins the wiki until you approve it. <b>Add to page</b> puts a fact on its page in the team wiki; <b>Approve</b> keeps it as a fact.
-      </div>
-      {facts.map(f => {
-        const target = f.scope !== 'local' ? pageTargetFor(f) : null
+    <div role="list" aria-label="Facts waiting for review" style={{ maxWidth: 900, background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, padding: '4px 0' }}>
+      {facts.map((f, i) => {
+        const target = f.scope !== 'local' && onAddToPage ? pageTargetFor(f) : null
+        const on = i === at
         return (
-        <FactRow key={f.id} fact={f} onEntity={onEntity} pins={pins} actions={
-          <Space size={4}>
-            {onAddToPage && target && (
-              <Tooltip title={`Approve it and add it to ${target.path} under \u201c${target.heading}\u201d, as an edit you propose later`}>
-                <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => onAddToPage(f)}>Add to page</Button>
+        <div key={f.id} role="listitem" ref={el => { rowRefs.current[i] = el }} aria-current={on ? 'true' : undefined}
+          onClick={() => setCursor(i)}
+          style={{ padding: '0 14px 0 11px', borderLeft: `3px solid ${on ? textMuted(isDark) : 'transparent'}` }}>
+        <FactRow fact={f} onEntity={onEntity} pins={pins} actions={
+          <Space size={2}>
+            {/* One primary per row: Add to page when the fact has a page to go on, else Approve. */}
+            {target && (
+              <Tooltip title={`Approve it and add it to ${target.path} under \u201c${target.heading}\u201d, as an edit you propose later${keys('inboxAddToPage')}`}>
+                <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => onAddToPage!(f)}>Add to page</Button>
               </Tooltip>
             )}
-            <Tooltip title={f.scope === 'local' ? 'Approve it as a fact on this console' : 'Approve it as a fact, without adding it to a page'}>
-              <Button size="small" icon={<CheckOutlined />} onClick={() => onApprove(f)}>Approve</Button>
+            <Tooltip title={`${f.scope === 'local' ? 'Approve it as a fact on this console' : target ? 'Approve it as a fact, without adding it to a page' : 'Approve it as a fact'}${keys('inboxApprove')}`}>
+              <Button size="small" type={target ? 'default' : 'primary'} icon={<CheckOutlined />} onClick={() => onApprove(f)}>Approve</Button>
             </Tooltip>
-            <Button size="small" icon={<EditOutlined />} onClick={() => onEdit(f)}>Edit</Button>
+            <Tooltip title={`Edit, then approve${keys('inboxEdit')}`}>
+              <Button size="small" type="text" icon={<EditOutlined />} onClick={() => onEdit(f)}>Edit</Button>
+            </Tooltip>
             <Popconfirm title="Reject this fact?" description="It leaves the inbox and isn't added to the wiki." okText="Reject" okButtonProps={{ danger: true }} onConfirm={() => onReject(f)}>
               {/* Ant's danger red is ~2.8:1 on the gunmetal card; lift it for text. */}
-              <Button size="small" danger icon={<CloseOutlined />} style={isDark ? { color: DANGER_TEXT_DARK, borderColor: DANGER_TEXT_DARK } : undefined}>Reject</Button>
+              <Button size="small" type="text" danger data-rs-reject="" icon={<CloseOutlined />} style={isDark ? { color: DANGER_TEXT_DARK } : undefined}>Reject</Button>
             </Popconfirm>
           </Space>
         } />
+        </div>
         )
       })}
     </div>

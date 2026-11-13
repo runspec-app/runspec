@@ -9,9 +9,9 @@
 // a dashed panel that never leaves this machine. Phase 1 only reads pages;
 // editing them happens in the repo.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Empty, Input, Popconfirm, Space, Spin, Tag, Tooltip, Typography, message } from 'antd'
-import { EditOutlined, ExportOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons'
+import { ApartmentOutlined, EditOutlined, ExportOutlined, HistoryOutlined, MessageOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons'
 
 import { bridge, type KnowledgeFact, type Runnable, type WikiCheck, type WikiDraft, type WikiPage, type WikiPages } from '../bridge'
 import { DiffView, PageEditor, ProposeBar } from './KnowledgeEdits'
@@ -85,10 +85,17 @@ function pageText(p: WikiPage): string {
   return [p.title, p.description, ...p.sections.map(s => `${s.heading} ${s.text}`)].join(' ').toLowerCase()
 }
 
-export function KnowledgeTools({ runnables, active, onOpenSettings, focus }: {
+export function KnowledgeTools({ runnables, active, onOpenSettings, focus, onRunTool, onAskAbout, onRecentRuns, onShowConnections }: {
   runnables: Runnable[]
   active: boolean
   onOpenSettings?: (tab: string) => void
+  // From a tool's page to using it: open its run form, ask the assistant
+  // (prefills the composer; absent when AI is off), or its History.
+  onRunTool?: (name: string) => void
+  onAskAbout?: (name: string) => void
+  onRecentRuns?: (name: string) => void
+  // Open the fact graph centred on this page's entity.
+  onShowConnections?: (entity: string) => void
   // Open this page or tool (a request from another view; `n` changes per request).
   focus?: { target: string; n: number } | null
 }) {
@@ -150,6 +157,12 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus }: {
   useEffect(() => {
     try { if (selected) localStorage.setItem(LAST_TOOL_KEY, selected) } catch { /* private window */ }
   }, [selected])
+  // Keep the selected row in sight, e.g. after a jump from the wiki check or the graph.
+  const navRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const row = navRef.current?.querySelector('[aria-current="true"]') as HTMLElement | null
+    row?.scrollIntoView?.({ block: 'nearest' })
+  }, [selected, wiki])
 
   const isPage = selected.includes(':')
   const tool = isPage ? null : tools.find(t => t.name === selected) ?? null
@@ -157,6 +170,8 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus }: {
   const entity = isPage ? selected : `runnable:${selected}`
   const pagePath = page?.path ?? (entity.startsWith('runnable:') ? `runnables/${selected}.md` : '')
   const draft = drafts.find(d => d.path === pagePath) ?? null
+  const notInstalled = isPage && selected.startsWith('runnable:')
+  const actionName = tool?.name ?? (notInstalled ? selected.slice(9) : '')
 
   const addToPage = async (f: KnowledgeFact) => {
     try {
@@ -217,7 +232,7 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus }: {
             )}
           </Space>
         </div>
-        <div style={{ overflowY: 'auto', padding: 6, flex: 1 }}>
+        <div ref={navRef} style={{ overflowY: 'auto', padding: 6, flex: 1 }}>
           {pageHits.length > 0 && (
             <div style={{ marginBottom: 6 }}>
               <div style={groupStyle(isDark)}>Pages mentioning “{query.trim()}”</div>
@@ -249,7 +264,8 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus }: {
             <div>
               <div style={groupStyle(isDark)}><span>Not installed here</span><span style={{ fontFamily: MONO_FONT, fontWeight: 500, letterSpacing: 0 }}>{notHere.length}</span></div>
               {notHere.map(p => (
-                <button key={p.path} type="button" data-testid={`page-${p.entity}`} style={rowStyle(selected === p.entity)} onClick={() => setSelected(p.entity)}>
+                <button key={p.path} type="button" data-testid={`page-${p.entity}`} aria-current={selected === p.entity ? 'true' : undefined}
+                  style={rowStyle(selected === p.entity)} onClick={() => setSelected(p.entity)}>
                   <span style={{ fontFamily: MONO_FONT, fontSize: 13, color: selected === p.entity ? textColor(isDark) : textMuted(isDark) }}>{p.title}</span>
                 </button>
               ))}
@@ -259,7 +275,8 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus }: {
             <div>
               <div style={groupStyle(isDark)}><span>Other pages</span><span style={{ fontFamily: MONO_FONT, fontWeight: 500, letterSpacing: 0 }}>{otherPages.length}</span></div>
               {otherPages.map(p => (
-                <button key={p.path} type="button" style={rowStyle(selected === p.entity)} onClick={() => setSelected(p.entity)}>
+                <button key={p.path} type="button" aria-current={selected === p.entity ? 'true' : undefined}
+                  style={rowStyle(selected === p.entity)} onClick={() => setSelected(p.entity)}>
                   <span style={{ fontSize: 13 }}>{p.title}</span>
                   <span style={{ marginLeft: 'auto', fontSize: 11, color: textMuted(isDark) }}>{p.entity.split(':')[0]}</span>
                 </button>
@@ -285,6 +302,11 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus }: {
             {page && (
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12, color: textMuted(isDark) }}>
                 <span style={{ fontFamily: MONO_FONT, color: textSecondary(isDark) }}>{page.path}</span>
+                {notInstalled && (
+                  <Tooltip title="No connected host has this runnable, so it can't be run from here.">
+                    <Tag bordered={false} style={{ margin: 0 }}>not installed here</Tag>
+                  </Tooltip>
+                )}
                 {page.status && (
                   <Tag bordered={false} color={page.status === 'stable' ? 'green' : page.status === 'deprecated' ? 'red' : 'default'}
                     style={{ margin: 0, ...(isDark ? {} : { color: page.status === 'stable' ? '#1a7f37' : page.status === 'deprecated' ? '#c4232d' : undefined }) }}>
@@ -321,6 +343,14 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus }: {
                   {tool.autonomy && <span>{tool.autonomy}</span>}
                   {tool.verbs.length > 0 && <span>verbs: <span style={{ fontFamily: MONO_FONT }}>{tool.verbs.slice(0, 8).join(' ')}{tool.verbs.length > 8 ? ' …' : ''}</span></span>}
                   {tool.args.length > 0 && <span>args: <span style={{ fontFamily: MONO_FONT }}>{tool.args.slice(0, 8).join(' ')}{tool.args.length > 8 ? ' …' : ''}</span></span>}
+                </div>
+              )}
+              {(actionName || onShowConnections) && (onRunTool || onAskAbout || onRecentRuns || onShowConnections) && (
+                <div data-testid="tool-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                  {tool && onRunTool && <Button size="small" icon={<PlayCircleOutlined />} onClick={() => onRunTool(tool.name)}>Run…</Button>}
+                  {actionName && onAskAbout && <Button size="small" icon={<MessageOutlined />} onClick={() => onAskAbout(actionName)}>Ask about {actionName}</Button>}
+                  {actionName && onRecentRuns && <Button size="small" icon={<HistoryOutlined />} onClick={() => onRecentRuns(actionName)}>Recent runs</Button>}
+                  {onShowConnections && <Button size="small" type="text" icon={<ApartmentOutlined />} onClick={() => onShowConnections(entity)}>Show connections</Button>}
                 </div>
               )}
             </div>

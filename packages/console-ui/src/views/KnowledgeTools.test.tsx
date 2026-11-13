@@ -93,6 +93,28 @@ describe('KnowledgeTools', () => {
     expect(screen.getByTestId('tool-df')).toBeTruthy()
   })
 
+  it('goes from a page to using the tool', async () => {
+    const run = vi.fn(), ask = vi.fn(), recent = vi.fn(), graph = vi.fn()
+    render(<KnowledgeTools runnables={runnables} active onRunTool={run} onAskAbout={ask} onRecentRuns={recent} onShowConnections={graph} />)
+    await waitFor(() => expect(screen.getByTestId('tool-actions')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Ask about tail-log/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Recent runs/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Show connections/ }))
+    expect(run).toHaveBeenCalledWith('tail-log')
+    expect(ask).toHaveBeenCalledWith('tail-log')
+    expect(recent).toHaveBeenCalledWith('tail-log')
+    expect(graph).toHaveBeenCalledWith('runnable:tail-log')
+  })
+
+  it('says when a page is for a tool not installed here, and offers no Run', async () => {
+    wikiPages.mockResolvedValue({ configured: true, repo_url: '', ref: 'main', pages: [tailLog] })
+    render(<KnowledgeTools runnables={[rn('df', 'web-01')]} active onRunTool={vi.fn()} onRecentRuns={vi.fn()} focus={{ target: 'runnable:tail-log', n: 1 }} />)
+    await waitFor(() => expect(screen.getByText('not installed here')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: /^Run/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Recent runs/ })).toBeTruthy()
+  })
+
   it('searches page text as well as tool names', async () => {
     render(<KnowledgeTools runnables={runnables} active />)
     await waitFor(() => expect(screen.getByText('Works with')).toBeTruthy())

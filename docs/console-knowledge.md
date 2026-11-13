@@ -8,10 +8,10 @@ Where [agent memory](console-agent.md) holds a handful of machine-local notes, t
 wiki is structured: every fact is *about* one or more entities, and the entities
 link together through the facts they share.
 
-The tab has three views: **Tools** (the team's pages, the default), **Inbox**
-(facts waiting for review, plus the buttons that gather more) and **Fact graph**
-(every fact drawn as a graph, with its own search). **Pull** sits beside the
-view names and updates all three from the team's wiki repo.
+The tab has two views: **Tools** (the team's pages, the default) and **Inbox**
+(facts waiting for review). Beside them, **Fact graph** opens every fact drawn
+as a graph over the tab, with fact search and the facts pinned into the agent's
+context, and **Pull** updates everything from the team's wiki repo.
 
 ## Tools: the team's pages
 
@@ -27,6 +27,12 @@ page in the team's wiki repo. Pick one to see:
 - team facts about it that aren't on the page yet;
 - a dashed **This console** panel with the facts only true on this console (see
   below). They're never shared.
+
+Under the tool's name are the ways to use it: **Run…** opens its run form,
+**Ask about** puts a question about it in the command bar for you to finish
+(AI only), **Recent runs** opens its History, and **Show connections** opens the
+fact graph on it. A page for a tool that no connected host has is tagged *not
+installed here* and has no Run.
 
 Pages for tools this console hasn't discovered are listed under **Not installed
 here**, and the team's other pages (services, terms, topics, teams, runbooks,
@@ -140,11 +146,15 @@ fact written before a group existed joins it once it does. Very common words
 such as `local` are only linked when a fact names them as a subject, not when
 they appear in a sentence.
 
-**Capture usage**, **Suggest from chats**, the range they read and **Add fact**
-are at the top of the **Inbox** view. Nothing proposed joins the wiki until you
-approve it there, where you can add each fact to its page, approve it as a fact,
-edit and approve it, or reject it. A fact's side panel in the Fact graph has an
-**Open wiki page** link to the page it belongs on.
+**Find facts** at the top of the **Inbox** runs Capture usage or Suggest from
+chats and sets the range they read; **Add fact** writes one by hand. Nothing
+proposed joins the wiki until you review it there. Each fact has one main
+button: **Add to page** when it has a page to go on, else **Approve**; then
+**Edit** and **Reject**. From the keyboard, J and K move between facts and P,
+A, E and R add to page, approve, edit or reject the highlighted one (Reject
+still asks). Clicking an entity on a fact opens the fact graph on it, and a
+fact's side panel there has an **Open wiki page** link to the page it belongs
+on.
 
 A runnable with past runs that isn't installed on any connected host now is
 drawn faded and marked *not installed*; tick **Hide not installed** to take

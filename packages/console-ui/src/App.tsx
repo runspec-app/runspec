@@ -89,7 +89,7 @@ import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type OtherHost, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
-import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, textMuted, textSecondary, textFaint, textColor, textWarning } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning } from './ThemeContext'
 import GateMark from './components/GateMark'
 import {
   anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
@@ -926,7 +926,11 @@ export default function App() {
   // highlights. A white-label accent_color (when set) drives it too, so the
   // brand colour shows where it's actually visible (not just Ant's colorPrimary
   // controls). Falls back to the built-in blue when no theme is set.
-  const titleCol  = brandTheme.accent_color || (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
+  // As text it must read at 4.5:1, so a deep brand colour is lightened (dark) or
+  // darkened (light) just enough; colorPrimary below keeps it as given for fills.
+  const titleCol  = brandTheme.accent_color
+    ? readableAccent(brandTheme.accent_color, isDark)
+    : (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
   const contentBg = sf.base
   const iconCol   = textMuted(isDark)
   const textCol   = isDark ? '#ccc'    : '#333'
@@ -1691,7 +1695,14 @@ export default function App() {
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} activeProfile={activeProfile} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
                       {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} activeProfile={activeProfile} onOpenHistory={q => { setHistorySearch(q); setView('history') }} />}
                       {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
-                      {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} onOpenSettings={openSettings} runnables={runnables} />}
+                      {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} onOpenSettings={openSettings} runnables={runnables}
+                        onRunTool={name => {
+                          const found = runnables.find(r => r.name === name && r.host === selectedHost) ?? runnables.find(r => r.name === name)
+                          if (found) handleOpenForm(found)
+                          else message.warning(`"${name}" isn't discovered on a connected host.`)
+                        }}
+                        onAskAbout={name => window.dispatchEvent(new CustomEvent('runspec:load_composer', { detail: { text: `About the ${name} runnable (see its team wiki page): ` } }))}
+                        onRecentRuns={name => { setHistorySearch(name); setView('history') }} />}
                       {aiEnabled && view === 'improve' && <ImproveView active={view === 'improve'} />}
                       {aiEnabled && view === 'evals'   && <EvalsView active={view === 'evals'} />}
                       {view === 'rota'      && <RotaView />}

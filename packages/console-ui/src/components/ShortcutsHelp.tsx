@@ -8,7 +8,7 @@ import { activeShortcuts, type ShortcutDef, type ShortcutGroup } from '../shortc
 import { useFeatures } from '../features'
 import { useIsDark, textColor, textMuted, textSecondary } from '../ThemeContext'
 
-const GROUP_ORDER: ShortcutGroup[] = ['General', 'Navigation', 'Console', 'Command bar']
+const GROUP_ORDER: ShortcutGroup[] = ['General', 'Navigation', 'Console', 'Command bar', 'Knowledge inbox']
 
 /** One key cap per `+`-joined part: 'Ctrl+Shift+Tab' → Ctrl · Shift · Tab. */
 export function Keys({ combo }: { combo: string }) {
