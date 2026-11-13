@@ -14,6 +14,7 @@ import { Dropdown, Tooltip, type MenuProps } from 'antd'
 import { CodeOutlined, DownOutlined, KeyOutlined, PlusOutlined, RightOutlined, SwapOutlined } from '@ant-design/icons'
 import type { OtherHost } from '../bridge'
 import { MONO_FONT, textFaint, textMuted, textSecondary } from '../ThemeContext'
+import { pressable } from './kit'
 
 export const OTHER_HOSTS_OPEN_KEY = 'runspec.sidebar.otherHostsOpen'
 
@@ -212,7 +213,7 @@ export function OtherHostsSection(props: OtherHostsSectionProps) {
                 >
                   <div
                     className="rs-group-header"
-                    onClick={() => onToggleGroup(key)}
+                    {...pressable(() => onToggleGroup(key), { expanded: !collapsed })}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 6,
                       padding: '10px 14px 3px',
@@ -238,6 +239,10 @@ export function OtherHostsSection(props: OtherHostsSectionProps) {
                       className="rs-host-row"
                       data-testid={`other-host-${h.name}`}
                       title={`${h.name} is outside ${activeProfile}`}
+                      // Opens the host's menu (the Dropdown listens for click), so
+                      // Enter/Space click it too.
+                      role="button" tabIndex={0} aria-haspopup="menu"
+                      onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); (e.currentTarget as HTMLElement).click() } }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
                         padding: '8px 12px 8px 14px', cursor: 'pointer',

@@ -45,7 +45,7 @@ import {
   type ArgInputProps,
   type SlimCred,
 } from './formsShared'
-import { antTone, StatusTag } from '../components/kit'
+import { antTone, pressable, StatusTag } from '../components/kit'
 // Re-export the shared helpers/components so the colocated tests (which import
 // them from here) keep working. Production consumers import ./formsShared directly.
 export {
@@ -772,7 +772,7 @@ function RunnableCard({ entry, hosts, onPick }: {
 
   const card = (
     <div
-      onClick={() => onPick(entry)}
+      {...pressable(() => onPick(entry))}
       className="rs-card-lift"
       data-rs-forms-card={entry.key}
       onMouseEnter={() => setHovered(true)}
@@ -865,7 +865,7 @@ function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: 
 
   return (
     <div
-      onClick={onClick}
+      {...pressable(onClick)}
       className="rs-card-lift"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -922,7 +922,7 @@ function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onCli
 
   return (
     <div
-      onClick={onClick}
+      {...pressable(onClick)}
       className="rs-card-lift"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}

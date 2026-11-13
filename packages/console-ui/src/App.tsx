@@ -99,6 +99,7 @@ import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from '.
 import { layoutNavTabs, hostMatches } from './navGroups'
 import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
+import { pressable } from './components/kit'
 
 type ViewKey = 'console' | 'specs' | 'history' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
 
@@ -146,6 +147,14 @@ const MANAGE_PROFILES = '__manage_profiles__'
 const SIDEBAR_WIDTH = 180
 const SIDEBAR_MIN = 150
 const SIDEBAR_MAX = 420
+
+// Tab badges: a count of things running is not an error, so it is never the
+// brand red (Ant's default). Surface-coloured text on a status fill reads in
+// both themes; the title says what the number counts.
+const BADGE_TEXT = { color: 'var(--rs-surface-base)', boxShadow: 'none', fontWeight: 600 }
+const RUNNING_BADGE = { ...BADGE_TEXT, backgroundColor: 'var(--rs-text-secondary)' }
+const ATTENTION_BADGE = { ...BADGE_TEXT, backgroundColor: 'var(--rs-warn)' }
+const WAITING_BADGE = { ...BADGE_TEXT, backgroundColor: 'var(--rs-waiting)' }
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('console')
@@ -971,7 +980,7 @@ export default function App() {
       key: 'console' as ViewKey,
       label: 'Console',
       icon: inFlight.length > 0
-        ? <Badge count={inFlight.length} size="small" offset={[2, -1]}><ThunderboltOutlined /></Badge>
+        ? <Badge count={inFlight.length} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${inFlight.length} run${inFlight.length === 1 ? '' : 's'} in progress`}><ThunderboltOutlined /></Badge>
         : <ThunderboltOutlined />,
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
@@ -986,21 +995,21 @@ export default function App() {
       key: 'marketplace' as ViewKey,
       label: 'Marketplace',
       icon: marketplaceUpdates > 0
-        ? <Badge count={marketplaceUpdates} size="small" offset={[2, -1]} color="gold" title={`${marketplaceUpdates} package update${marketplaceUpdates === 1 ? '' : 's'} available`}><AppstoreAddOutlined /></Badge>
+        ? <Badge count={marketplaceUpdates} size="small" offset={[2, -1]} style={ATTENTION_BADGE} title={`${marketplaceUpdates} package update${marketplaceUpdates === 1 ? '' : 's'} available`}><AppstoreAddOutlined /></Badge>
         : <AppstoreAddOutlined />,
     },
     {
       key: 'schedules' as ViewKey,
       label: 'Schedules',
       icon: scheduleRunning > 0
-        ? <Badge count={scheduleRunning} size="small" offset={[2, -1]}><CalendarOutlined /></Badge>
+        ? <Badge count={scheduleRunning} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${scheduleRunning} scheduled run${scheduleRunning === 1 ? '' : 's'} in progress`}><CalendarOutlined /></Badge>
         : <CalendarOutlined />,
     },
     {
       key: 'triggers' as ViewKey,
       label: 'Triggers',
       icon: triggerAwaiting > 0
-        ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]}><BellOutlined /></Badge>
+        ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting} waiting for you`}><BellOutlined /></Badge>
         : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><BellOutlined /></Badge>,
     },
     { key: 'rota'      as ViewKey, label: 'Rota',      icon: <ClockCircleOutlined /> },
@@ -1338,7 +1347,7 @@ export default function App() {
                   >
                     <div
                       className="rs-host-row"
-                      onClick={() => handleHostSelect(h.name)}
+                      {...pressable(() => handleHostSelect(h.name), { current: selectedHost === h.name })}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
                         padding: '8px 12px 8px 14px', cursor: 'pointer',
@@ -1352,7 +1361,8 @@ export default function App() {
                           : undefined,
                       }}
                     >
-                      <span style={{ fontSize: 9, lineHeight: 1, color: h.connected ? '#52c41a' : textFaint(isDark) }}>●</span>
+                      <span role="img" aria-label={h.connected ? 'connected' : 'not connected'} title={h.connected ? 'Connected' : 'Not connected'}
+                        style={{ fontSize: 9, lineHeight: 1, color: h.connected ? 'var(--rs-ok)' : textFaint(isDark) }}>{h.connected ? '●' : '○'}</span>
                       <span style={{
                         fontSize: 14, color: textCol, flex: 1, fontFamily: MONO_FONT,
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -1432,7 +1442,7 @@ export default function App() {
                           >
                           <div
                             className="rs-group-header"
-                            onClick={() => toggleGroup(g)}
+                            {...pressable(() => toggleGroup(g), { expanded: !collapsed })}
                             style={{
                               display: 'flex', alignItems: 'center', gap: 6,
                               padding: '10px 14px 3px',
@@ -1554,11 +1564,11 @@ export default function App() {
             </div>
           </div>
 
-          {/* Content column */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Content column: the page's main landmark, with the tab bar as its nav. */}
+          <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
             {/* Tab bar */}
-            <div style={{
+            <nav aria-label="Views" style={{
               height: 44, flexShrink: 0,
               background: headerBg, borderBottom: `1px solid ${borderCol}`,
               display: 'flex', alignItems: 'stretch',
@@ -1641,7 +1651,7 @@ export default function App() {
                   <span className="rs-kbd">{shortcutHint('palette')}</span>
                 </button>
               </div>
-            </div>
+            </nav>
 
             {/* View area */}
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -1771,7 +1781,7 @@ export default function App() {
               />
             </div>
 
-          </div>
+          </main>
         </div>
         {/* Status bar: fleet + app state along the bottom of the window. */}
         <div

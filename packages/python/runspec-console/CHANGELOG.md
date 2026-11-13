@@ -9,6 +9,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.420.0] — 2026-11-13
+
+### Fixed
+
+- **The Logs page title is readable in dark mode.** It inherited black from
+  the page (1.5:1 on gunmetal) since 0.418.0; it now uses the theme text colour.
+- **Tab badges no longer look like errors.** The Console, Schedules and
+  Triggers counts used Ant's default red badge (the brand red, under a red
+  white-label accent), so "2 runs in progress" read as "2 errors", with white
+  text at 1.9–2.8:1. Running counts are now a neutral grey, the updates count
+  amber and the waiting count the waiting colour, each with dark-on-light text
+  at 8:1 or more and a title that says what it counts ("2 runs in progress").
+- **Ghost primary buttons** (Schedules' "Turn on") painted their text in the raw
+  brand colour, 1.4:1 for a deep red on gunmetal; they use the readable accent.
+- **Host status dots** have a name ("connected" / "not connected") and a shape
+  as well as a colour (filled for connected, hollow for not); the light-theme
+  green was 1.6:1 and is now the readable status green.
+- **Paused schedules** read quieter through muted text instead of fading the
+  row to 55%, which took its text and status tags under 3:1.
+- Two run-together words in Settings → Notifications ("own.wav", "asound
+  pack").
+
+### Changed
+
+- **Keyboard.** Sidebar host rows and group headers (and the "Other hosts"
+  section), Forms runnable and saved-run cards, History rows, and a Console
+  tool row's expand, Copy and Edit & rerun are reachable with Tab and open with
+  Enter or Space, with a visible focus ring; group headers say whether they are
+  expanded. New `pressable()` in `components/kit.tsx` gives a clickable row or
+  card these props.
+- **Screen readers.** When a call parks for approval, a live region says so
+  ("Approval needed: flush-dns on web-01", plus how many more are waiting);
+  each editable argument on the approval card is labelled with its name; the
+  page has `main` and `nav` landmarks.
+
 ## [0.419.0] — 2026-11-13
 
 ### Changed

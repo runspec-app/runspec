@@ -297,8 +297,8 @@ export function SoundsTab() {
             Audio cues + desktop alerts so you stay aware while the console is minimized or in the background.
             Sounds play from the app, so they work even when minimized. The desktop <em>toast</em> needs the
             optional <Typography.Text code>notifications</Typography.Text> extra to be installed,
-            but the <em>taskbar flash</em> and <em>sounds</em> do not. Each category can use its own
-            <Typography.Text code>.wav</Typography.Text>/<Typography.Text code>.mp3</Typography.Text> file, or point a
+            but the <em>taskbar flash</em> and <em>sounds</em> do not. Each category can use its own{" "}
+            <Typography.Text code>.wav</Typography.Text>/<Typography.Text code>.mp3</Typography.Text> file, or point a{" "}
             <em>sound pack</em> folder of category-named files at the whole set. Volume applies to synthesized and
             file cues; Windows system aliases follow the system mixer. Connection cues (host/room up &amp; down) are
             debounced — a flapping host won't chime more than once per half minute. The <em>waiting</em> cue is

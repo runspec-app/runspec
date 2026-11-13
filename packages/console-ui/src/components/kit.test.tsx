@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Modal, Tooltip } from 'antd'
 
-import { antTone, EmptyState, IconAction, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
+import { antTone, EmptyState, IconAction, pressable, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
 import { contrastRatio, readableAccent, surfaces, DEFAULT_ACCENT, ThemeContext } from '../ThemeContext'
 import { CopyOutlined, DeleteOutlined } from '@ant-design/icons'
 
@@ -75,6 +75,27 @@ describe('StatusTag inside a Tooltip', () => {
     render(<Tooltip title="autonomy: confirm"><StatusTag tone="info">confirm</StatusTag></Tooltip>)
     fireEvent.mouseEnter(screen.getByText('confirm'))
     expect(await screen.findByText('autonomy: confirm')).toBeTruthy()
+  })
+})
+
+describe('pressable', () => {
+  it('makes a div a keyboard button that ignores keys from nested controls', () => {
+    const go = vi.fn()
+    render(<div {...pressable(go, { expanded: false })} data-testid="row">row <input aria-label="inner" /></div>)
+    const row = screen.getByRole('button', { name: /row/ })
+    expect(row.getAttribute('tabindex')).toBe('0')
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.keyDown(row, { key: 'Enter' })
+    fireEvent.keyDown(row, { key: ' ' })
+    fireEvent.keyDown(screen.getByLabelText('inner'), { key: 'Enter' })
+    expect(go).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('PageHeader colour', () => {
+  it('uses the theme text colour, not an inherited black', () => {
+    render(<PageHeader title="Logs" />)
+    expect(screen.getByRole('heading', { name: 'Logs' }).style.color).not.toBe('inherit')
   })
 })
 
