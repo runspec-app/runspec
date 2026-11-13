@@ -720,11 +720,19 @@ class CopilotAdapter(ModelAdapter):
     # -- runtime --------------------------------------------------------------
 
     def _runtime(self) -> _Runtime:
+        env = runtime_env()
+        proxy_key = tuple(sorted(env.items())) if env is not None else None
         key = (id(self._sdk), self._cli_path, self._token, self._token_command)
-        return _runtime_for(key, self._build_runtime)
+        return _runtime_for((*key, proxy_key), lambda: self._build_runtime(env))
 
-    def _build_runtime(self) -> _Runtime:
+    def _build_runtime(self, env: dict[str, str] | None = None) -> _Runtime:
         kwargs: dict[str, Any] = {}
+        if env is not None:
+            # The Copilot runtime is a child process: give it the console's
+            # [http] proxy the way MCP stdio servers get it.
+            # A blank value (``direct``) removes an inherited variable.
+            merged = {**os.environ, **env}
+            kwargs["env"] = {k: v for k, v in merged.items() if env.get(k) != ""}
         token = self._token
         if not token and self._token_command:
             token = run_api_key_command(self._token_command)
@@ -839,6 +847,32 @@ class CopilotAdapter(ModelAdapter):
                 caps.max_output_tokens = getattr(limits, "max_output_tokens", None)
             break
         return caps
+
+
+_PROXY_VARS = (
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+)
+
+
+def runtime_env() -> dict[str, str] | None:
+    """Proxy variables for the Copilot runtime from the console's ``[http]``
+    setting: ``None`` = inherit (system proxy), blanks for ``direct`` (the
+    variables are removed), the ``*_PROXY`` set for a manual proxy."""
+    from .. import netproxy
+
+    settings = netproxy.current()
+    if settings.mode == "manual":
+        return netproxy.env_vars(settings)
+    if settings.mode == "direct":
+        return {name: "" for name in _PROXY_VARS}
+    return None
 
 
 _WIN_VAR = re.compile(r"%([^%/\\]+)%")

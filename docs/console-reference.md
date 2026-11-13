@@ -112,6 +112,11 @@ pip install "runspec-console[copilot]"
   console starts the package's own script with `node`, not the `.cmd` shim.
   Variables are expanded on each machine, so the same value can ship in a
   config seed.
+- **Proxy.** The runtime goes through the console's [`[http]`](#http) proxy:
+  a proxy URL (with its credential and `no_proxy`) is passed to it as
+  `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`, `direct` clears any inherited
+  proxy variables, and the default leaves the machine's own. Changing the
+  proxy starts a new runtime on the next chat turn.
 - **What Copilot can do.** Only what the console offers: each Copilot session
   gets the console's tools and system prompt, and none of Copilot's own shell,
   file or web tools, repo instructions, skills or memory. When Copilot asks for
@@ -444,7 +449,8 @@ Settings for the agent's read-only `fetch_url` web-page tool (see
 The HTTP proxy the console uses for its own web requests: the agent's
 `fetch_url`, Marketplace index reads, the Phoenix eval export, the sandbox's
 WASI download, MCP servers over http/sse (unless the server sets its own
-`proxy`), the model API (Anthropic, Bedrock, LangServe) and OTLP telemetry
+`proxy`), the model API (Anthropic, Bedrock, LangServe), the GitHub Copilot
+runtime (as `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`) and OTLP telemetry
 export. SSH uses `[ssh] proxy`; Config Sync has its own. Edit it in
 **Settings → Network**, which can also test a URL before you save.
 

@@ -604,3 +604,62 @@ def test_adapter_starts_the_resolved_runtime(tmp_path, monkeypatch):
     assert adapter._cli_path == str(entry)
     adapter.status()
     assert state["clients"][-1].kwargs["connection"].path == str(entry)
+
+
+# ── the console's [http] proxy reaches the runtime ──────────────────────────
+
+
+def _with_proxy(monkeypatch, settings):
+    from runspec_console import netproxy
+
+    monkeypatch.setattr(netproxy, "_current", settings)
+
+
+def test_runtime_gets_the_console_manual_proxy(monkeypatch):
+    from runspec_console import netproxy
+
+    _with_proxy(
+        monkeypatch,
+        netproxy.ProxySettings(proxy="http://proxy.corp:8080", no_proxy=("intra",)),
+    )
+    monkeypatch.setenv("KEEP_ME", "1")
+    sdk, state = make_sdk(echo_brain)
+    adapter_for(sdk).status()
+    env = state["clients"][-1].kwargs["env"]
+    assert env["HTTPS_PROXY"] == "http://proxy.corp:8080"
+    assert env["http_proxy"] == "http://proxy.corp:8080"
+    assert "intra" in env["NO_PROXY"]
+    assert env["KEEP_ME"] == "1"  # the rest of the environment is inherited
+
+
+def test_runtime_direct_removes_inherited_proxy(monkeypatch):
+    from runspec_console import netproxy
+
+    _with_proxy(monkeypatch, netproxy.ProxySettings(proxy=netproxy.DIRECT))
+    monkeypatch.setenv("HTTPS_PROXY", "http://machine:3128")
+    sdk, state = make_sdk(echo_brain)
+    adapter_for(sdk).status()
+    env = state["clients"][-1].kwargs["env"]
+    assert "HTTPS_PROXY" not in env and "https_proxy" not in env
+    assert "PATH" in env or "Path" in env
+
+
+def test_runtime_system_proxy_inherits(monkeypatch):
+    from runspec_console import netproxy
+
+    _with_proxy(monkeypatch, netproxy.ProxySettings())
+    sdk, state = make_sdk(echo_brain)
+    adapter_for(sdk).status()
+    assert "env" not in state["clients"][-1].kwargs
+
+
+def test_changing_the_proxy_starts_a_new_runtime(monkeypatch):
+    from runspec_console import netproxy
+
+    sdk, state = make_sdk(echo_brain)
+    adapter = adapter_for(sdk)
+    _with_proxy(monkeypatch, netproxy.ProxySettings(proxy="http://a:1"))
+    first = adapter._runtime()
+    assert adapter._runtime() is first
+    _with_proxy(monkeypatch, netproxy.ProxySettings(proxy="http://b:2"))
+    assert adapter._runtime() is not first

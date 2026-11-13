@@ -25,6 +25,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   config seed. An npm install of the Copilot CLI can be named by its folder
   (`%APPDATA%\npm`) or its `copilot.cmd` shim; the console starts the
   package's own script with `node` instead.
+- **The Copilot runtime uses the console's `[http]` proxy.** It is a child
+  process and only saw the machine's environment, so a proxy set in
+  Settings → Network didn't reach it. A proxy URL (with its credential and
+  `no_proxy`) is now passed as `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`, the
+  way MCP stdio servers get it; `direct` removes inherited proxy variables;
+  the default still inherits. A proxy change starts a new runtime.
 
 ## [0.419.0] — 2026-11-13
 
