@@ -40,6 +40,36 @@ if TYPE_CHECKING:
     from .bridge import Bridge  # noqa: F401
 
 
+def _filter_visible_records(
+    records: list[dict[str, Any]], surface: str
+) -> list[dict[str, Any]]:
+    """``records`` minus ``discoverable = false`` runnables and the
+    ``[tool_visibility]`` hides for ``surface`` (see ``_visible_runnables``)."""
+    # ``discoverable = false`` (runspec.toml) hides an internal helper from
+    # every console surface, whatever [tool_visibility] says.
+    runnables = [r for r in records if utils_mod.runnable_discoverable(r)]
+    try:
+        vis = config_mod.read_tool_visibility()
+    except Exception:
+        logger.debug("read_tool_visibility failed", exc_info=True)
+        return runnables
+    patterns = list(vis.get("hidden_from_all") or [])
+    if surface == "agent":
+        patterns += list(vis.get("hidden_from_agent") or [])
+    if not patterns:
+        return runnables
+    return [
+        r
+        for r in runnables
+        if not utils_mod.runnable_hidden(
+            str(r.get("name") or ""),
+            r.get("group"),
+            r.get("host"),
+            patterns,
+        )
+    ]
+
+
 # Bounds for the search_history tool result — newest-first, so the default
 # answers "when did X last run" in one small payload. Module-level (not class
 # attributes) so the schema builder works when bound onto the suite's stubs.
@@ -694,31 +724,15 @@ class AgentToolsMixin:
         Hiding is curation, not a safety block — a hidden runnable is still
         installed and directly runnable (the denylist is the run-time gate)."""
         with self._lock:
-            # ``discoverable = false`` (runspec.toml) hides an internal helper from
-            # every console surface, whatever [tool_visibility] says.
-            runnables = [
-                r for r in self._runnables_cache if utils_mod.runnable_discoverable(r)
-            ]
-        try:
-            vis = config_mod.read_tool_visibility()
-        except Exception:
-            logger.debug("read_tool_visibility failed", exc_info=True)
-            return runnables
-        patterns = list(vis.get("hidden_from_all") or [])
-        if surface == "agent":
-            patterns += list(vis.get("hidden_from_agent") or [])
-        if not patterns:
-            return runnables
-        return [
-            r
-            for r in runnables
-            if not utils_mod.runnable_hidden(
-                str(r.get("name") or ""),
-                r.get("group"),
-                r.get("host"),
-                patterns,
-            )
-        ]
+            runnables = list(self._runnables_cache)
+        return _filter_visible_records(runnables, surface)
+
+    def _filter_visible(
+        self, records: list[dict[str, Any]], surface: str
+    ) -> list[dict[str, Any]]:
+        """``records`` with the same hides :meth:`_visible_runnables` applies —
+        also used for a host looked at on demand (outside the refresh cycle)."""
+        return _filter_visible_records(records, surface)
 
     def _runnables_to_tools(
         self,
@@ -5071,6 +5085,9 @@ class AgentToolsMixin:
                 ),
                 None,
             )
+            cold = getattr(self, "_cold_host_records", None)
+            if cached_r is None and callable(cold):
+                cached_r = next((r for r in cold(host) if r.get("name") == name), None)
             return host, name, cached_r, None
         # dedup: all runnables sharing this tool name (or a legacy group-qualified
         # spelling of it, still written down in triggers/runbooks/eval fixtures).
@@ -5090,6 +5107,14 @@ class AgentToolsMixin:
                     ),
                     None,
                 )
+                if cached_r is None:
+                    # A host outside the refresh cycle (a group fan-out member
+                    # in another profile): its record, looked at on demand.
+                    cold = getattr(self, "_cold_host_records", None)
+                    if callable(cold):
+                        cached_r = next(
+                            (r for r in cold(host) if r.get("name") == name), None
+                        )
                 if cached_r is not None:
                     return host, name, cached_r, None
             return f"Error: unknown tool '{tool_name}'"

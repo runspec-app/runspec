@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Drawer, Empty, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
 import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
-import { bridge, type ChatConversation, type ConversationMeta, type InFlightRecord, type Runnable, type TriggerCard } from '../bridge'
+import { bridge, type ChatConversation, type ChatSessionInfo, type ConversationMeta, type InFlightRecord, type Runnable, type TriggerCard } from '../bridge'
 import { useFeatures } from '../features'
 import { OutputPanel, useInvocationBlocks, maskCallArgs, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
 import { useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
@@ -213,7 +213,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 }
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
-  const { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, removeSession, setBlockInContext } = useInvocationBlocks()
+  const { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, restoreBlocks, removeSession, setBlockInContext } = useInvocationBlocks()
   // `[console] ai` off-switch: the Console stays (it is the output pane for every
   // run) but its chat affordances — conversation History, "Ask the assistant",
   // the include-in-context toggle — go.
@@ -327,7 +327,22 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   // The live session list + selection (chip row). Seeds from the backend and
   // both run boards (cold start replays every card through applyCard), folds
   // the runspec:session / *_card events, and drops a closed session's blocks.
-  const sessionsApi = useSessions({ blocksRef, onSessionRemoved: removeSession, onCard: applyCard })
+  // After a page reload (right-click → Reload) the backend still holds every
+  // open chat but the page has forgotten their cards: refill each from its
+  // saved conversation (an interactive session's id is its conversation id).
+  const restoreChats = useCallback((chats: ChatSessionInfo[]) => {
+    for (const chat of chats) {
+      void (async () => {
+        try {
+          const conv = await bridge.load_conversation(chat.id)
+          if (!conv?.turns?.length) return
+          restoreBlocks(conversationToBlocks(conv).map(b => ({ ...b, sessionId: chat.id })))
+        } catch { /* chat history off, or nothing saved yet */ }
+      })()
+    }
+  }, [restoreBlocks])
+
+  const sessionsApi = useSessions({ blocksRef, onSessionRemoved: removeSession, onCard: applyCard, onRestore: restoreChats })
   const { sessions, selectedId, selected, pendingConfirmIds, select, newChat, close, ensureInteractive, adopt } = sessionsApi
   const sessionsRef = useRef(sessionsApi)
   sessionsRef.current = sessionsApi

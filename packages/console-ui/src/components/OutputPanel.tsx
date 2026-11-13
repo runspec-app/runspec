@@ -2048,7 +2048,7 @@ const BlockCard = memo(function BlockCard({
   const handleAskLlm = () => {
     // Always send raw JSON to LLM — structured data is more useful than formatted table
     const raw = parsed ? parsed.rawText : buildLogText()
-    onAskLlm?.(`Output from ${block.label}\n\n${raw}`)
+    onAskLlm?.(`${askLlmHeading(block)}\n\n${raw}`)
   }
 
   const hasContent = block.type === 'chat'
@@ -2439,6 +2439,22 @@ const BlockCard = memo(function BlockCard({
   )
 })
 
+// The first line of an "Ask the assistant" message: what ran and where (the
+// label is "/runnable on host"), who started it, and whether it failed — so
+// the assistant looks at the right host and knows there is a failure to explain.
+export function askLlmHeading(block: InvocationBlock): string {
+  let line = `Output from ${block.label}`
+  if (block.trigger?.name) {
+    line += block.trigger.source === 'schedule'
+      ? ` (scheduled: ${block.trigger.name})`
+      : ` (trigger: ${block.trigger.name})`
+  }
+  if (block.type === 'run' && block.done && typeof block.exitCode === 'number' && block.exitCode !== 0) {
+    line += ` — it failed (exit code ${block.exitCode})`
+  }
+  return line
+}
+
 export function useInvocationBlocks() {
   const [blocks, setBlocks] = useState<InvocationBlock[]>([])
 
@@ -2688,6 +2704,15 @@ export function useInvocationBlocks() {
   // used to render a reopened saved conversation.
   const hydrateBlocks = useCallback((next: InvocationBlock[], sessionId?: string) =>
     setBlocks(prev => (sessionId ? [...prev.filter(b => b.sessionId !== sessionId), ...next] : next)), [])
+  // Put a session's saved transcript back in front of whatever it holds now
+  // (a page reload: run cards replayed from the boards are already there).
+  // Blocks already present are kept as they are.
+  const restoreBlocks = useCallback((next: InvocationBlock[]) =>
+    setBlocks(prev => {
+      const have = new Set(prev.map(b => b.id))
+      const fresh = next.filter(b => !have.has(b.id))
+      return fresh.length ? [...fresh, ...prev] : prev
+    }), [])
   // Drop every block of a closed / evicted session.
   const removeSession = useCallback((sessionId: string) =>
     setBlocks(prev => (prev.some(b => b.sessionId === sessionId) ? prev.filter(b => b.sessionId !== sessionId) : prev)), [])
@@ -2697,5 +2722,5 @@ export function useInvocationBlocks() {
   const setBlockInContext = useCallback((id: string, inContext: boolean) =>
     setBlocks(prev => prev.map(b => (b.id === id ? { ...b, inContext } : b))), [])
 
-  return { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, removeSession, setBlockInContext }
+  return { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, restoreBlocks, removeSession, setBlockInContext }
 }

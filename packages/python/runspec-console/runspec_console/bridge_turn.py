@@ -216,7 +216,10 @@ class TurnMixin(_Base):
         row's cold-start seed. Nothing survives a console restart."""
         with self._lock:
             rows = sorted(self._sessions.values(), key=lambda s: s.created_at)
-            return [s.to_dict() for s in rows]
+            current = self._chat_session_id
+            # ``current`` marks the send target, so a reloaded page reselects
+            # the chat the operator was in.
+            return [{**s.to_dict(), "current": s.id == current} for s in rows]
 
     def select_chat_session(self, session_id: str) -> dict[str, Any]:
         """Make an interactive session the send target (operator runs and the

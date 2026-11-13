@@ -70,9 +70,28 @@ class _Bridge:
     _extra_hosts: set = set()
 
     def _configured_host_names(self):
-        return {
-            r.get("host", "local") for r in self._runnables_cache
-        } | self._extra_hosts
+        return (
+            {r.get("host", "local") for r in self._runnables_cache}
+            | self._extra_hosts
+            | set(self._cold)
+        )
+
+    # Hosts the refresh cycle doesn't cover, as an on-demand look finds them:
+    # host → (records, error). Anything else can't be reached.
+    _cold: dict = {}
+
+    def _discover_on_demand(self, host):
+        records, error = self._cold.get(
+            host, ([], f"couldn't connect to host '{host}'")
+        )
+        return list(records), error
+
+    def _host_unreachable_reason(self, host):
+        return self._cold.get(host, ([], ""))[1]
+
+    _live_host_records = Bridge._live_host_records
+    _cold_host_records = Bridge._cold_host_records
+    _filter_visible = Bridge._filter_visible
 
     def _become_params(self, cached, hostname):
         return "", "sudo", None
@@ -784,18 +803,51 @@ def test_resolve_id_host_errors():
     assert isinstance(b._resolve_id_host("fleet__nope", "a"), str)  # unknown id
 
 
-def test_resolve_id_host_falls_back_to_configured_cold_host():
-    """A runnable known on a warm host resolves for a configured-but-cold host
-    too (automation reaches any configured host; execution lazy-connects)."""
+def test_resolve_id_host_looks_at_a_configured_cold_host():
+    """A configured host the refresh cycle doesn't cover (another profile) is
+    looked at on demand and its OWN record is used — its venv, run_as, args —
+    not a definition borrowed from a warm host."""
     b = _Bridge([_rn("warm", "ping")])
-    b._extra_hosts = {"cold"}  # configured, but no runnable in the warm cache
+    own = _rn("cold", "ping", group="ops-root")
+    b._cold = {"cold": ([own], "")}
     resolved = b._resolve_id_host("fleet__ping", "cold")
     assert not isinstance(resolved, str), resolved
     host, name, cached_r = resolved
     assert (host, name) == ("cold", "ping")
-    assert cached_r["host"] == "cold"  # synthesized for the cold host
+    assert cached_r is own
     # A host that isn't configured at all still errors.
     assert isinstance(b._resolve_id_host("fleet__ping", "nowhere"), str)
+
+
+def test_resolve_id_host_finds_a_runnable_only_a_cold_host_has():
+    """The runnable is on no host in the active profile, only on the named
+    one outside it — the case where the assistant answered "the tool doesn't
+    exist on that host"."""
+    b = _Bridge([_rn("warm", "system-info")])
+    b._cold = {"little-boy": ([_rn("little-boy", "upgrade-packages")], "")}
+    host, name, cached_r = b._resolve_id_host("upgrade-packages", "little-boy")
+    assert (host, name) == ("little-boy", "upgrade-packages")
+    # …and a search naming that host lists it.
+    rows = b._search_runnables("", host="little-boy")["results"]
+    assert [r["name"] for r in rows] == ["upgrade-packages"]
+
+
+def test_resolve_id_host_says_why_a_cold_host_cannot_be_used():
+    b = _Bridge([_rn("warm", "ping")])
+    b._cold = {
+        "down": (
+            [],
+            "couldn't connect to host 'down' — it isn't in the active profile 'lab'",
+        ),
+        "bare": ([_rn("bare", "other")], ""),
+    }
+    out = b._resolve_id_host("ping", "down")
+    assert isinstance(out, str) and "isn't in the active profile 'lab'" in out
+    out = b._resolve_id_host("ping", "bare")
+    assert isinstance(out, str) and "not installed on 'bare'" in out
+    # A runnable no host has, on an unreachable host: the reason, not "unknown id".
+    out = b._resolve_id_host("upgrade-packages", "down")
+    assert isinstance(out, str) and "couldn't connect to host 'down'" in out
 
 
 def test_resolve_id_host_discovered_host_without_runnable_errors():
