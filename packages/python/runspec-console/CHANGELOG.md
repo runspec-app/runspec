@@ -23,6 +23,15 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   `saved_providers.<its provider>`, its `saved_providers.<operator's provider>`
   brought up to the top level) before it is merged. Every provider's settings
   keep updating, each in its own place. Git Config Sync pulls do the same.
+- **GitHub Copilot turns show cache and credits.** The Copilot adapter now
+  passes on Copilot's cache reads and writes (taken out of its input count,
+  which includes them), so the chat card's token tag and cache tag work for
+  Copilot as they do for Anthropic. It also sums the AI credits
+  (`copilot_usage.total_nano_aiu` ÷ 10⁹) and premium requests (`cost`) Copilot
+  reports for each turn; the card shows them instead of a dollar estimate (a
+  Claude model on Copilot was priced at Anthropic list prices). Saved chats
+  keep them (`billing` on the turn), and `runspec:chat_usage` carries
+  `ai_credits` / `premium_requests`.
 
 ## [0.423.0] — 2026-11-13
 

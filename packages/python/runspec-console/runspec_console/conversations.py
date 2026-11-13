@@ -31,7 +31,8 @@ free text on a Deny — why, or what to do instead) and ``proposed_input`` (the
 agent's original args when the operator edited them) — and ``thinking`` / ``thinking_ms``, the
 reasoning summary that led to the call ("why it ran this"). A chat turn may also
 carry ``reply_thinking`` (``{"text", "ms"}``), the reasoning behind the final
-reply. These are ignored by the model-history rebuild (which reads only
+reply, and ``billing`` (``{"ai_credits", "premium_requests"}``), what a provider
+billed in its own units (GitHub Copilot). These are ignored by the model-history rebuild (which reads only
 ``name``/``output``), so they never reach the agent.
 
 An operator-run record (``kind`` "operator_run") — a runnable the **operator**

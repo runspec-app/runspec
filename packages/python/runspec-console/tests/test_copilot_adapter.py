@@ -663,3 +663,64 @@ def test_changing_the_proxy_starts_a_new_runtime(monkeypatch):
     assert adapter._runtime() is first
     _with_proxy(monkeypatch, netproxy.ProxySettings(proxy="http://b:2"))
     assert adapter._runtime() is not first
+
+
+# ── usage: cache split + AI credits / premium requests ──────────────────────
+
+
+def test_add_usage_splits_out_cache_and_reads_billing():
+    usage = cp.new_usage()
+    cp.add_usage(
+        usage,
+        SimpleNamespace(
+            input_tokens=1000,
+            output_tokens=50,
+            cache_read_tokens=800,
+            cache_write_tokens=100,
+            copilot_usage=SimpleNamespace(total_nano_aiu=420_000_000.0),
+            cost=1.0,
+        ),
+    )
+    cp.add_usage(usage, SimpleNamespace(input_tokens=200, output_tokens=5, cost=0.0))
+    assert usage.input_tokens == 100 + 200  # uncached prompt only
+    assert usage.cache_read_input_tokens == 800
+    assert usage.cache_creation_input_tokens == 100
+    assert usage.output_tokens == 55
+    assert usage.ai_credits == pytest.approx(0.42)
+    assert usage.premium_requests == 1.0
+
+
+def test_add_usage_never_goes_negative():
+    usage = cp.new_usage()
+    cp.add_usage(usage, SimpleNamespace(input_tokens=10, cache_read_tokens=50))
+    assert usage.input_tokens == 0 and usage.cache_read_input_tokens == 50
+
+
+def test_console_reads_copilot_usage_and_billing():
+    from runspec_console.bridge import Bridge
+    from runspec_console.bridge_turn import billing_from_response
+
+    usage = cp.new_usage()
+    cp.add_usage(
+        usage,
+        SimpleNamespace(
+            input_tokens=1000,
+            output_tokens=50,
+            cache_read_tokens=900,
+            copilot_usage=SimpleNamespace(total_nano_aiu=2_000_000_000),
+            cost=0.33,
+        ),
+    )
+    response = SimpleNamespace(_raw=SimpleNamespace(usage=usage))
+    assert Bridge._usage_from_response(response) == {
+        "input": 100,
+        "output": 50,
+        "cache_read": 900,
+        "cache_creation": 0,
+    }
+    assert billing_from_response(response) == {
+        "ai_credits": 2.0,
+        "premium_requests": 0.33,
+    }
+    plain = SimpleNamespace(_raw=SimpleNamespace(usage=SimpleNamespace(input_tokens=5)))
+    assert billing_from_response(plain) == {}

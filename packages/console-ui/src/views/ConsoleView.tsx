@@ -124,7 +124,11 @@ export function conversationToBlocks(conv: ChatConversation): InvocationBlock[] 
       done: true,
       model: t.model,
       ...(t.reply_thinking?.text ? { replyThinking: { text: t.reply_thinking.text, ms: t.reply_thinking.ms ?? 0 } } : {}),
-      tokenUsage: u ? { input: u.input || 0, output: u.output || 0, cacheRead: u.cache_read || 0, cacheCreation: u.cache_creation || 0 } : undefined,
+      tokenUsage: u ? {
+        input: u.input || 0, output: u.output || 0, cacheRead: u.cache_read || 0, cacheCreation: u.cache_creation || 0,
+        ...(t.billing?.ai_credits ? { aiCredits: t.billing.ai_credits } : {}),
+        ...(t.billing?.premium_requests ? { premiumRequests: t.billing.premium_requests } : {}),
+      } : undefined,
     }
   })
 }

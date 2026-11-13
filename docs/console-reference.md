@@ -103,7 +103,11 @@ pip install "runspec-console[copilot]"
   shows who is signed in and adds the models your account can use. Your
   organisation's Copilot policy has to allow the Copilot CLI.
 - **Cost.** About one premium request per chat turn (times the model's
-  multiplier). Tool steps inside the turn don't add requests.
+  multiplier). Tool steps inside the turn don't add requests. Each chat card
+  shows what Copilot reported for that turn: the AI credits used and the
+  premium requests, instead of the dollar estimate other providers get. The
+  token tag splits the prompt into new tokens and cache reads/writes, as for
+  Anthropic models.
 - **The runtime.** The SDK runs the Copilot CLI runtime (about 180 MB), which it
   downloads from GitHub on first use. On a machine that can't, install the
   Copilot CLI another way and point `cli_path` at it. For an npm install

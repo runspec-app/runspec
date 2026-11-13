@@ -124,6 +124,42 @@ function estimateCostUsd(
   )
 }
 
+/** A chat turn's usage. `aiCredits` / `premiumRequests` are what the provider
+ * itself billed (GitHub Copilot); when either is present the turn isn't priced
+ * in dollars. */
+export interface TokenUsage {
+  input: number
+  output: number
+  cacheRead: number
+  cacheCreation: number
+  aiCredits?: number
+  premiumRequests?: number
+}
+
+/** Short number for credits / premium requests ("0.42", "3", "1.5"). */
+export function fmtUnits(v: number): string {
+  if (v >= 100) return Math.round(v).toLocaleString()
+  if (v >= 1) return String(Number(v.toFixed(2)))
+  return String(Number(v.toPrecision(2)))
+}
+
+/** The provider-billed tag for a turn (Copilot), or null when it reports none. */
+export function billingLabel(u: TokenUsage): { text: string; tip: string } | null {
+  const parts: string[] = []
+  const tips: string[] = []
+  if (u.aiCredits) {
+    parts.push(`${fmtUnits(u.aiCredits)} credits`)
+    tips.push(`${fmtUnits(u.aiCredits)} GitHub Copilot AI credits used this turn`)
+  }
+  if (u.premiumRequests) {
+    const n = fmtUnits(u.premiumRequests)
+    parts.push(`${n} premium req`)
+    tips.push(`${n} premium requests this turn (requests × the model's multiplier)`)
+  }
+  if (!parts.length) return null
+  return { text: parts.join(' · '), tip: tips.join(' · ') + '. As reported by Copilot.' }
+}
+
 /** Format a small USD amount (e.g. "$0.0021", "$1.34"). */
 function fmtUsd(v: number): string {
   if (v < 0.01) return `$${v.toFixed(4)}`
@@ -675,7 +711,7 @@ export interface InvocationBlock {
   durationMs?: number
   rerunData?: RerunData
   model?: string      // model the chat turn ran on (for cost estimate)
-  tokenUsage?: { input: number; output: number; cacheRead: number; cacheCreation: number }
+  tokenUsage?: TokenUsage
   // Whether this card's content is part of the agent's context. Defaults by type
   // at creation: chat cards start in-context (true), user-run cards start out
   // (false — opt in via the checkbox / "Ask the assistant"). Toggling a chat card
@@ -2282,7 +2318,10 @@ const BlockCard = memo(function BlockCard({
           const promptTotal = input + cacheRead + cacheCreation
           const cached = cacheRead + cacheCreation
           const hitPct = promptTotal > 0 ? Math.round((cacheRead / promptTotal) * 100) : 0
-          const cost = estimateCostUsd(block.model, block.tokenUsage!)
+          const billed = billingLabel(block.tokenUsage!)
+          // A provider that bills in its own units (Copilot) isn't priced in
+          // dollars: a Claude model there would otherwise match the list prices.
+          const cost = billed ? null : estimateCostUsd(block.model, block.tokenUsage!)
           return (
             <>
               <Tooltip title={
@@ -2309,6 +2348,13 @@ const BlockCard = memo(function BlockCard({
                 <Tooltip title={`Estimated cost at approximate list prices${block.model ? ` · ${block.model}` : ''}. Rates drift — treat as a guide.`}>
                   <Tag bordered={false} style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
                     ~{fmtUsd(cost)}
+                  </Tag>
+                </Tooltip>
+              )}
+              {billed && (
+                <Tooltip title={billed.tip}>
+                  <Tag bordered={false} data-testid="card-billing" style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
+                    {billed.text}
                   </Tag>
                 </Tooltip>
               )}
@@ -2698,15 +2744,20 @@ export function useInvocationBlocks() {
     }
 
     const onChatUsage = (e: Event) => {
-      const { id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens } =
-        (e as CustomEvent).detail as {
+      const {
+        id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+        ai_credits, premium_requests,
+      } = (e as CustomEvent).detail as {
           id: string; model?: string; input_tokens: number; output_tokens: number
           cache_read_tokens?: number; cache_creation_tokens?: number
+          ai_credits?: number; premium_requests?: number
         }
       setBlocks(prev => prev.map(b =>
         b.id === id ? { ...b, model: model || b.model, tokenUsage: {
           input: input_tokens, output: output_tokens,
           cacheRead: cache_read_tokens ?? 0, cacheCreation: cache_creation_tokens ?? 0,
+          ...(ai_credits ? { aiCredits: ai_credits } : {}),
+          ...(premium_requests ? { premiumRequests: premium_requests } : {}),
         } } : b
       ))
     }
