@@ -71,7 +71,7 @@ beforeEach(() => {
 describe('KnowledgeView', () => {
   it('lists pinned facts and pins / unpins from a fact row', async () => {
     render(<KnowledgeView active aiEnabled />)
-    fireEvent.click(screen.getByText('Graph'))  // Tools is the default tab
+    fireEvent.click(screen.getByText('Fact graph'))  // Tools is the default tab
     await waitFor(() => expect(screen.getByText('deploys freeze on Fridays')).toBeTruthy())
     expect(screen.getByText(/Pinned · 1\/6/)).toBeTruthy()
     fireEvent.click(screen.getByLabelText('Unpin fact'))
@@ -88,7 +88,8 @@ describe('KnowledgeView', () => {
     search.mockResolvedValueOnce([gone, keep]).mockResolvedValue([keep])
     render(<KnowledgeView active aiEnabled />)
     await waitFor(() => expect(overview).toHaveBeenCalled())
-    const box = screen.getByPlaceholderText(/Search the wiki/)
+    fireEvent.click(screen.getByText('Fact graph'))  // fact search lives with the fact graph
+    const box = screen.getByPlaceholderText(/Search facts/)
     fireEvent.change(box, { target: { value: 'orders' } })
     fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 })
     await waitFor(() => expect(screen.getByText('2 result(s) for “orders”')).toBeTruthy())
@@ -102,21 +103,24 @@ describe('KnowledgeView', () => {
 
   it('draws the graph and opens a page on click', async () => {
     render(<KnowledgeView active aiEnabled />)
-    fireEvent.click(screen.getByText('Graph'))  // Tools is the default tab
+    fireEvent.click(screen.getByText('Fact graph'))  // Tools is the default tab
     await waitFor(() => expect(screen.getByTestId('node-host:web-01')).toBeTruthy())
     fireEvent.click(screen.getByTestId('node-host:web-01'))
     await waitFor(() => expect(screen.getByText('orders logs live in /var/log/orders')).toBeTruthy())
     expect(page).toHaveBeenCalledWith('host:web-01')
-    expect(screen.getByText('Suggest from chats')).toBeTruthy()
+    // The fact page links to the team's wiki page, on the Tools view.
+    fireEvent.click(screen.getByText('Open wiki page'))
+    await waitFor(() => expect(screen.getByTestId('knowledge-tools')).toBeTruthy())
   })
 
   it('hides AI suggestions when AI is off and approves from the inbox', async () => {
     render(<KnowledgeView active aiEnabled={false} />)
     await waitFor(() => expect(overview).toHaveBeenCalled())
-    expect(screen.queryByText('Suggest from chats')).toBeNull()
     fireEvent.click(screen.getByText('Inbox'))
     await waitFor(() => expect(screen.getByText('web-01 has 64GB RAM')).toBeTruthy())
-    fireEvent.click(screen.getByText('Approve'))
+    expect(screen.getByText('Capture usage')).toBeTruthy()  // the fact tools live in the Inbox
+    expect(screen.queryByText('Suggest from chats')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
     await waitFor(() => expect(review).toHaveBeenCalledWith('k_p', true))
   })
 
@@ -138,21 +142,31 @@ describe('KnowledgeView', () => {
   })
 
   it('adds an inbox fact to its page', async () => {
-    draftFact.mockResolvedValue({ ok: true, path: 'runnables/x.md', heading: 'Watch out for' })
+    draftFact.mockResolvedValue({ ok: true, path: 'runnables/cron.md', heading: 'Watch out for' })
+    overview.mockResolvedValue({
+      ...(await overview()),
+      inbox: [
+        fact('k_c', 'cron clear removes every line', ['runnable:cron'], 'pending'),
+        fact('k_h', 'web-01 has 64GB RAM', ['host:web-01'], 'pending'),
+      ],
+    })
     render(<KnowledgeView active aiEnabled />)
     await waitFor(() => expect(overview).toHaveBeenCalled())
     fireEvent.click(screen.getByText('Inbox'))
-    await waitFor(() => expect(screen.getByText('web-01 has 64GB RAM')).toBeTruthy())
-    fireEvent.click(screen.getByText('Add to page'))
-    await waitFor(() => expect(draftFact).toHaveBeenCalledWith('k_p'))
+    await waitFor(() => expect(screen.getByText('cron clear removes every line')).toBeTruthy())
+    // Only the fact with a page to go on offers it (a host has no page).
+    const add = screen.getAllByRole('button', { name: /Add to page/ })
+    expect(add).toHaveLength(1)
+    fireEvent.click(add[0])
+    await waitFor(() => expect(draftFact).toHaveBeenCalledWith('k_c'))
   })
 
-  it('shows search results even when searching from the inbox', async () => {
+  it('searches facts from the fact graph', async () => {
     search.mockResolvedValue([fact('k_s', 'orders config is in /etc/orders', ['app:orders'])])
     render(<KnowledgeView active aiEnabled />)
     await waitFor(() => expect(overview).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('Inbox'))
-    const box = screen.getByPlaceholderText(/Search the wiki/)
+    fireEvent.click(screen.getByText('Fact graph'))
+    const box = screen.getByPlaceholderText(/Search facts/)
     fireEvent.change(box, { target: { value: 'orders' } })
     fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 })
     await waitFor(() => expect(screen.getByText('orders config is in /etc/orders')).toBeTruthy())
@@ -162,6 +176,8 @@ describe('KnowledgeView', () => {
     overview.mockResolvedValue({ ...(await overview()), capture_days: 0 })
     distill.mockResolvedValue({ ok: true, proposed: 3, conversations: 12, calls: 10, remaining: 4 })
     render(<KnowledgeView active aiEnabled />)
+    await waitFor(() => expect(overview).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('Inbox'))
     await waitFor(() => expect(screen.getByText('All history')).toBeTruthy())
     fireEvent.click(screen.getByText('Suggest from chats'))
     await waitFor(() => expect(distill).toHaveBeenCalledWith(0))
@@ -180,7 +196,7 @@ describe('KnowledgeView', () => {
       installed_runnables: ['disk-usage'],
     })
     render(<KnowledgeView active aiEnabled />)
-    fireEvent.click(screen.getByText('Graph'))  // Tools is the default tab
+    fireEvent.click(screen.getByText('Fact graph'))  // Tools is the default tab
     await waitFor(() => expect(screen.getByTestId('node-runnable:gone')).toBeTruthy())
     expect(screen.getByTestId('node-runnable:gone').getAttribute('opacity')).toBe('0.4')
     expect(screen.getByTestId('node-host:web-01').getAttribute('opacity')).toBe('1')

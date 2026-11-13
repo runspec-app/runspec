@@ -62,6 +62,8 @@ describe('Tools view page edits', () => {
     fireEvent.click(screen.getByText('Add to page'))
     await waitFor(() => expect(m.draftFact).toHaveBeenCalledWith('k_new'))
     fireEvent.click(screen.getByText('Add all facts to pages'))
+    expect(m.convert).not.toHaveBeenCalled()  // it asks first
+    fireEvent.click(await screen.findByRole('button', { name: 'Add to pages' }))
     await waitFor(() => expect(m.convert).toHaveBeenCalled())
   })
 
@@ -71,7 +73,7 @@ describe('Tools view page edits', () => {
     await waitFor(() => expect(screen.getByText('Works with')).toBeTruthy())
     fireEvent.click(screen.getByTestId('tool-df'))
     fireEvent.click(await screen.findByText('Start a page'))
-    await waitFor(() => expect(m.draftText).toHaveBeenCalledWith('runnables/df.md', 'runnable:df'))
+    await waitFor(() => expect(m.draftText).toHaveBeenCalledWith('runnables/df.md', 'runnable:df', ''))
     const box = await screen.findByLabelText('Page Markdown')
     fireEvent.change(box, { target: { value: '---\ntype: Runnable\n---\n\n# df\n\n## Works with\n\n- journal-vacuum\n' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))

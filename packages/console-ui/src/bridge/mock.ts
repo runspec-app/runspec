@@ -2207,9 +2207,10 @@ export const mockApi: BridgeApi = {
     ],
   }),
   knowledge_drafts: async () => ({
-    drafted: ['k_3'],
+    drafted: ['k_3'], proposed_branch: 'contrib/dev',
+    merge_request_url: 'https://gitlab.example.com/ops/wiki/-/merge_requests/new?merge_request%5Bsource_branch%5D=contrib%2Fdev&merge_request%5Btarget_branch%5D=main',
     drafts: [{
-      path: 'runnables/tail-log.md', entity: 'runnable:tail-log', new: false, added: 1, removed: 0,
+      path: 'runnables/tail-log.md', entity: 'runnable:tail-log', new: false, added: 1, removed: 0, proposed: false,
       diff: '--- a/runnables/tail-log.md\n+++ b/runnables/tail-log.md\n@@ -9,2 +9,3 @@\n - **before restart-service**: read the log first, a restart loses the stack trace.\n+- After a 502 from http-check, run tail-log on the same host before restarting anything.\n ',
     }],
   }),

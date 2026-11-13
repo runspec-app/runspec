@@ -78,7 +78,7 @@ describe('KnowledgeTools', () => {
     expect(screen.getByTestId('this-console-facts').textContent).toContain('never shared')
     fireEvent.click(screen.getByText('http-check →'))  // a tool the Works-with section names
     await waitFor(() => expect(screen.getByTestId('no-page')).toBeTruthy())
-    expect(screen.getByTestId('no-page').textContent).toContain('runnables/http-check.md')
+    expect(screen.getByTestId('no-page').textContent).toContain('Start a page')
   })
 
   it('filters to tools with no page and offers set-up when no repo is configured', async () => {
@@ -88,7 +88,8 @@ describe('KnowledgeTools', () => {
     await waitFor(() => expect(screen.getByTestId('no-page')).toBeTruthy())
     fireEvent.click(screen.getByText('Share with team'))
     expect(open).toHaveBeenCalledWith('memorySync')
-    fireEvent.click(screen.getByText(/No page yet/))
+    // Every tool lacks a page, so the filter would change nothing and isn't offered.
+    expect(screen.queryByText(/No page yet/)).toBeNull()
     expect(screen.getByTestId('tool-df')).toBeTruthy()
   })
 

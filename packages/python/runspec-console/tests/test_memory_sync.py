@@ -434,6 +434,15 @@ def test_facts_become_page_edits_and_propose_opens_a_merge_request(bridge, bare)
     out = bridge.memory_sync_propose()
     assert out["ok"] and out["pages"] == 2 and out["branch"] == "contrib/jason"
     assert out["merge_request_url"] == ""  # a local path has no web UI
+    # The edits now show as proposed, until one changes again.
+    after = bridge.knowledge_drafts()
+    assert after["proposed_branch"] == "contrib/jason"
+    assert all(d["proposed"] for d in after["drafts"])
+    text = bridge.knowledge_draft_text("terms/bau.md")["text"]
+    bridge.knowledge_draft_save("terms/bau.md", text + "\n- one more line\n")
+    states = {d["path"]: d["proposed"] for d in bridge.knowledge_drafts()["drafts"]}
+    assert states == {"runnables/cron.md": True, "terms/bau.md": False}
+    bridge.knowledge_draft_save("terms/bau.md", text)
     pushed = gitsync.fetch_dir(
         bare, "contrib/jason", LOCAL, "", suffix=".md", recursive=True
     ).files

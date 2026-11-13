@@ -1113,6 +1113,7 @@ export interface WikiDraft {
   added: number
   removed: number
   diff: string       // unified diff against the team's page
+  proposed?: boolean // this version was proposed (pushed for a merge request)
 }
 
 export interface WikiPages {
@@ -3235,8 +3236,8 @@ export interface BridgeApi {
   // What in the team wiki needs a look (out-of-date flags, stale, repeated, no page).
   knowledge_wiki_check: () => Promise<WikiCheck>
   // Edits to the team's pages, kept on this console until proposed.
-  knowledge_drafts: () => Promise<{ drafts: WikiDraft[]; drafted: string[] }>
-  knowledge_draft_text: (path: string, entity?: string) => Promise<{ ok: boolean; error?: string; path?: string; text?: string; base?: string | null; drafted?: boolean }>
+  knowledge_drafts: () => Promise<{ drafts: WikiDraft[]; drafted: string[]; proposed_branch?: string; merge_request_url?: string }>
+  knowledge_draft_text: (path: string, entity?: string, description?: string) => Promise<{ ok: boolean; error?: string; path?: string; text?: string; base?: string | null; drafted?: boolean }>
   knowledge_draft_save: (path: string, text: string) => Promise<{ ok: boolean; error?: string; kept?: boolean }>
   knowledge_draft_discard: (path: string) => Promise<{ ok: boolean; error?: string; discarded?: boolean }>
   // Turn a fact into a bullet on its page (approving it first when pending).

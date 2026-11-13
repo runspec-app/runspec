@@ -9,6 +9,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.412.0] — 2026-11-13
+
+### Changed
+
+- **Knowledge leads with pages.** The tab's views are Tools, Inbox and **Fact
+  graph**; Pull sits beside them. Capture usage, Suggest from chats, the range
+  and **Add fact** moved into the Inbox, and the fact search moved into the
+  Fact graph view. A fact's side panel links to its wiki page.
+- **Propose says where things stand.** After Propose changes, the bar and each
+  page header say the pages are proposed in `contrib/<lane>` and waiting for
+  the team to merge, with an **Open merge request** link; a page changed again
+  shows as not proposed yet, and the next Propose lists only those pages.
+  `knowledge_drafts` returns `proposed` per draft plus `proposed_branch` and
+  `merge_request_url`; `memory_sync_propose` records them.
+- **Start a page** is the primary action on a tool with no page, and a new
+  runnable page opens with the runnable's description under "What it's for"
+  (`knowledge_draft_text(path, entity, description)`).
+- The Inbox's **Add to page** only shows on facts that have a page to go on,
+  and its tooltip names the page and section.
+- The tool index drops the "no page" labels; the "No page yet" filter only
+  shows when it would filter something.
+
+### Fixed
+
+- A wiki-check finding about a tool not installed here opened an empty page
+  instead of the team's page.
+- Discard, Add all facts to pages and closing the page editor with unsaved
+  changes now ask first.
+- Contrast: Reject in the dark theme, the wiki-check links, the light-theme
+  "stable" tag and the selected "not installed" row now meet 4.5:1.
+
 ## [0.411.0] — 2026-11-12
 
 ### Added

@@ -7,12 +7,34 @@
 
 import { useEffect, useState } from 'react'
 import { Alert, Button, Input, Modal, Space, Typography, message } from 'antd'
+import { useAccent } from '../ThemeContext'
 import { BranchesOutlined, EditOutlined, ExportOutlined } from '@ant-design/icons'
 
 import { bridge, type WikiDraft } from '../bridge'
 import { MONO_FONT, RADIUS, surfaces, textColor, textMuted, textSecondary, useIsDark } from '../ThemeContext'
 
 const { Text } = Typography
+
+// Mirrors wiki_drafts.target_for: the page and section a fact is added to.
+const PAGE_DIRS: Record<string, string> = {
+  runnable: 'runnables', service: 'services', term: 'terms', topic: 'topics', team: 'teams', runbook: 'runbooks',
+}
+const PAGE_PRIORITY = ['runnable', 'service', 'term', 'topic', 'team', 'runbook']
+
+/** The page (`runnables/cron.md`) and section a fact goes on, or null when none
+ *  of its subjects has a page. Pure, for tests. */
+export function pageTargetFor(fact: { kind: string; about: string[] }): { path: string; heading: string } | null {
+  for (const kind of PAGE_PRIORITY) {
+    const ref = fact.about.find(a => a.startsWith(kind + ':'))
+    if (!ref) continue
+    const slug = ref.slice(kind.length + 1).trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'page'
+    const heading = kind === 'runnable'
+      ? (fact.kind === 'pairing' || fact.kind === 'effect' ? 'Works with' : 'Watch out for')
+      : 'Notes'
+    return { path: `${PAGE_DIRS[kind]}/${slug}.md`, heading }
+  }
+  return null
+}
 
 /** "1 page" / "3 pages". */
 export function pages(n: number): string {
@@ -39,25 +61,39 @@ export function DiffView({ diff, maxHeight = 260 }: { diff: string; maxHeight?: 
   )
 }
 
-export function PageEditor({ path, entity, onClose, onSaved }: {
+export function PageEditor({ path, entity, description = '', onClose, onSaved }: {
   path: string
   entity: string
+  // The runnable's own description, prefilled under "What it's for" on a new page.
+  description?: string
   onClose: () => void
   onSaved: () => void
 }) {
   const [text, setText] = useState<string | null>(null)
+  const [initial, setInitial] = useState<string | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     let live = true
-    bridge.knowledge_draft_text(path, entity).then(r => {
+    bridge.knowledge_draft_text(path, entity, description).then(r => {
       if (!live) return
       if (!r.ok) { setError(r.error || 'Could not open the page.'); setText(''); return }
-      setText(r.text ?? ''); setIsNew(r.base === null)
+      setText(r.text ?? ''); setInitial(r.text ?? ''); setIsNew(r.base === null)
     }).catch(e => { if (live) { setError(String(e)); setText('') } })
     return () => { live = false }
-  }, [path, entity])
+  }, [path, entity, description])
+  // Closing with unsaved typing asks first.
+  const close = () => {
+    if (text !== null && initial !== null && text !== initial) {
+      Modal.confirm({
+        title: 'Close without saving?',
+        content: 'Your changes to this page are lost.',
+        okText: 'Close without saving', okButtonProps: { danger: true }, cancelText: 'Keep editing',
+        onOk: onClose,
+      })
+    } else onClose()
+  }
   const save = async () => {
     if (text === null) return
     setSaving(true); setError('')
@@ -70,7 +106,7 @@ export function PageEditor({ path, entity, onClose, onSaved }: {
   }
   return (
     <Modal open title={<span>{isNew ? 'New page ' : 'Edit '}<span style={{ fontFamily: MONO_FONT }}>{path}</span></span>}
-      width={760} okText="Save edit" onOk={save} confirmLoading={saving} onCancel={onClose} okButtonProps={{ disabled: text === null }}>
+      width={760} okText="Save edit" onOk={save} confirmLoading={saving} onCancel={close} okButtonProps={{ disabled: text === null }}>
       <Text style={{ display: 'block', marginBottom: 8, color: textSecondary(useIsDark()) }}>
         Your edit stays on this console until you propose it. Write what holds on any teammate&rsquo;s console: no host names, home directories or accounts.
       </Text>
@@ -81,17 +117,23 @@ export function PageEditor({ path, entity, onClose, onSaved }: {
   )
 }
 
-export function ProposeBar({ drafts, configured, onChanged, onOpenSettings }: {
+export function ProposeBar({ drafts, configured, onChanged, onOpenSettings, proposedBranch = '', mergeRequestUrl = '' }: {
   drafts: WikiDraft[]
   configured: boolean
   onChanged: () => void
   onOpenSettings?: (tab: string) => void
+  // Where the last Propose went, for edits already proposed and waiting for merge.
+  proposedBranch?: string
+  mergeRequestUrl?: string
 }) {
+  const accent = useAccent()
   const isDark = useIsDark()
   const sf = surfaces(isDark)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; text: string; url?: string } | null>(null)
+  const pending = drafts.filter(d => !d.proposed)
+  const waiting = drafts.length - pending.length
   if (drafts.length === 0 && !result) return null
   const propose = async () => {
     setBusy(true)
@@ -116,24 +158,32 @@ export function ProposeBar({ drafts, configured, onChanged, onOpenSettings }: {
       {drafts.length > 0 && (
         <div data-testid="propose-bar" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: RADIUS.md, background: sf.raised, border: `1px solid ${sf.border}` }}>
           <EditOutlined style={{ color: textMuted(isDark) }} />
-          <Text style={{ color: textColor(isDark) }}>{pages(drafts.length)} edited on this console, not proposed yet.</Text>
+          <Text style={{ color: textColor(isDark) }}>
+            {pending.length > 0
+              ? `${pages(pending.length)} edited on this console, not proposed yet.`
+              : `${pages(waiting)} proposed in ${proposedBranch || 'your contrib branch'}, waiting for the team to merge.`}
+            {pending.length > 0 && waiting > 0 && <Text style={{ color: textMuted(isDark) }}> {waiting} more waiting for merge.</Text>}
+          </Text>
           <div style={{ flex: 1 }} />
-          {configured
+          {waiting > 0 && mergeRequestUrl && (
+            <a href={mergeRequestUrl} target="_blank" rel="noreferrer" style={{ color: accent }}><ExportOutlined /> Open merge request</a>
+          )}
+          {pending.length > 0 && (configured
             ? <Button type="primary" icon={<BranchesOutlined />} onClick={() => setOpen(true)}>Propose changes</Button>
-            : <Button onClick={() => onOpenSettings?.('memorySync')}>Set up the team wiki</Button>}
+            : <Button onClick={() => onOpenSettings?.('memorySync')}>Set up the team wiki</Button>)}
         </div>
       )}
       {result && (
         <Alert type={result.ok ? 'success' : 'error'} showIcon closable onClose={() => setResult(null)}
           message={<span>{result.text} {result.url && <a href={result.url} target="_blank" rel="noreferrer"><ExportOutlined /> Open merge request</a>}</span>} />
       )}
-      <Modal open={open} width={760} title={`Propose ${pages(drafts.length)} to the team?`} okText="Propose changes" confirmLoading={busy}
+      <Modal open={open} width={760} title={`Propose ${pages(pending.length)} to the team?`} okText="Propose changes" confirmLoading={busy}
         onOk={propose} onCancel={() => setOpen(false)}>
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Text style={{ color: textSecondary(isDark) }}>
-            These edits are pushed to your own contrib branch, then you open a merge request into the team branch. Nothing changes for the team until it is merged.
+            These edits are pushed to your own branch{proposedBranch ? ` (${proposedBranch})` : ''}, then you open a merge request into the team branch. Nothing changes for the team until it is merged.{waiting > 0 ? ` Edits already proposed go along unchanged.` : ''}
           </Text>
-          {drafts.map(d => (
+          {pending.map(d => (
             <div key={d.path}>
               <Text style={{ fontFamily: MONO_FONT, color: textColor(isDark) }}>{d.path}</Text>
               <Text style={{ marginLeft: 8, fontSize: 12, color: textMuted(isDark) }}>{d.new ? 'new page · ' : ''}+{d.added} −{d.removed}</Text>

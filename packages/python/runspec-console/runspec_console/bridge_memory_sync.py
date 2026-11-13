@@ -425,7 +425,22 @@ class MemorySyncMixin:
         except Exception as exc:  # noqa: BLE001
             logger.exception("memory sync propose failed")
             return {"ok": False, "error": _push_error(f"propose failed: {exc}")}
-        self._memory_sync_stamp(last_propose=_now(), last_propose_commit=res.commit)
+        mr_url = wiki_drafts.merge_request_url(
+            ms["url"], ms["contrib_branch"], ms["branch"]
+        )
+        self._memory_sync_stamp(
+            last_propose=_now(),
+            last_propose_commit=res.commit,
+            last_propose_branch=ms["contrib_branch"],
+            last_propose_url=mr_url,
+            # Which version of each page was proposed: an edit made after this
+            # shows as "not proposed yet" again.
+            proposed={
+                path: wiki_drafts.text_hash(data.decode("utf-8"))
+                for path, data in files.items()
+                if data is not None
+            },
+        )
         self._knowledge_changed()  # type: ignore[attr-defined]
         return {
             "ok": True,
@@ -433,9 +448,7 @@ class MemorySyncMixin:
             "commit": res.commit,
             "changed": res.changed,
             "pages": len(files),
-            "merge_request_url": wiki_drafts.merge_request_url(
-                ms["url"], ms["contrib_branch"], ms["branch"]
-            ),
+            "merge_request_url": mr_url,
         }
 
     def memory_sync_pull(self) -> dict[str, Any]:
