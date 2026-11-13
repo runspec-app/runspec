@@ -345,6 +345,19 @@ class SchedulesMixin:
             default = entry is not None and not entry.get("ssh")
             if connected.get(h, default):
                 return h
+        # None of them is kept connected (outside the active profile, or down):
+        # try each in order now and take the first that answers.
+        look = getattr(self, "_discover_on_demand", None)
+        if callable(look):
+            for h in candidates:
+                if h in connected:
+                    continue  # probed by the refresh cycle and found down
+                try:
+                    _records, error = look(h)
+                except Exception:  # noqa: BLE001
+                    continue
+                if not error:
+                    return h
         return candidates[0]
 
     def _run_scheduled_agent(self, job: Any) -> None:
@@ -439,6 +452,12 @@ class SchedulesMixin:
         entry = self._saved_run_entry(str(job.saved_run or ""))
         if isinstance(entry, str):
             logger.warning("schedule '%s': %s", job.id, entry)
+            self._nothing_ran_card(
+                job.id,
+                str(job.saved_run or "saved run"),
+                "",
+                entry.removeprefix("Error: "),
+            )
             return ""
         try:
             merged = savedruns_mod.merged_args(entry, dict(job.values or {}))
@@ -449,6 +468,12 @@ class SchedulesMixin:
                 job.saved_run,
                 exc,
             )
+            self._nothing_ran_card(
+                job.id,
+                entry.runnable,
+                "",
+                f"saved run '{entry.id}' values are invalid — {exc}",
+            )
             return ""
         selected = self._saved_run_selected_hosts(entry)
         if entry.profile and not selected:
@@ -456,6 +481,12 @@ class SchedulesMixin:
                 "schedule '%s': host profile %r has no hosts — nothing run",
                 job.id,
                 entry.profile,
+            )
+            self._nothing_ran_card(
+                job.id,
+                entry.runnable,
+                f"profile {entry.profile}",
+                f"host profile '{entry.profile}' has no hosts — nothing ran",
             )
             return ""
         runs = self._invoke_fanout(
@@ -687,6 +718,7 @@ class SchedulesMixin:
         ``failed`` from the exit code; a caller whose runs surface elsewhere
         (the Forms saved-run path renders Console run blocks) passes ``False``."""
         if selected_hosts:
+            self._warm_for_fanout(selected_hosts)
             members = [
                 h for h in selected_hosts if self._host_has_runnable(h, runnable)
             ]
@@ -697,6 +729,13 @@ class SchedulesMixin:
                     selected_hosts,
                     runnable,
                 )
+                if schedule_card:
+                    self._nothing_ran_card(
+                        label,
+                        runnable,
+                        ", ".join(selected_hosts),
+                        self._why_not_run(selected_hosts, runnable),
+                    )
                 return []
             return [
                 run
@@ -732,11 +771,9 @@ class SchedulesMixin:
                 schedule_card=schedule_card,
             )
         if group:
-            members = [
-                m
-                for m in self._group_members(group)
-                if self._host_has_runnable(m, runnable)
-            ]
+            in_group = list(self._group_members(group))
+            self._warm_for_fanout(in_group)
+            members = [m for m in in_group if self._host_has_runnable(m, runnable)]
             if not members:
                 logger.warning(
                     "%s: group %r has no host carrying %r — nothing run",
@@ -744,6 +781,15 @@ class SchedulesMixin:
                     group,
                     runnable,
                 )
+                if schedule_card:
+                    self._nothing_ran_card(
+                        label,
+                        runnable,
+                        f"group {group}",
+                        self._why_not_run(in_group, runnable)
+                        if in_group
+                        else f"group '{group}' has no hosts",
+                    )
                 return []
             return [
                 run
@@ -821,15 +867,69 @@ class SchedulesMixin:
                 on_progress=on_progress,
             )
             return [(host, got)] if got else []
-        except Exception:
+        except Exception as exc:
             logger.exception("%s: run of %s on %s failed", trigger, runnable, host)
             if schedule_card:
                 now = time.time()
                 card["column"] = "failed"
-                card["detail"] = {**card["detail"], "error": "failed to start the run"}
+                card["detail"] = {
+                    **card["detail"],
+                    "error": f"failed to start the run on {host}: {exc}",
+                }
                 card["timeline"] = [*card["timeline"], {"ts": now, "text": "failed"}]
                 self._on_schedule_card(card)
             return []
+
+    def _warm_for_fanout(self, hosts: list[str]) -> None:
+        """Look at fan-out targets the refresh cycle doesn't cover, in parallel,
+        before the per-host ``_host_has_runnable`` checks (best-effort)."""
+        warm = getattr(self, "_warm_hosts", None)
+        if not callable(warm):
+            return
+        try:
+            warm(list(hosts or []))
+        except Exception:  # noqa: BLE001 — each host is still checked one by one
+            logger.debug("on-demand warm-up failed", exc_info=True)
+
+    def _why_not_run(self, hosts: list[str], runnable: str) -> str:
+        """One line per host saying why ``runnable`` didn't run there — it
+        couldn't be reached, or it doesn't carry the runnable."""
+        reason_of = getattr(self, "_host_unreachable_reason", None)
+        lines = []
+        for h in hosts:
+            reason = reason_of(h) if callable(reason_of) else ""
+            lines.append(f"{h}: {reason or f'{runnable!r} is not installed there'}")
+        return "nothing ran —\n" + "\n".join(lines)
+
+    def _nothing_ran_card(
+        self, label: str, runnable: str, where: str, error: str
+    ) -> None:
+        """A Schedules-tab card for a scheduled run that ran nowhere (no target
+        reachable / carrying the runnable, missing saved run, bad values) — so
+        the failure is visible where the schedule's runs are, not only in the
+        log. Its ``error`` names the hosts and why."""
+        now = time.time()
+        card_id = uuid.uuid4().hex[:12]
+        self._on_schedule_card(
+            {
+                "card_id": card_id,
+                "trigger": self._schedule_title(label) or runnable,
+                "source": "schedule",
+                "event_type": "runnable",
+                "summary": f"/{runnable} on {where}" if where else f"/{runnable}",
+                "column": "failed",
+                "detail": {
+                    "runnable": runnable,
+                    "schedule_id": label,
+                    "error": error,
+                },
+                "created_at": now,
+                "timeline": [
+                    {"ts": now, "text": "running"},
+                    {"ts": now, "text": "failed"},
+                ],
+            }
+        )
 
     # ── today digest ──────────────────────────────────────────────────────────
 

@@ -245,3 +245,22 @@ def test_gated_group_run_is_bounced_by_preflight(monkeypatch):
     )
     assert out.startswith("✗ Not run on any host — h1:")
     assert ran == []
+
+
+def test_group_fanout_calls_looks_at_members_outside_the_profile():
+    """A member the refresh cycle doesn't cover is looked at, not skipped —
+    even when it is the only one that has the runnable."""
+    warmed = []
+    cold = {"h2": [{"host": "h2", "name": "restart"}], "h3": []}
+    ns = _stub(
+        _groups_map=lambda: {"Prod": ["h1", "h2", "h3"]},
+        _host_entry=lambda h: None,
+        _runnables_for_id=lambda rid: [],  # nothing in the active profile has it
+        _warm_hosts=lambda hosts: warmed.append(list(hosts)),
+        _cold_host_records=lambda h: cold.get(h, []),
+        _dedup_tool_aliases=lambda r: {r["name"]},
+    )
+    group, name, calls = ns._group_fanout_calls({"id": "restart", "host": "Prod"})
+    assert (group, name) == ("Prod", "restart")
+    assert calls == [("h2__restart", {})]
+    assert warmed == [["h1", "h2", "h3"]]

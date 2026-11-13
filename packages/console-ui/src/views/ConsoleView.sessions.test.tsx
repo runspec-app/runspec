@@ -8,7 +8,9 @@
  *   3. "New chat" opens another session — the old one keeps running, blocks intact;
  *   4. a schedule card creates a session + a run block filled from its result;
  *   5. tokens for a non-selected session set its unread dot; opening clears it;
- *   6. closing a session drops its blocks and tells the backend.
+ *   6. closing a session drops its blocks and tells the backend;
+ *   7. a page reload refills open chats from their saved conversations and
+ *      reselects the chat the operator was in.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, act, fireEvent } from '@testing-library/react'
@@ -16,13 +18,14 @@ import { render, screen, act, fireEvent } from '@testing-library/react'
 import { ConsoleView } from './ConsoleView'
 import type { ChatSessionInfo, TriggerCard } from '../bridge'
 
-const { newChatSession, selectChatSession, closeChatSession, sendChat, clearChat, listChatSessions } = vi.hoisted(() => ({
+const { newChatSession, selectChatSession, closeChatSession, sendChat, clearChat, listChatSessions, loadConversation } = vi.hoisted(() => ({
   newChatSession: vi.fn(),
   selectChatSession: vi.fn(),
   closeChatSession: vi.fn(),
   sendChat: vi.fn(),
   clearChat: vi.fn(),
   listChatSessions: vi.fn(),
+  loadConversation: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -36,6 +39,7 @@ vi.mock('../bridge', () => ({
         case 'send_chat': return sendChat
         case 'clear_chat': return clearChat
         case 'list_chat_sessions': return listChatSessions
+        case 'load_conversation': return loadConversation
         case 'get_trigger_board':
         case 'get_schedule_board':
         case 'get_pending_confirms':
@@ -65,6 +69,7 @@ beforeEach(() => {
   sendChat.mockReset().mockImplementation(async () => `chat-${++chatN}`)
   clearChat.mockReset().mockResolvedValue({ ok: true })
   listChatSessions.mockReset().mockResolvedValue([])
+  loadConversation.mockReset().mockRejectedValue(new Error('none'))
 })
 afterEach(() => vi.restoreAllMocks())
 
@@ -315,5 +320,26 @@ describe('Console sessions', () => {
     expect(screen.getByText('hello')).toBeTruthy()
     expect(screen.queryByText('/whoami on web-01')).toBeNull()
     expect(newChatSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('after a reload, refills open chats from their saved conversations and reselects the current one', async () => {
+    const info = (id: string, over: Partial<ChatSessionInfo> = {}): ChatSessionInfo => ({
+      id, kind: 'chat', label: id, interactive: true, created_at: 1, state: 'idle', turn: '', turns: 1, ...over,
+    })
+    listChatSessions.mockResolvedValue([info('c1'), info('c2', { created_at: 2, current: true }), info('c3', { created_at: 3, turns: 0 })])
+    loadConversation.mockImplementation(async (id: string) => ({
+      id, title: id, created: '', updated: '', turns: [{ user: `question in ${id}`, assistant: `answer in ${id}`, tools: [] }],
+    }))
+    mount()
+    await act(async () => { await settle() })
+    // The chat the operator was in (not the newest) is selected again…
+    expect(chip('c2').dataset.selected).toBe('true')
+    // …with its transcript back.
+    expect(screen.getByText('question in c2')).toBeTruthy()
+    expect(screen.getByText(/answer in c2/)).toBeTruthy()
+    // A chat with no turns has nothing to load.
+    expect(loadConversation).toHaveBeenCalledTimes(2)
+    await clickChip('c1')
+    expect(screen.getByText('question in c1')).toBeTruthy()
   })
 })

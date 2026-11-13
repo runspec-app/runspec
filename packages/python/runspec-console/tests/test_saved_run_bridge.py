@@ -36,6 +36,9 @@ def _stub(
         "_invoke_fanout",
         "_schedule_title",
         "_pick_connected_host",
+        "_warm_for_fanout",
+        "_why_not_run",
+        "_nothing_ran_card",
     ):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
     ns._lock = threading.Lock()
@@ -350,3 +353,65 @@ def test_scheduled_saved_run_empty_profile_runs_nothing(tmp_path, monkeypatch):
     job = types.SimpleNamespace(id="nightly", saved_run="a", values={})
     assert ns._invoke_scheduled_saved(job) == ""
     assert ns.runs == []
+
+
+# ── hosts outside the active profile ─────────────────────────────────────────
+
+
+def test_scheduled_group_run_that_reaches_nobody_leaves_a_failed_card(
+    tmp_path, monkeypatch
+):
+    """A scheduled saved run whose hosts are all out of reach used to log a
+    warning and leave nothing on screen; it now leaves a failed card saying,
+    per host, why it didn't run."""
+    ns = _stub(tmp_path, monkeypatch, groups={"Linux Servers": ["a", "b"]}, has=set())
+    cards = []
+    ns._on_schedule_card = cards.append
+    ns._host_unreachable_reason = lambda h: (
+        "couldn't connect to host 'a' — it isn't in the active profile 'lab'"
+        if h == "a"
+        else ""
+    )
+    warmed = []
+    ns._warm_hosts = lambda hosts: warmed.append(list(hosts))
+    _seed([{"id": "up", "runnable": "upgrade-packages", "group": "Linux Servers"}])
+    job = types.SimpleNamespace(id="nightly", saved_run="up", values={})
+    assert ns._invoke_scheduled_saved(job) == ""
+    assert ns.runs == []
+    # Both members were looked at together, before the per-host checks.
+    assert warmed == [["a", "b"]]
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["column"] == "failed"
+    assert card["summary"] == "/upgrade-packages on group Linux Servers"
+    err = card["detail"]["error"]
+    assert (
+        "a: couldn't connect to host 'a' — it isn't in the active profile 'lab'" in err
+    )
+    assert "b: 'upgrade-packages' is not installed there" in err
+
+
+def test_scheduled_missing_saved_run_leaves_a_failed_card(tmp_path, monkeypatch):
+    ns = _stub(tmp_path, monkeypatch)
+    cards = []
+    ns._on_schedule_card = cards.append
+    _seed([])
+    job = types.SimpleNamespace(id="nightly", saved_run="gone", values={})
+    assert ns._invoke_scheduled_saved(job) == ""
+    assert cards and cards[0]["column"] == "failed"
+    assert "no saved run with id 'gone'" in cards[0]["detail"]["error"]
+
+
+def test_failover_tries_hosts_nobody_keeps_connected(tmp_path, monkeypatch):
+    """A `hosts` candidate list where none is in the refresh cycle: each is
+    tried in order and the first that answers wins (not blindly the first)."""
+    ns = _stub(tmp_path, monkeypatch, connected={})
+    looked = []
+
+    def look(h):
+        looked.append(h)
+        return ([], "down") if h == "x" else ([{"name": "svc"}], "")
+
+    ns._discover_on_demand = look
+    assert ns._pick_connected_host(["x", "y", "z"]) == "y"
+    assert looked == ["x", "y"]

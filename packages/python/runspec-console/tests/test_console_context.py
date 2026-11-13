@@ -470,3 +470,24 @@ def test_status_tool_over_mcp_skips_denylist_pointer(monkeypatch):
     assert "manage_denylist" in ns._run_status_tool(
         {}, offered=frozenset({"manage_denylist"})
     )
+
+
+def test_hosts_outside_the_active_profile_are_named(monkeypatch):
+    """With a profile active the tool list covers only its hosts; the agent is
+    told the others exist and can be named as `host` (they connect on demand),
+    so a runnable missing from a search isn't read as missing from them."""
+    hosts = [
+        {"name": "web", "profiles": ["lab"]},
+        {"name": "little-boy", "profiles": ["Homelab"]},
+        {"name": "little-girl", "profiles": ["Homelab"]},
+    ]
+    ns = _stub(monkeypatch, rota={}, triggers=[], schedules=[], hosts=hosts)
+    ns._active_profile_name = lambda: "lab"
+    ns._reload_hosts = lambda: None
+    ns._out_of_profile_hosts = types.MethodType(Bridge._out_of_profile_hosts, ns)
+    ctx = ns._console_context()
+    assert "Host profile 'lab' is active" in ctx
+    assert "Other configured hosts (2): little-boy, little-girl." in ctx
+    # No profile active (All hosts) ⇒ nothing to say.
+    ns._active_profile_name = lambda: ""
+    assert "Other configured hosts" not in ns._console_context()

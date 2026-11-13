@@ -34,6 +34,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   instead of orange; the command bar's placeholder uses the muted token (was
   the browser's 2.6:1 grey). New `statusText` tokens in `ThemeContext`.
 
+## [0.415.1] — 2026-11-13
+
+### Fixed
+
+- **Runs on hosts outside the active profile.** Only the active profile's hosts
+  are discovered, but schedules, saved runs, triggers and the assistant reach
+  every configured host. A run on any other host used to go ahead blind (the
+  first venv, no `run_as`, password args not split off the command line) and
+  fail, or a group fan-out skipped those hosts as "doesn't have it" with
+  nothing on screen. The console now connects to such a host when a run needs
+  it, reads what is installed there, and runs it from that host's own record
+  (`_discover_on_demand`, cached apart from the sidebar / Forms / tool list for
+  `[refresh] discovery_interval`, a failure for 30 s). If the host can't be
+  reached the run card says so — `Didn't run: couldn't connect to host 'x' — it
+  isn't in the active profile 'lab': <ssh error>` — or that the runnable isn't
+  installed there. A `hosts` failover list tries each host in turn, and a
+  group / selected-hosts fan-out looks at its out-of-profile members together.
+- **A scheduled run that ran nowhere now leaves a failed card** on the Schedules
+  tab (and its Console chip) listing each host and why — unreachable, or not
+  installed — instead of only a log line. Same for a schedule whose saved run
+  is gone, whose values are invalid, or whose profile has no hosts. A run that
+  fails to start shows the error, not just "failed to start the run".
+- **The assistant can use hosts outside the active profile.** Naming one as
+  `host` in `search_runnables`, `describe_runnable` or `run_runnable` looks at
+  that host, so asking about a failed run on it no longer gets "that tool
+  doesn't exist on that host". A host it can't reach gets the reason. The
+  per-turn context lists the configured hosts outside the profile.
+- **"Ask the assistant" says what failed.** The message names the schedule or
+  trigger that started the run and its exit code when it failed (`Output from
+  /upgrade-packages on little-boy (scheduled: Nightly upgrade) — it failed
+  (exit code 1)`).
+- **Reloading the window no longer empties the chat.** After right-click →
+  Reload the open chats came back empty (the backend still had them; History
+  showed them). The Console now refills each open chat from its saved
+  conversation and reselects the one you were in (`list_chat_sessions` marks it
+  `current`).
+
 ## [0.415.0] — 2026-11-13
 
 ### Added

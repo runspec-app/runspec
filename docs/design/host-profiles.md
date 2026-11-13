@@ -56,6 +56,20 @@ leave `_host_entry` / `_all_host_entries` full-scope. On-demand connections to
 out-of-profile hosts are created by the pool as needed and idle-reaped afterward,
 so they don't become standing connections.
 
+**On-demand discovery (console 0.415.1).** Connecting was never the whole
+story: a run also needs the host's *discovery record* (which venv the runnable
+lives in, its `run_as`, which args are secrets), and discovery only covers the
+active profile. A run on an out-of-profile host used to go ahead with no record
+(first venv, no escalation) or be skipped by a fan-out as "doesn't carry it".
+Now `_discover_on_demand(host)` probes and discovers such a host when a run
+needs it — `invoke_runnable`, `_host_has_runnable` (fan-outs), the `hosts`
+failover pick, and the agent's `search_runnables` / `describe_runnable` /
+`run_runnable` when they name the host. The result is cached apart from
+`_runnables_cache` (for `[refresh] discovery_interval`; a failure for 30 s), so
+it never joins the sidebar, Forms or the agent's tool list; a forced refresh
+clears it. An unreachable host gives a sentence naming the host, the active
+profile and the SSH error, shown on the run card or returned to the agent.
+
 ## Storage — definitions sync, the active choice is local
 
 This is the heart of the "I want to git-sync this" requirement, and it mirrors

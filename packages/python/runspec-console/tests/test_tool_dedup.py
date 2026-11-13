@@ -48,9 +48,28 @@ class _Bridge:
     _extra_hosts: set = set()
 
     def _configured_host_names(self):
-        return {
-            r.get("host", "local") for r in self._runnables_cache
-        } | self._extra_hosts
+        return (
+            {r.get("host", "local") for r in self._runnables_cache}
+            | self._extra_hosts
+            | set(self._cold)
+        )
+
+    # Hosts the refresh cycle doesn't cover, as an on-demand look finds them:
+    # host → (records, error). Anything else can't be reached.
+    _cold: dict = {}
+
+    def _discover_on_demand(self, host):
+        records, error = self._cold.get(
+            host, ([], f"couldn't connect to host '{host}'")
+        )
+        return list(records), error
+
+    def _host_unreachable_reason(self, host):
+        return self._cold.get(host, ([], ""))[1]
+
+    _live_host_records = Bridge._live_host_records
+    _cold_host_records = Bridge._cold_host_records
+    _filter_visible = Bridge._filter_visible
 
     def _become_params(self, cached, hostname):
         return "", "sudo", None
@@ -239,14 +258,22 @@ def test_resolve_dedup_unknown_host_is_an_error():
     assert isinstance(out, str) and "does not have" in out
 
 
-def test_resolve_dedup_falls_back_to_configured_cold_host():
-    """A configured-but-cold host resolves by reusing a warm host's runnable
-    definition (execution lazy-connects) instead of erroring."""
+def test_resolve_dedup_looks_at_a_configured_cold_host():
+    """A configured host the refresh cycle doesn't cover is looked at on demand
+    and its own record is used (not a warm host's, borrowed)."""
     b = _Bridge([_rn("warm", "ping")])
-    b._extra_hosts = {"cold"}  # configured, no runnable cached for it
+    own = _rn("cold", "ping")
+    b._cold = {"cold": ([own], "")}
     host, name, cached, key = b._resolve_tool_target("fleet__ping", {"host": "cold"})
     assert (host, name, key) == ("cold", "ping", "host")
-    assert cached["host"] == "cold"  # synthesized for the cold host
+    assert cached is own
+
+
+def test_resolve_dedup_unreachable_cold_host_says_why():
+    b = _Bridge([_rn("warm", "ping")])
+    b._cold = {"cold": ([], "couldn't connect to host 'cold': timed out")}
+    out = b._resolve_tool_target("fleet__ping", {"host": "cold"})
+    assert isinstance(out, str) and "couldn't connect to host 'cold': timed out" in out
 
 
 def test_resolve_dedup_discovered_host_without_runnable_errors():
@@ -446,3 +473,14 @@ def test_dedup_shrinks_the_tool_list_across_a_fleet(capsys):
             f"\n    reduction: tools -{100 - len(dedup) * 100 // len(per_host)}%, "
             f"bytes -{100 - dedup_bytes * 100 // per_host_bytes}%\n"
         )
+
+
+def test_explicit_host__name_finds_a_cold_hosts_record():
+    """A group fan-out call names its member directly (`h2__restart`); a member
+    outside the refresh cycle resolves to its on-demand record."""
+    b = _Bridge([_rn("warm", "other")])
+    own = _rn("h2", "restart")
+    b._cold = {"h2": ([own], "")}
+    host, name, cached, key = b._resolve_tool_target("h2__restart", {})
+    assert (host, name, key) == ("h2", "restart", None)
+    assert cached is own
