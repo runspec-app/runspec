@@ -36,6 +36,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from . import jsonsafe
+
 DB_NAME = "runspec_runs.db"
 # v2 (§8.1): + log_pruned_at / log_pruned_by. Additive, forward/backward-
 # compatible — ALTER TABLE ADD COLUMN is metadata-only, existing rows read NULL,
@@ -681,7 +683,7 @@ def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
         out["agent"] = int(out["agent"])
     if out.get("args") is not None and not isinstance(out["args"], str):
         with contextlib.suppress(Exception):
-            out["args"] = json.dumps(out["args"], default=str)
+            out["args"] = jsonsafe.dumps(out["args"])
     return out
 
 

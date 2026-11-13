@@ -68,6 +68,15 @@ test('audit() appends a hash-chained ledger that verifies', () => {
   expect(readLedger(file).map((r) => r.outcome)).toEqual(['succeeded', 'failed']);
 });
 
+test('audit() detail with a circular object, a Set or a Map still records', () => {
+  const dir = tmp();
+  const loop: Record<string, unknown> = { a: 1 };
+  loop['self'] = loop;
+  const rec = audit('x.y', 'ok', { detail: { loop, tags: new Set(['a']), byType: new Map([['k', 1]]) }, ledgerDir: dir, syslog: false })!;
+  expect(rec.detail).toEqual({ loop: { a: 1, self: '<circular>' }, tags: ['a'], byType: { k: 1 } });
+  expect(verifyLedger(path.join(dir, 'audit.jsonl')).ok).toBe(true);
+});
+
 test('an edited, removed or garbled line is reported with its line number', () => {
   const dir = tmp();
   for (const o of ['a', 'b', 'c']) audit('x.y', o, { ledgerDir: dir, syslog: false });

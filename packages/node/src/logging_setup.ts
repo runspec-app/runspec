@@ -205,7 +205,42 @@ function formatJson(record: LogRecord): string {
   if (record.extra || _runId !== null) {
     obj['extra'] = { ...(record.extra ?? {}), ...(_runId !== null ? { run_id: _runId } : {}) };
   }
-  return JSON.stringify(obj);
+  return safeJson(obj);
+}
+
+/**
+ * `JSON.stringify` that never throws on a log value: a BigInt becomes a number
+ * (a string past 2^53), a Map an object, a Set an array, an Error its message,
+ * a value that contains itself `"<circular>"`. Mirrors Python's `jsonsafe`.
+ */
+export function safeJson(value: unknown): string {
+  const stack: object[] = [];
+  const replacer = function (this: unknown, _key: string, v: unknown): unknown {
+    // JSON.stringify calls the replacer with `this` = the holder; trim the path
+    // back to it so siblings that share an object aren't taken as circular.
+    if (typeof this === 'object' && this !== null) {
+      const at = stack.indexOf(this as object);
+      stack.length = at === -1 ? 0 : at + 1;
+    }
+    if (typeof v === 'bigint') return Number.isSafeInteger(Number(v)) ? Number(v) : v.toString();
+    if (typeof v === 'symbol' || typeof v === 'function') return String(v);
+    if (typeof v !== 'object' || v === null) return v;
+    if (stack.includes(v)) return '<circular>';
+    stack.push(v);
+    let out: unknown = v;
+    if (v instanceof Map) out = Object.fromEntries([...v].map(([k, x]) => [String(k), x]));
+    else if (v instanceof Set) out = [...v];
+    else if (v instanceof Error) return v.message;
+    // A converted container is the holder of its children: track it too.
+    if (out !== v) stack.push(out as object);
+    return out;
+  };
+  try {
+    return JSON.stringify(value, replacer) ?? 'null';
+  } catch {
+    // A throwing toJSON / getter: keep the record, lose the odd value.
+    return JSON.stringify(String(value));
+  }
 }
 
 function formatConsole(record: LogRecord, showTracebacks: boolean): string {

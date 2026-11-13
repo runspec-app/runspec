@@ -9,6 +9,7 @@ import {
   _handleUncaught,
   _resetForTest,
   _periodForDate,
+  safeJson,
 } from '../src/logging_setup';
 
 function tmpDir(): string {
@@ -464,6 +465,38 @@ test('extra integer fields pass through unredacted', () => {
   const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
   const record = JSON.parse(content);
   expect(record.extra?.items).toBe(99);
+});
+
+test('extra values JSON.stringify cannot hold are still logged', () => {
+  const dir = tmpDir();
+  configureLogging(makeCfg(dir));
+  const loop: Record<string, unknown> = { a: 1 };
+  loop['self'] = loop;
+  const shared = { n: 1 };
+  getLogger('test').info('event', {
+    big: 10n,
+    huge: 2n ** 70n,
+    tags: new Set(['a']),
+    byType: new Map([['session.idle', 1]]),
+    loop,
+    twice: [shared, shared],
+  });
+  const content = fs.readFileSync(path.join(dir, 'logs', 'myscript.log'), 'utf-8').trim();
+  const record = JSON.parse(content);
+  expect(record.message).toBe('event');
+  expect(record.extra).toMatchObject({
+    big: 10,
+    huge: '1180591620717411303424',
+    tags: ['a'],
+    byType: { 'session.idle': 1 },
+    loop: { a: 1, self: '<circular>' },
+    twice: [{ n: 1 }, { n: 1 }],
+  });
+});
+
+test('safeJson: a throwing toJSON keeps the record', () => {
+  const bad = { toJSON() { throw new Error('no'); } };
+  expect(() => safeJson({ bad })).not.toThrow();
 });
 
 test('extra fields appear in console output', () => {

@@ -5,7 +5,6 @@ from __future__ import annotations
 import atexit
 import contextlib
 import datetime
-import json
 import logging
 import logging.handlers
 import os
@@ -17,6 +16,8 @@ import traceback
 import uuid
 from pathlib import Path
 from typing import Any
+
+from . import jsonsafe
 
 _configured: bool = False  # idempotency guard — reset in tests via monkeypatch
 _summary_state: dict[str, Any] | None = None  # populated when summary is enabled
@@ -789,7 +790,9 @@ class _JsonFormatter(logging.Formatter):
             extra["run_id"] = run_id
         if extra:
             obj["extra"] = extra
-        return json.dumps(obj)
+        # Extra fields can be anything a runnable or library passes (an SDK's
+        # enum, a Path, a datetime): never lose the record over one.
+        return jsonsafe.dumps(obj)
 
 
 class _ConsoleFormatter(logging.Formatter):
@@ -821,7 +824,7 @@ class _ConsoleFormatter(logging.Formatter):
 
         extra = _collect_extra(record)
         if extra:
-            line += f"  {{{' '.join(f'{k}={v}' for k, v in extra.items())}}}"
+            line += f"  {{{' '.join(f'{k}={jsonsafe.plain(v)}' for k, v in extra.items())}}}"
 
         if record.exc_info and self._show_tb:
             line += "\n" + self.formatException(record.exc_info)

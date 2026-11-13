@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime
-import json
 import os
 import signal
 import socket
@@ -27,7 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any
 
-from runspec import inbox, runsdb
+from runspec import inbox, jsonsafe, runsdb
 from runspec.execute import build_command, find_runnable
 from runspec.logging_setup import _get_invoker, _resolve_log_dir
 
@@ -133,7 +132,7 @@ def _now() -> datetime.datetime:
 
 def _record(message: str, run_id: str, extra: dict[str, Any], level: str = "INFO") -> str:
     """One audit-log line in the logging hook's JSON shape (``_JsonFormatter``)."""
-    return json.dumps(
+    return jsonsafe.dumps(
         {
             "ts": _now().isoformat(),
             "level": level,
@@ -141,7 +140,6 @@ def _record(message: str, run_id: str, extra: dict[str, Any], level: str = "INFO
             "message": message,
             "extra": {**extra, "run_id": run_id},
         },
-        default=str,
     )
 
 

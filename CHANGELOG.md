@@ -9,6 +9,40 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.84.1] — 2026-11-13
+
+### Fixed
+
+- **A log record with an `extra` value JSON can't hold is no longer lost.**
+  The JSON file formatter called plain `json.dumps`, so an enum, a `Path`, a
+  `datetime`, a `set`, `bytes`, a dict with non-string keys or an object that
+  contains itself raised inside the handler: the record was dropped and
+  `--- Logging error ---` went to stderr. The GitHub Copilot SDK hit this on
+  every session event (`extra={"event_type": SessionEventType…}`). Values now
+  fall back to the nearest plain JSON value: an enum member to its `.value`
+  (`"session.idle"`, not `"SessionEventType.SESSION_IDLE"`), a date/time to ISO
+  8601, a path to its string, a set to a list, bytes to text, a bad dict key to
+  a string, a loop to `"<circular>"`, anything else to `str()`. The console line
+  shows an enum by its value too.
+- The same encoding (`runspec/jsonsafe.py`) is used for the other records
+  written from arbitrary values: audit event `target`/`detail` (they never
+  failed, but an enum was stored as `"Stage.DONE"` and a set as its repr),
+  `runspec exec` records, logs-inbox records and the runs index `args` column.
+
+## [node-0.48.1] — 2026-11-13
+
+### Fixed
+
+- **A log record with an extra field `JSON.stringify` can't hold is no longer
+  lost.** A BigInt or an object that contains itself made the JSON file
+  formatter throw, and the record was dropped silently. Now a BigInt is written
+  as a number (a string past 2^53), a `Map` as an object, a `Set` as an array, an
+  `Error` as its message and a loop as `"<circular>"` (`safeJson`). `audit()`
+  `target`/`detail` handle loops, `Set` and `Map` the same way (a loop used to
+  overflow the stack, and a `Map`/`Set` was stored as `{}`).
+
+---
+
 ## [0.84.0] — 2026-11-10
 
 ### Added

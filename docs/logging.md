@@ -203,12 +203,12 @@ through the standard idiom for each language:
 
     ```python
     logger.info('Deploy succeeded', extra={
-        'target': args.target,
-        'release': args.release,
+        'target': args.target.value,
+        'release': args.release.value,
         'duration_ms': 1240,
     })
 
-    logger.error('Deploy failed', extra={'target': args.target}, exc_info=exc)
+    logger.error('Deploy failed', extra={'target': args.target.value}, exc_info=exc)
     ```
 
 === "Node"
@@ -231,6 +231,14 @@ Where they appear:
 - **JSON file output:** under a nested `"extra"` object on the record.
 - **Console output:** appended as `{key=value key=value …}` after the
   message.
+
+A value JSON can't represent never costs you the record. It's written as the
+nearest plain value: an enum member as its value, a date or time as ISO 8601,
+a path as its string, a set as a list, bytes as text, a dict key that isn't a
+string as a string, an object that contains itself as `"<circular>"`, and
+anything else as `str(value)` (Python 0.84.1). In Node a BigInt is written as a
+number (a string past 2^53), a `Map` as an object, a `Set` as an array and an
+`Error` as its message (node-0.48.1).
 
 Sensitive key names (`token`, `password`, `api_key`, `secret`, etc.) are
 unconditionally redacted in `extra` fields too — both the key check and the
