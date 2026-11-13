@@ -1,6 +1,7 @@
 import { Button, Tooltip, message } from 'antd'
 import { CopyOutlined } from '@ant-design/icons'
-import { RADIUS } from '../ThemeContext'
+import { RADIUS, useAccent, useIsDark } from '../ThemeContext'
+import { statusTone, type StatusTone } from './kit'
 
 // Shared run-inbox primitives used by both the Triggers and Schedules tabs (their
 // run inbox + detail drawer + event log). Kept in one module so the two views
@@ -36,10 +37,18 @@ const STATUS_LABEL: Record<string, string> = Object.fromEntries(COLUMNS.map(c =>
 // A status counts as "in flight" (abortable) until a terminal done/failed.
 export const RUNNING_STATUSES = new Set(['triggered', 'triage', 'running'])
 
+// The status word in the shared vocabulary, so it reads at 4.5:1 in both
+// themes; the dot keeps the column's fill colour (a mark needs only 3:1).
+const COLUMN_TONE: Record<string, StatusTone> = {
+  triggered: 'neutral', awaiting_claim: 'info', triage: 'running', awaiting_human: 'waiting',
+  running: 'running', done: 'ok', failed: 'failed',
+}
+
 export function StatusBadge({ status }: { status: string }) {
   const color = COLUMN_COLOR[status] ?? '#8c8c8c'
+  const text = statusTone(COLUMN_TONE[status] ?? 'neutral', useIsDark(), useAccent()).color
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color, flexShrink: 0, width: 110 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: text, flexShrink: 0, width: 110 }}>
       <span style={{ width: 8, height: 8, borderRadius: RADIUS.md, background: color }} />
       {STATUS_LABEL[status] ?? status}
     </span>
@@ -59,7 +68,7 @@ export function CopyButton({ text, title = 'Copy' }: { text: string; title?: str
   }
   return (
     <Tooltip title={title}>
-      <Button size="small" type="text" icon={<CopyOutlined />} onClick={e => { e.stopPropagation(); copy() }} />
+      <Button aria-label={title} size="small" type="text" icon={<CopyOutlined />} onClick={e => { e.stopPropagation(); copy() }} />
     </Tooltip>
   )
 }

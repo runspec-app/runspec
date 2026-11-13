@@ -12,6 +12,7 @@ import { bridge, type TriggerSourceInfo, type Host, type Runnable, type ArgDef }
 import { SoundSelect } from './SoundSelect'
 import { ModelSelect } from './ModelSelect'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
+import { EmptyState, IconAction, StatusTag } from './kit'
 import { useFeatures } from '../features'
 
 const { Text } = Typography
@@ -342,7 +343,7 @@ function ArgMapEditor({
       {declaredArgs.map(a => (
         <div key={a.name} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <span style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 110, textAlign: 'right', color: 'var(--rs-text-secondary)' }}>
-            {a.name}{a.required ? <span style={{ color: '#cf5b5b' }}> *</span> : ''}
+            {a.name}{a.required ? <span style={{ color: 'var(--rs-danger)' }}> *</span> : ''}
           </span>
           <span style={{ color: 'var(--rs-text-muted)' }}>→</span>
           <Input
@@ -362,7 +363,7 @@ function ArgMapEditor({
             size="small" style={{ fontFamily: MONO_FONT }} placeholder="{{ field }}"
             value={r.template} onChange={e => setCustom(i, 'template', e.target.value)}
           />
-          <MinusCircleOutlined onClick={() => removeCustom(i)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+          <IconAction label="Remove this row" icon={<MinusCircleOutlined />} onClick={() => removeCustom(i)} />
         </div>
       ))}
       <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={addCustom} style={{ width: 'fit-content' }}>
@@ -468,7 +469,7 @@ function TestTriggerModal({ name, trigger, onClose }: { name: string | null; tri
                   <Form.Item name={[f.name, 'key']} noStyle><Input size="small" placeholder="subject" style={{ fontFamily: MONO_FONT }} /></Form.Item>
                   <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
                   <Form.Item name={[f.name, 'value']} noStyle><Input size="small" placeholder="VIP outage" style={{ fontFamily: MONO_FONT }} /></Form.Item>
-                  <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+                  <IconAction label="Remove this row" icon={<MinusCircleOutlined />} onClick={() => remove(f.name)} />
                 </div>
               ))}
               <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add()} style={{ width: 'fit-content' }}>Add field</Button>
@@ -551,7 +552,7 @@ function PasteInputModal({ name, onClose }: { name: string | null; onClose: () =
                   <Form.Item name={[f.name, 'key']} noStyle><Input size="small" placeholder="host" style={{ fontFamily: MONO_FONT }} /></Form.Item>
                   <span style={{ color: 'var(--rs-text-muted)' }}>=</span>
                   <Form.Item name={[f.name, 'value']} noStyle><Input size="small" placeholder="web-01" style={{ fontFamily: MONO_FONT }} /></Form.Item>
-                  <MinusCircleOutlined onClick={() => remove(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+                  <IconAction label="Remove this row" icon={<MinusCircleOutlined />} onClick={() => remove(f.name)} />
                 </div>
               ))}
               <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add()} style={{ width: 'fit-content' }}>Add field</Button>
@@ -669,7 +670,7 @@ export function TriggersEditor({
               <Form.Item name={[f.name, keyName]} noStyle><Input size="small" placeholder={keyPh} style={{ fontFamily: MONO_FONT }} /></Form.Item>
               <span style={{ color: 'var(--rs-text-muted)' }}>→</span>
               <Form.Item name={[f.name, valName]} noStyle><Input size="small" placeholder={valPh} style={{ fontFamily: MONO_FONT }} /></Form.Item>
-              <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+              <IconAction label="Remove this row" icon={<MinusCircleOutlined />} onClick={() => rm(f.name)} />
             </div>
           ))}
           <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add()} style={{ width: 'fit-content' }}>{addLabel}</Button>
@@ -691,7 +692,7 @@ export function TriggersEditor({
                 <Form.Item name={[f.name, 'run']} noStyle rules={[{ required: true, whitespace: true, message: 'Required' }]}>
                   <RunPicker hosts={hosts} runnables={runnables} />
                 </Form.Item>
-                <MinusCircleOutlined onClick={() => rm(f.name)} style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
+                <IconAction label="Remove this row" icon={<MinusCircleOutlined />} onClick={() => rm(f.name)} />
               </div>
               <label style={{ fontSize: 12, color: 'var(--rs-text-muted)', display: 'block', marginBottom: 4 }}>{'Args — literal or {{ field }} / {{ _llm.x }} template'}</label>
               <Form.Item name={[f.name, 'map']} noStyle>
@@ -891,7 +892,7 @@ export function TriggersEditor({
       <PasteInputModal name={pasteName} onClose={() => setPasteName(null)} />
 
       {triggers.length === 0 && !editing ? (
-        <Empty description={<span style={{ fontSize: 13, color: 'var(--rs-text-muted)' }}>No triggers yet. Add one to react to a monitored event.</span>} />
+        <EmptyState message="No triggers yet. Add one to react to a monitored event." />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {triggers.map((t, i) => (
@@ -901,19 +902,19 @@ export function TriggersEditor({
               <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {String(t.source ?? '')}:{String(t.event ?? '')}
               </Text>
-              <Tag color={t.mode === 'rule' ? 'geekblue' : 'purple'} style={{ margin: 0, fontSize: 11 }}>{String(t.mode ?? 'agent')}</Tag>
+              <StatusTag tone="neutral">{String(t.mode ?? 'agent')}</StatusTag>
               <Switch size="small" checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)} />
               {t.source === 'paste' && (
                 <Tooltip title="Run with pasted text — paste a block of text as this trigger’s input">
-                  <Button type="text" size="small" icon={<SnippetsOutlined />} onClick={() => setPasteName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+                  <Button aria-label={`Run ${String(t.name)} with pasted text`} type="text" size="small" icon={<SnippetsOutlined />} onClick={() => setPasteName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
                 </Tooltip>
               )}
               <Tooltip title="Trigger now — fire with a test event">
-                <Button type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => setTestName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+                <Button aria-label={`Trigger ${String(t.name)} now`} type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => setTestName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
               </Tooltip>
-              <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(t)} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
+              <Tooltip title="Edit"><Button aria-label={`Edit ${String(t.name)}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(t)} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} /></Tooltip>
               <Popconfirm title={`Delete trigger ${String(t.name)}?`} onConfirm={() => remove(String(t.name))} okText="Delete" cancelText="Cancel" placement="left">
-                <Button type="text" size="small" icon={<DeleteOutlined />} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
+                <Button aria-label={`Delete ${String(t.name)}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
               </Popconfirm>
             </div>
           ))}

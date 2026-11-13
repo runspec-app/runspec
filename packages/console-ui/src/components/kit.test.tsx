@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { Modal } from 'antd'
+import { Modal, Tooltip } from 'antd'
 
-import { EmptyState, IconAction, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
+import { antTone, EmptyState, IconAction, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
 import { contrastRatio, readableAccent, surfaces, DEFAULT_ACCENT, ThemeContext } from '../ThemeContext'
 import { CopyOutlined, DeleteOutlined } from '@ant-design/icons'
 
@@ -47,6 +47,34 @@ describe('StatusTag', () => {
     const t = screen.getByTestId('t')
     expect(t.textContent).toBe('exit 2')
     expect(t.getAttribute('data-tone')).toBe('failed')
+  })
+})
+
+describe('antTone and clickable StatusTag', () => {
+  it('maps Ant preset colours to tones', () => {
+    expect(antTone('green')).toBe('ok')
+    expect(antTone('processing')).toBe('running')
+    expect(antTone('orange')).toBe('attention')
+    expect(antTone('red')).toBe('failed')
+    expect(antTone('geekblue')).toBe('info')
+    expect(antTone(undefined)).toBe('neutral')
+  })
+
+  it('a clickable tag is a keyboard button', () => {
+    const go = vi.fn()
+    render(<StatusTag tone="attention" onClick={go}>3 updates</StatusTag>)
+    const b = screen.getByRole('button', { name: '3 updates' })
+    fireEvent.keyDown(b, { key: 'Enter' })
+    fireEvent.click(b)
+    expect(go).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('StatusTag inside a Tooltip', () => {
+  it('shows the outer tooltip on hover', async () => {
+    render(<Tooltip title="autonomy: confirm"><StatusTag tone="info">confirm</StatusTag></Tooltip>)
+    fireEvent.mouseEnter(screen.getByText('confirm'))
+    expect(await screen.findByText('autonomy: confirm')).toBeTruthy()
   })
 })
 

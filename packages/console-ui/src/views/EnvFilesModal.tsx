@@ -35,6 +35,7 @@ import {
   bridge, type EnvFileKind, type EnvFileReader, type EnvFileRef, type EnvFileTarget, type EnvFileVenvChange, type EnvFileView, type Host,
 } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
+import { EmptyState, StatusTag } from '../components/kit'
 
 const { Text } = Typography
 
@@ -304,8 +305,8 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect }: 
       render: (_: unknown, r: DraftRow) => (
         <span style={{ fontFamily: MONO_FONT, fontSize: 12, textDecoration: r.removed ? 'line-through' : undefined }}>
           {r.secret && <LockOutlined style={{ marginRight: 4 }} />}{r.key}
-          {r.isNew && <Tag color="green" style={{ marginLeft: 6 }}>new</Tag>}
-          {!r.isNew && r.edited && r.value !== r.original && !r.removed && <Tag color="gold" style={{ marginLeft: 6 }}>edited</Tag>}
+          {r.isNew && <StatusTag tone="ok" style={{ marginLeft: 6 }}>new</StatusTag>}
+          {!r.isNew && r.edited && r.value !== r.original && !r.removed && <StatusTag tone="waiting" style={{ marginLeft: 6 }}>edited</StatusTag>}
         </span>
       ),
     },
@@ -378,7 +379,7 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect }: 
         <Button size="small" icon={<ReloadOutlined />} disabled={!ref} loading={loading} onClick={() => ref && load(ref)}>Reload</Button>
       </Space>
 
-      {!ref && !loadingTargets && <Empty description="No venv to manage." />}
+      {!ref && !loadingTargets && <EmptyState message="No venv to manage." />}
       {loading && !view && <Spin />}
       {view && ref && (
         <>
@@ -387,7 +388,7 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect }: 
             {view.ok && !view.exists && <Tag>not created yet</Tag>}
             {view.mode && <Tooltip title="File mode"><Tag>{view.mode}</Tag></Tooltip>}
             {view.owner && <Tooltip title="Owner of the venv"><Tag>owner {view.owner}</Tag></Tooltip>}
-            {view.as_user && <Tooltip title="The SSH login can't edit this file, so the console reads and writes it as this account (sudo -n -u)."><Tag color="blue">as {view.as_user}</Tag></Tooltip>}
+            {view.as_user && <Tooltip title="The SSH login can't edit this file, so the console reads and writes it as this account (sudo -n -u)."><StatusTag tone="info">as {view.as_user}</StatusTag></Tooltip>}
           </div>
           {view.error && <Alert type="error" showIcon style={{ marginBottom: 8 }} message={view.error} />}
           {view.ok && !view.writable && <Alert type="warning" showIcon style={{ marginBottom: 8 }} message="Read-only" description={view.write_error || 'This file cannot be written from here.'} />}
@@ -936,11 +937,11 @@ function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; tar
       <Tooltip title={tip} styles={{ root: { maxWidth: 520 }, body: { maxHeight: 360, overflowY: 'auto' } }}>
         <div style={{ lineHeight: 1.25 }}>
           <div style={{ fontSize: 12, ...WRAP }}>
-            {v && !v.ok && <ExclamationCircleOutlined style={{ color: '#ff4d4f', marginRight: 4 }} />}
+            {v && !v.ok && <ExclamationCircleOutlined style={{ color: 'var(--rs-danger)', marginRight: 4 }} />}
             {v?.ok && !v.writable && <LockOutlined style={{ marginRight: 4 }} />}
             {many ? (venvs.length === 1 ? venvs[0] : `${refs.length} venvs`) : t?.host}
-            {many && <Tag color="blue" style={{ marginLeft: 4, fontSize: 11, lineHeight: '16px', padding: '0 3px' }}>{hosts.length} host{hosts.length === 1 ? '' : 's'}</Tag>}
-            {pending > 0 && <Tag color="gold" style={{ marginLeft: 4, fontSize: 11, lineHeight: '16px', padding: '0 3px' }}>{pending}</Tag>}
+            {many && <StatusTag tone="info" style={{ marginLeft: 4 }}>{hosts.length} host{hosts.length === 1 ? '' : 's'}</StatusTag>}
+            {pending > 0 && <StatusTag tone="attention" style={{ marginLeft: 4 }}>{pending}</StatusTag>}
           </div>
           <Text type="secondary" style={{ fontSize: 11, fontWeight: 'normal', ...WRAP }}>
             {many ? `${hosts.slice(0, 2).join(', ')}${hosts.length > 2 ? ` +${hosts.length - 2}` : ''}` : t?.venv}
@@ -973,7 +974,7 @@ function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; tar
                 </a>
               </Tooltip>
               <div style={{ marginTop: 2 }}>
-                {distinct > 1 && <Tag color="gold" style={{ fontSize: 11, lineHeight: '16px', padding: '0 4px', cursor: 'pointer' }} onClick={() => setDetailKey(r.key)}>{distinct} values</Tag>}
+                {distinct > 1 && <StatusTag tone="attention" style={{ cursor: 'pointer' }} onClick={() => setDetailKey(r.key)}>{distinct} values</StatusTag>}
                 {total > 0 && setIn < total && <Tag style={{ fontSize: 11, lineHeight: '16px', padding: '0 4px' }}>set in {setIn} of {total}</Tag>}
               </div>
             </div>
@@ -1035,7 +1036,7 @@ function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; tar
         />
       )}
 
-      {!supported.length && !loadingTargets && <Empty description="No venv to manage." />}
+      {!supported.length && !loadingTargets && <EmptyState message="No venv to manage." />}
       {supported.length > 0 && (
         <Spin spinning={loading}>
           <Table<Row>
@@ -1172,7 +1173,7 @@ function VariableValues({ keyName, secret, readers, groups, letters, revealed, p
           <div key={t ?? '∅'} style={{ borderTop: '1px solid var(--rs-divider)', padding: '10px 0' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
               <div style={{ flex: 1, minWidth: 0 }}>{shown}</div>
-              {anyPending && <Tag color="gold">unsaved</Tag>}
+              {anyPending && <StatusTag tone="waiting">unsaved</StatusTag>}
               <Tag>{g.refs.length} of {total} venv{total === 1 ? '' : 's'}</Tag>
               {value !== undefined && (
                 <Tooltip title={`Set this value in every venv shown (${writableCount})`}>

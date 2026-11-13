@@ -45,6 +45,7 @@ import {
   type ArgInputProps,
   type SlimCred,
 } from './formsShared'
+import { antTone, StatusTag } from '../components/kit'
 // Re-export the shared helpers/components so the colocated tests (which import
 // them from here) keep working. Production consumers import ./formsShared directly.
 export {
@@ -75,7 +76,7 @@ function AutonomyTag({ level }: { level?: string }) {
   const { color, label } = autonomyTagProps(level)
   return (
     <Tooltip title={`autonomy: ${level || 'confirm'}`}>
-      <Tag color={color} style={{ fontSize: 11, margin: 0 }}>{label}</Tag>
+      <StatusTag tone={antTone(color)}>{label}</StatusTag>
     </Tooltip>
   )
 }
@@ -120,7 +121,7 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, bin
     <Tooltip title={binding.role === 'secret'
       ? `This arg's secret is supplied by credential “${binding.label}” via the environment channel — leave blank to use it, or type to override.`
       : `Pre-filled from credential “${binding.label}” — edit if needed.`}>
-      <Tag color="green" style={{ fontSize: 11, lineHeight: '16px', margin: 0 }}>from {binding.label}</Tag>
+      <StatusTag tone="ok">from {binding.label}</StatusTag>
     </Tooltip>
   )
   return (
@@ -607,7 +608,7 @@ function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
           <div style={{ marginBottom: canRunHere ? 18 : 0 }}>
             {currentNode.requireCommand ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>command required</Tag>
+                <StatusTag tone="info">command required</StatusTag>
                 <Text type="secondary" style={{ fontSize: 13 }}>
                   This runnable can't run on its own — pick a command to continue.
                 </Text>
@@ -732,7 +733,7 @@ function HostTargets({ records, hosts, value, onChange }: {
           value: r.host,
           label: (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 9, color: connected(r.host) ? '#52c41a' : '#595959' }}>●</span>
+              <span style={{ fontSize: 9, color: connected(r.host) ? 'var(--rs-ok)' : 'var(--rs-text-faint)' }}>●</span>
               <span style={{ fontFamily: MONO_FONT }}>{r.host}</span>
             </span>
           ),
@@ -783,17 +784,17 @@ function RunnableCard({ entry, hosts, onPick }: {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: 9, color: connected ? '#52c41a' : '#595959', flexShrink: 0 }}>●</span>
+        <span style={{ fontSize: 9, color: connected ? 'var(--rs-ok)' : 'var(--rs-text-faint)', flexShrink: 0 }}>●</span>
         <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600 }}>{runnable.name}</Text>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           {isInstant && (
             <Tooltip title="No arguments — runs immediately on click">
-              <Tag color="gold" icon={<ThunderboltOutlined />} style={{ fontSize: 11, margin: 0 }}>instant</Tag>
+              <StatusTag tone="info" icon={<ThunderboltOutlined />}>instant</StatusTag>
             </Tooltip>
           )}
           {isAuto && (
             <Tooltip title="autonomy: autonomous — the assistant can invoke this without asking">
-              <Tag color="green" style={{ fontSize: 11, margin: 0 }}>auto</Tag>
+              <StatusTag tone="ok">auto</StatusTag>
             </Tooltip>
           )}
         </div>
@@ -804,20 +805,20 @@ function RunnableCard({ entry, hosts, onPick }: {
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
         {multi ? (
           <Tooltip title={entry.records.map(r => r.host).join(', ')}>
-            <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{entry.records.length} hosts</Tag>
+            <StatusTag tone="info">{entry.records.length} hosts</StatusTag>
           </Tooltip>
         ) : (
           <Tag style={{ fontSize: 11, margin: 0 }}>{runnable.host}</Tag>
         )}
         {argCount > 0 && (
-          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
+          <StatusTag tone={requiredCount > 0 ? 'info' : 'neutral'}>
             {argCount} arg{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
-          </Tag>
+          </StatusTag>
         )}
         {subCount > 0 && (
           runnable.requireCommand ? (
             <Tooltip title="A command is required — this runnable can't run without choosing one of its subcommands">
-              <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>{subCount} subcommands · required</Tag>
+              <StatusTag tone="info">{subCount} subcommands · required</StatusTag>
             </Tooltip>
           ) : (
             <Tag style={{ fontSize: 11, margin: 0 }}>{subCount} subcommands</Tag>
@@ -880,7 +881,7 @@ function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: 
         </Text>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
           {onEdit && <CardEditButton title="Edit runbook" onEdit={onEdit} />}
-          <Tag color="purple" style={{ fontSize: 11, margin: 0 }}>runbook</Tag>
+          <StatusTag tone="info">runbook</StatusTag>
         </div>
       </div>
       {(runbook.title || runbook.symptom) && (
@@ -890,9 +891,9 @@ function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: 
       )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
         {argCount > 0 ? (
-          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
+          <StatusTag tone={requiredCount > 0 ? 'info' : 'neutral'}>
             {argCount} param{argCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
-          </Tag>
+          </StatusTag>
         ) : (
           <Tag style={{ fontSize: 11, margin: 0 }}>no params</Tag>
         )}
@@ -937,7 +938,7 @@ function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onCli
         </Text>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
           {onEdit && <CardEditButton title="Edit saved run" onEdit={onEdit} />}
-          <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>saved run</Tag>
+          <StatusTag tone="info">saved run</StatusTag>
         </div>
       </div>
       <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.4 }}>
@@ -950,14 +951,14 @@ function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onCli
       )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2, alignItems: 'center' }}>
         {paramCount > 0 ? (
-          <Tag color={requiredCount > 0 ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
+          <StatusTag tone={requiredCount > 0 ? 'info' : 'neutral'}>
             {paramCount} param{paramCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} req` : ''}
-          </Tag>
+          </StatusTag>
         ) : (
           <Tag style={{ fontSize: 11, margin: 0 }}>runs immediately</Tag>
         )}
         {savedRun.argsError && (
-          <Tag color="red" style={{ fontSize: 11, margin: 0 }}>misconfigured</Tag>
+          <StatusTag tone="failed">misconfigured</StatusTag>
         )}
       </div>
     </div>

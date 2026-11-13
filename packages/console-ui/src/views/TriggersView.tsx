@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Collapse, Tooltip } from 'antd'
+import { Alert, Button, Collapse, Tooltip } from 'antd'
 import { ReloadOutlined, BellOutlined } from '@ant-design/icons'
 import { bridge, type TriggerEvent, type TriggerListResult } from '../bridge'
 import { useIsDark, textColor, textMuted } from '../ThemeContext'
@@ -99,7 +99,7 @@ export function TriggersView() {
           ),
           extra: (
             <Tooltip title="Reload trigger config">
-              <ReloadOutlined
+              <Button type="text" size="small" aria-label="Reload trigger config" icon={<ReloadOutlined />}
                 onClick={e => { e.stopPropagation(); loadConfig() }}
                 style={{ color: dim }}
               />

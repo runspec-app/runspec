@@ -9,6 +9,41 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.419.0] — 2026-11-13
+
+### Changed
+
+- **The rest of the tabs use the shared kit.** Marketplace, Triggers, Rota,
+  Forms, Specs, Files, the env files window, Analytics, Improve and Evals now
+  use the same status tags as Console, History, Logs, Schedules and Settings,
+  so one colour means one thing everywhere: green is ok, amber needs a look,
+  red failed, the accent is running. Labels that only describe something
+  (required, command required, runbook, push/pull, the trigger's mode) are
+  plain grey tags instead of a colour each. Every tag reads at 4.5:1 in both
+  themes (checked at 5.4:1 or better in the preview).
+- **Marketplace.** Install / Update is the card's button and Details sits
+  beside it; **Uninstall…** moved into **More actions**, so it no longer sits
+  next to Update looking just as safe. The "N updates available" and running
+  tags are keyboard buttons.
+- **Names for icon buttons.** Trigger rows (run with pasted text, trigger now,
+  edit, delete), the remove buttons on trigger/runbook form rows (they were
+  bare icons a keyboard couldn't reach), Copy on run cards, and the reload and
+  delete buttons on Triggers, Improve and Evals now have names a screen reader
+  can say.
+- **Empty states.** Specs, Analytics, Improve, Evals, Triggers and the env
+  files window say in one line what's missing instead of Ant's stock
+  illustration.
+- **Theme colours.** Run-card status words (Running, Done, Failed, …) use
+  readable status colours (the dot keeps its column colour); the Rota lock
+  indicator and break icon, Specs' default values and errors, the Forms host
+  dots and the run-card error text use theme tokens instead of fixed hex.
+
+### Added
+
+- `antTone()` maps an Ant preset colour to a status tone, and `StatusTag`
+  takes an `onClick` (rendered as a keyboard button) and passes its ref and
+  extra props through, so a `<Tooltip>` around it works.
+
 ## [0.418.0] — 2026-11-13
 
 ### Changed

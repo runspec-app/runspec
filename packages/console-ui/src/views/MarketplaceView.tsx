@@ -12,7 +12,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Badge, Button, Checkbox, Input, Modal, Progress, Segmented, Select, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { AppstoreAddOutlined, UnorderedListOutlined, BookOutlined, CodeOutlined, DownloadOutlined, DeleteOutlined, HistoryOutlined, HomeOutlined, InfoCircleOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
 import { bridge, type Host, type MarketplaceCatalog, type MarketplaceEntry, type MarketplaceInstalled, type MarketplaceInstalledTarget, type MarketplaceOpPayload, type MarketplaceOpRecord, type MarketplaceOpTarget, type MarketplaceOpTargetState } from '../bridge'
-import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, textMuted, MONO_FONT } from '../ThemeContext'
+import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textColor, textSecondary, textMuted, MONO_FONT } from '../ThemeContext'
+import { antTone, RowActions, StatusTag, type StatusTone } from '../components/kit'
 import { Markdown } from '../components/Markdown'
 import { hasTargetTokens, hostPasses, parseSearch, type ParsedSearch } from '../searchTokens'
 
@@ -119,8 +120,8 @@ function ago(ts: number | null | undefined): string {
   return `${Math.round(s / 86400)} d ago`
 }
 
-const STATE_COLOR: Record<InstallState, string> = {
-  absent: 'default', current: 'green', outdated: 'orange', newer: 'purple', unknown: 'default',
+const STATE_TONE: Record<InstallState, StatusTone> = {
+  absent: 'neutral', current: 'ok', outdated: 'attention', newer: 'info', unknown: 'neutral',
 }
 
 // Above this many install chips the card would grow unbounded (a package on 70
@@ -169,17 +170,15 @@ function PackageCard({ entry, states, filtered, running, onInstall, onUninstall,
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           {(running ?? []).map(o => (
             <Tooltip key={o.op} title="Running in the background. Click to see progress.">
-              <Tag color="processing" style={{ fontSize: 11, margin: 0, cursor: 'pointer' }} onClick={() => onOpenOp?.(o.op)}>
+              <StatusTag tone="running" onClick={() => onOpenOp?.(o.op)}>
                 {o.action === 'uninstall' ? 'uninstalling…' : 'installing…'}
-              </Tag>
+              </StatusTag>
             </Tooltip>
           ))}
-          {anyOutdated && <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>update available</Tag>}
-          {anyInstalled && !anyOutdated && <Tag color="green" style={{ fontSize: 11, margin: 0 }}>installed</Tag>}
+          {anyOutdated && <StatusTag tone="attention">update available</StatusTag>}
+          {anyInstalled && !anyOutdated && <StatusTag tone="ok">installed</StatusTag>}
           {entry.has_runspec_toml && (
-            <Tooltip title="The wheel ships a runspec.toml — verified runnable package">
-              <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>verified</Tag>
-            </Tooltip>
+            <StatusTag tone="info" tip="The wheel ships a runspec.toml — verified runnable package">verified</StatusTag>
           )}
         </div>
       </div>
@@ -187,7 +186,7 @@ function PackageCard({ entry, states, filtered, running, onInstall, onUninstall,
         ? <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.4 }}>{entry.summary}</Text>
         : <Text type="secondary" italic style={{ fontSize: 12 }}>No description published — add a summary to the package's pyproject.</Text>}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-        {(entry.repos || []).map(r => <Tag key={r} color="geekblue" style={{ fontSize: 11, margin: 0 }}>{r === entry.repo ? entry.repo_name : r}</Tag>)}
+        {(entry.repos || []).map(r => <Tag key={r} style={{ fontSize: 11, margin: 0 }}>{r === entry.repo ? entry.repo_name : r}</Tag>)}
         {(entry.keywords || []).slice(0, 6).map(k => <Tag key={k} style={{ fontSize: 11, margin: 0 }}>{k}</Tag>)}
       </div>
       {(links.documentation || links.homepage || links.source || links.changelog) && (
@@ -220,23 +219,23 @@ function PackageCard({ entry, states, filtered, running, onInstall, onUninstall,
             >
               {/* Outdated chips first, so what needs updating is visible without scrolling. */}
               {[...installedRows].sort((a, b) => (a.state === 'outdated' ? 0 : 1) - (b.state === 'outdated' ? 0 : 1)).map(s => (
-                <Tooltip key={s.target.id} title={`${s.target.path} — ${s.state === 'outdated' ? `${s.installed} → ${entry.version} available` : s.state}`}>
-                  <Tag color={STATE_COLOR[s.state]} style={{ fontSize: 11, margin: 0, fontFamily: MONO_FONT }}>
-                    {s.target.host}/{s.target.venv} {s.installed}{s.state === 'outdated' ? ' ↑' : ''}
-                  </Tag>
-                </Tooltip>
+                <StatusTag key={s.target.id} tone={STATE_TONE[s.state]} mono
+                  tip={`${s.target.path} — ${s.state === 'outdated' ? `${s.installed} → ${entry.version} available` : s.state}`}>
+                  {s.target.host}/{s.target.venv} {s.installed}{s.state === 'outdated' ? ' ↑' : ''}
+                </StatusTag>
               ))}
             </div>
           </>
         )}
       </div>
-      <div style={{ display: 'flex', gap: 6, rowGap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Button size="small" type={anyInstalled && !anyOutdated ? 'default' : 'primary'} icon={<DownloadOutlined />} onClick={onInstall}>
-          {anyOutdated ? 'Update…' : anyInstalled ? 'Install / reinstall…' : 'Install…'}
-        </Button>
-        {anyInstalled && <Button size="small" danger icon={<DeleteOutlined />} onClick={onUninstall}>Uninstall…</Button>}
-        <Button size="small" type="text" icon={<InfoCircleOutlined />} onClick={onDetails} style={{ marginLeft: 'auto' }}>Details</Button>
-      </div>
+      {/* Install / Update is the card's action; Uninstall waits behind More so
+          it never sits beside Update looking just as safe. */}
+      <RowActions
+        style={{ marginTop: 4 }}
+        primary={{ key: 'install', label: anyOutdated ? 'Update…' : anyInstalled ? 'Install / reinstall…' : 'Install…', icon: <DownloadOutlined />, onClick: onInstall }}
+        secondary={[{ key: 'details', label: 'Details', icon: <InfoCircleOutlined />, onClick: onDetails }]}
+        more={anyInstalled ? [{ key: 'uninstall', label: 'Uninstall…', icon: <DeleteOutlined />, danger: true, onClick: onUninstall }] : []}
+      />
     </div>
   )
 }
@@ -276,7 +275,7 @@ function DetailsModal({ entry, onClose }: { entry: MarketplaceEntry | null; onCl
       {entry.description ? (
         <div style={{ maxHeight: '50vh', overflow: 'auto', border: '1px solid var(--rs-border)', borderRadius: RADIUS.md, padding: '8px 12px' }}>
           {(entry.description_content_type || '').includes('markdown') || !entry.description_content_type
-            ? <Markdown color={isDark ? '#d4d4d4' : '#222'}>{entry.description}</Markdown>
+            ? <Markdown color={textColor(isDark)}>{entry.description}</Markdown>
             : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: MONO_FONT, fontSize: 12, margin: 0 }}>{entry.description}</pre>}
           {entry.description_truncated && <Text type="secondary" style={{ fontSize: 11 }}>(description truncated)</Text>}
         </div>
@@ -467,7 +466,7 @@ function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: 
   const mono = { fontFamily: MONO_FONT }
   const meta = { color: textMuted(isDark), fontSize: 12 }
   const installedTag = (s: TargetState) => s.installed
-    ? <Tag color={STATE_COLOR[s.state]} style={{ ...mono, fontSize: 11 }}>{s.installed}{s.state === 'outdated' ? ` → ${entry.version}` : ''}</Tag>
+    ? <StatusTag tone={STATE_TONE[s.state]} mono>{s.installed}{s.state === 'outdated' ? ` → ${entry.version}` : ''}</StatusTag>
     : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
   const hostLabel = (g: { host: string; group: string }) => (
     <>
@@ -514,9 +513,9 @@ function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: 
         const c = hostSummary(r.g.rows)
         return (
           <Space size={4} wrap>
-            {c.outdated > 0 && <Tag color={STATE_COLOR.outdated} style={{ fontSize: 11, margin: 0 }}>{c.outdated} outdated</Tag>}
-            {c.current > 0 && <Tag color={STATE_COLOR.current} style={{ fontSize: 11, margin: 0 }}>{c.current} current</Tag>}
-            {c.other > 0 && <Tag style={{ fontSize: 11, margin: 0 }}>{c.other} other</Tag>}
+            {c.outdated > 0 && <StatusTag tone={STATE_TONE.outdated}>{c.outdated} outdated</StatusTag>}
+            {c.current > 0 && <StatusTag tone={STATE_TONE.current}>{c.current} current</StatusTag>}
+            {c.other > 0 && <StatusTag tone="neutral">{c.other} other</StatusTag>}
             {c.absent > 0 && <span style={meta}>{c.absent} not installed</span>}
           </Space>
         )
@@ -783,7 +782,7 @@ function OpDetailModal({ opId, onClose }: { opId: string; onClose: () => void })
         ? { color: 'orange', text: 'not updated' }
         : { color: t.ok ? 'green' : 'red', text: t.ok ? 'ok' : `failed (exit ${t.exit_code ?? '?'})` }
       : TARGET_STATE_TAG[t.state]
-    return <Tag color={tag.color} style={{ fontSize: 11, margin: 0 }}>{tag.text}</Tag>
+    return <StatusTag tone={antTone(tag.color)}>{tag.text}</StatusTag>
   }
   const columns = [
     {
@@ -823,7 +822,7 @@ function OpDetailModal({ opId, onClose }: { opId: string; onClose: () => void })
       ) : (
         <>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 12, color: textSecondary(isDark) }}>
-            <Tag color={outcome!.color} style={{ margin: 0 }}>{outcome!.text}</Tag>
+            <StatusTag tone={antTone(outcome!.color)}>{outcome!.text}</StatusTag>
             <span>started {ago(rec.started_at)}</span>
             {rec.status === 'running' && <span>Closing this keeps it running; reopen it from Activity.</span>}
             {flags.length > 0 && <span>· {flags.join(', ')}</span>}
@@ -889,7 +888,7 @@ function ActivityModal({ ops, onOpen, onClose }: {
     { title: 'Started', width: 110, render: (_: unknown, o: MarketplaceOpRecord) => <Text style={{ fontSize: 12 }}>{ago(o.started_at)}</Text> },
     { title: 'Operation', render: (_: unknown, o: MarketplaceOpRecord) => <span style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{opLabel(o)}</span> },
     { title: 'Venvs', width: 70, render: (_: unknown, o: MarketplaceOpRecord) => <Text style={{ fontSize: 12 }}>{o.targets?.length ?? o.results.length}</Text> },
-    { title: 'Status', width: 170, render: (_: unknown, o: MarketplaceOpRecord) => { const r = opOutcome(o); return <Tag color={r.color} style={{ fontSize: 11 }}>{r.text}</Tag> } },
+    { title: 'Status', width: 170, render: (_: unknown, o: MarketplaceOpRecord) => { const r = opOutcome(o); return <StatusTag tone={antTone(r.color)}>{r.text}</StatusTag> } },
   ]
   return (
     <Modal open title="Marketplace activity" width={760} onCancel={onClose} footer={<Button onClick={onClose}>Close</Button>}>
@@ -1093,11 +1092,9 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
 
       <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12, color: textSecondary(isDark) }}>
         {(catalog?.repos ?? []).map(r => (
-          <Tooltip key={r.id} title={`${r.url}${r.error ? ` — ${r.error}` : ''}`}>
-            <Tag color={r.error ? 'red' : r.stale ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>
-              {r.name} · {r.count} · {r.error ? (r.stale ? 'stale' : 'unreachable') : `read ${ago(r.fetched_at)}`}
-            </Tag>
-          </Tooltip>
+          <StatusTag key={r.id} tone={r.error ? (r.stale ? 'attention' : 'failed') : 'neutral'} tip={`${r.url}${r.error ? ` — ${r.error}` : ''}`}>
+            {r.name} · {r.count} · {r.error ? (r.stale ? 'stale' : 'unreachable') : `read ${ago(r.fetched_at)}`}
+          </StatusTag>
         ))}
         {installed && <span>venvs probed {ago(installed.probed_at)} · {installed.targets.filter(t => t.ok).length}/{installed.targets.length} reachable</span>}
         {matchedVenvs && (
@@ -1108,11 +1105,9 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
           </Tooltip>
         )}
         {updates > 0 && scope !== 'updates' && (
-          <Tooltip title="Show only packages with a newer version than a venv has">
-            <Tag color="orange" style={{ fontSize: 11, margin: 0, cursor: 'pointer' }} onClick={() => setScope('updates')}>
-              ↑ {updates} update{updates === 1 ? '' : 's'} available
-            </Tag>
-          </Tooltip>
+          <StatusTag tone="attention" tip="Show only packages with a newer version than a venv has" onClick={() => setScope('updates')}>
+            ↑ {updates} update{updates === 1 ? '' : 's'} available
+          </StatusTag>
         )}
         {activeProfile && (
           <Tooltip title={`Install state covers only the venvs in the active host profile "${activeProfile}". A runnable installed on a host outside this profile shows as "not installed" until you switch to a profile that includes it (or pick "All hosts").`}>
@@ -1121,7 +1116,7 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
         )}
         {catalog?.errors?.length ? (
           <Tooltip title={<div style={{ whiteSpace: 'pre-wrap', fontFamily: MONO_FONT, fontSize: 11 }}>{catalog.errors.join('\n')}</div>}>
-            <Tag color="gold" style={{ fontSize: 11, margin: 0 }}>{catalog.errors.length} package{catalog.errors.length === 1 ? '' : 's'} skipped</Tag>
+            <span><StatusTag tone="attention">{catalog.errors.length} package{catalog.errors.length === 1 ? '' : 's'} skipped</StatusTag></span>
           </Tooltip>
         ) : null}
       </div>
@@ -1130,9 +1125,9 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
         <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>Running:</Text>
           {runningOps.map(o => (
-            <Tag key={o.op} color="processing" style={{ fontSize: 11, margin: 0, cursor: 'pointer' }} onClick={() => setViewOp(o.op)}>
+            <StatusTag key={o.op} tone="running" onClick={() => setViewOp(o.op)}>
               {opLabel(o)} · {opOutcome(o).text}
-            </Tag>
+            </StatusTag>
           ))}
         </div>
       )}

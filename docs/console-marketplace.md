@@ -24,7 +24,8 @@ Each card is one package:
   dependency list;
 - **where it is installed**: one chip per venv — green when current, orange
   with `↑` when the index has a newer version, purple when the venv is ahead;
-- **Install…** / **Update…** / **Install / reinstall…** and **Uninstall…**.
+- **Install…** / **Update…** / **Install / reinstall…**, with **Details**
+  beside it and **Uninstall…** in the card's **More actions** menu.
 
 The toolbar filters by text, by repo, and by scope (**All / Installed /
 Updates / Not installed**). **Refresh** re-reads the indexes and re-probes

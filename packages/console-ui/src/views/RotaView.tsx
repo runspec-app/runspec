@@ -24,9 +24,9 @@ function LockIndicator() {
   }, [])
   if (state === null) return null
   const meta: Record<LockState, { icon: ReactNode; label: string; color: string }> = {
-    unlocked: { icon: <UnlockOutlined />, label: 'screen unlocked — present', color: '#3fb950' },
-    locked: { icon: <LockOutlined />, label: 'screen locked — triggers paused', color: '#e8b339' },
-    unknown: { icon: <QuestionCircleOutlined />, label: 'lock state unknown — paused (fail-safe)', color: '#e8b339' },
+    unlocked: { icon: <UnlockOutlined />, label: 'screen unlocked — present', color: 'var(--rs-ok)' },
+    locked: { icon: <LockOutlined />, label: 'screen locked — triggers paused', color: 'var(--rs-warn)' },
+    unknown: { icon: <QuestionCircleOutlined />, label: 'lock state unknown — paused (fail-safe)', color: 'var(--rs-warn)' },
   }
   const m = meta[state]
   return (
@@ -79,7 +79,7 @@ function BreakControl({ rota, breakUntil, onChanged }: { rota: Rota; breakUntil:
   if (onBreak) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
-        <CoffeeOutlined style={{ color: '#e8b339' }} />
+        <CoffeeOutlined style={{ color: 'var(--rs-warn)' }} />
         <span>On break until <b>{fmtTime(breakUntil!)}</b> — automation resumes then (held while your screen is locked).</span>
         <Button size="small" onClick={end} loading={busy}>End break now</Button>
       </div>

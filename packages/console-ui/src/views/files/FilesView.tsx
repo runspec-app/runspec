@@ -16,6 +16,7 @@ import {
   planCopy, rememberFilter, relaySource, targetHost, targetKey, targetLabel,
   type DragPayload, type PaneTarget, type Side,
 } from './filesModel'
+import { StatusTag } from '../../components/kit'
 
 const { Text } = Typography
 const RAIL_KEY = 'runspec.files.rail'
@@ -221,7 +222,7 @@ export function FilesView({ hosts, selectedHost, active }: {
                 <div key={t.id} style={{ border: '1px solid var(--rs-border)', background: 'var(--rs-surface-raised)', borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'center' }}>
                     <Text strong style={{ fontSize: 13, minWidth: 0 }} ellipsis={{ tooltip: t.title || t.id }}>{t.title || t.id}</Text>
-                    <Tag style={{ margin: 0, fontSize: 11 }} color={t.direction === 'push' ? 'gold' : t.direction === 'relay' ? 'purple' : 'cyan'}>{t.direction ?? 'pull'}</Tag>
+                    <StatusTag tone="neutral">{t.direction ?? 'pull'}</StatusTag>
                   </div>
                   <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: `${t.source ?? ''} → ${t.dest ?? ''}` }}>{t.source ?? '—'} → {t.dest ?? '—'}</Text>
                   {t.filter && <Text type="secondary" style={{ fontSize: 12 }}>Filter: {t.filter}</Text>}
