@@ -375,6 +375,16 @@ describe('HistoryView', () => {
     // …and never fetches a log that isn't there.
     expect(getRunDetail).not.toHaveBeenCalled()
   })
+
+  it("tags a run that never started as \"didn't start\" and counts it as an error", async () => {
+    getHistorySlim.mockResolvedValue([
+      rec({ runId: 'never', exitCode: -1, status: 'not_started', reason: "couldn't connect" }),
+    ])
+    render(<HistoryView {...PROPS} onRerun={() => {}} />)
+    expect(await screen.findByText("didn't start")).toBeTruthy()
+    const { historyStatusMatches } = await import('./HistoryView')
+    expect(historyStatusMatches({ exitCode: -1, status: 'not_started' }, 1)).toBe(true)
+  })
 })
 
 describe('historyStatusMatches', () => {

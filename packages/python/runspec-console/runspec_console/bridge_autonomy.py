@@ -23,6 +23,7 @@ from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
 from . import playbook_repo as playbook_repo_mod
+from . import not_started as not_started_mod
 from . import notify
 from . import observability
 from . import sounds
@@ -2046,6 +2047,27 @@ class AutonomyMixin:
                 stdin_payload=stdin_payload,
             )
 
+        # Never reached the runnable (SSH failed, run-as refused, the venv's
+        # Python couldn't start it): no run record exists on the host, so the
+        # console keeps one for History + its log.
+        why = not_started_mod.launch_failure(output_lines, exit_code_holder[0])
+        record = getattr(self, "_record_not_started", None)
+        if why and callable(record):
+            record(
+                host=host,
+                runnable=runnable,
+                reason=why,
+                exit_code=exit_code_holder[0],
+                group=hosts_mod.venv_name(rp) if rp else "",
+                command_path=command_path,
+                args=exec_args,
+                run_as=run_as,
+                trigger=run_trigger,
+                agent=run_agent,
+                runbook=run_runbook,
+                output=output_lines,
+                hide=list(secrets.values()),
+            )
         output = bridge_secrets.mask_known_secrets(self, "\n".join(output_lines))
         output = self._finalize_tool_output(output, deliver, spill_name, chat_id)
         if exit_code_holder[0] != 0:

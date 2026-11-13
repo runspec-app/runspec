@@ -21,6 +21,7 @@ from . import config as config_mod
 from . import executor as executor_mod
 from . import hosts as hosts_mod
 from . import playbook_repo as playbook_repo_mod
+from . import not_started as not_started_mod
 from . import observability
 from .config import (
     write_docs_dir,
@@ -310,6 +311,13 @@ class InvokeMixin:
             def on_done(exit_code: int, duration_ms: int) -> None:
                 with self._lock:
                     self._in_flight.pop(inv_id, None)
+                # Never reached the runnable (SSH failed, run-as refused, the
+                # venv's Python couldn't start it): no run record exists on the
+                # host, so the console keeps one for History + its log.
+                if not counts.get("not_started"):
+                    why = not_started_mod.launch_failure(captured["parts"], exit_code)
+                    if why:
+                        not_started(why, exit_code)
                 # A run just finished on this host → its run_summary is now on
                 # disk, so drop the cached remote-history read for the host and
                 # the History tab's run_end refetch re-streams fresh (local isn't
@@ -363,12 +371,34 @@ class InvokeMixin:
                         "done", {"exit_code": exit_code, "duration_ms": duration_ms}
                     )
 
+            def not_started(reason: str, exit_code: int = -1) -> None:
+                counts["not_started"] = True
+                record = getattr(self, "_record_not_started", None)
+                if callable(record):
+                    record(
+                        host=host,
+                        runnable=runnable,
+                        reason=reason,
+                        exit_code=exit_code,
+                        group=hosts_mod.venv_name(rp) if rp else "",
+                        command_path=cp,
+                        args=exec_args,
+                        operator=operator or self._current_user(),
+                        run_as=run_as,
+                        trigger=trigger,
+                        output=captured["parts"],
+                        hide=list(secrets.values()),
+                    )
+
             if entry is None or not rp:
-                on_line(f"✗  Host '{host}' not found in runspec_hosts.toml", "stderr")
+                msg = f"Host '{host}' not found in runspec_hosts.toml"
+                on_line(f"✗  {msg}", "stderr")
+                not_started(msg)
                 on_done(-1, 0)
                 return
             if not_runnable:
                 on_line(f"✗  Didn't run: {not_runnable}.", "stderr")
+                not_started(not_runnable)
                 on_done(-1, 0)
                 return
 
@@ -380,6 +410,7 @@ class InvokeMixin:
                 )
             except playbook_repo_mod.PlaybookRepoError as exc:
                 on_line(f"✗  {exc}", "stderr")
+                not_started(str(exc), 2)
                 on_done(2, 0)
                 return
             run_env = dict(cred_env)

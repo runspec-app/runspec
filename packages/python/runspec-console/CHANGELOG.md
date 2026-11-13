@@ -9,6 +9,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.416.1] — 2026-11-13
+
+### Fixed
+
+- **Runs that never started now show in History and the console log.** A run
+  writes its own record only once the runnable starts, so a run the console
+  launched that never got that far left no trace except its card: the host
+  couldn't be reached, the runnable isn't installed there, the run-as
+  escalation was refused, or the venv's Python couldn't start it (the
+  `FileNotFoundError` from `os.py` an out-of-profile saved run hit before
+  0.415.1 — the env prelude's `os.execvp` found no runnable in the venv it had
+  guessed). The console now writes its own `run_summary`-shaped record to
+  `~/logs/runspec-console-not-started.log` (rolled at 2 MB; secrets masked) and
+  a warning to `runspec-console.log`. History shows the row under the host it
+  was meant for, tagged **didn't start**, with the reason and output on expand;
+  rows for hosts the tab doesn't read (disconnected, outside the active profile)
+  come with the `local` read so they still appear. Covers Forms runs,
+  schedules, saved runs and fan-outs that ran nowhere, triggers, MCP calls and
+  the assistant's runs. Detection is the console's own markers (SSH connection
+  failed, run-as refused) and the prelude's `os.execvp` traceback / `sh`
+  `exec: … not found` (`not_started.launch_failure`); a runnable's own failure
+  is never matched, since it has its own record.
+
 ## [0.416.0] — 2026-11-13
 
 ### Fixed

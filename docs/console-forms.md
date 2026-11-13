@@ -37,6 +37,15 @@ In **History**, the Runnable column has a filter (with a search box) to show
 only some runnables, and a `-name` word in the search box leaves out every
 runnable whose name contains `name` (`-heartbeat -sync`).
 
+A run the console started that never reached the runnable — the host couldn't
+be reached, the runnable isn't installed there, the run-as account refused, or
+the venv's Python couldn't start it — has no record on the host, so the console
+keeps its own in `~/logs/runspec-console-not-started.log` and History shows it
+under the host it was meant for, tagged **didn't start** (expand the row for the
+reason and the output). It is also a warning in `runspec-console.log`. This
+covers Forms runs, schedules, saved runs, triggers, MCP calls and the
+assistant's runs.
+
 ### Finding a runnable
 
 The search box at the top of the tab searches the host selected in the

@@ -903,6 +903,10 @@ export interface HistoryRecord {
   // a success) and its exec label ("sched:<id>" for a shared cron schedule).
   status?: string
   label?: string
+  // status 'not_started' (console 0.415.2): a run the console launched that never
+  // reached the runnable (host unreachable, not installed, run-as refused, the
+  // venv's Python couldn't start it) — the console's own record, and why.
+  reason?: string
   // Logs inbox (runspec >= 0.66): `account` is the kernel-attested OS account that
   // actually ran it (`operator` is self-reported — the human behind sudo); `pending`
   // = still waiting in the venv's logs inbox for the owner's sweep.

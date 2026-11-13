@@ -48,6 +48,7 @@ def _stub(tmp_path, monkeypatch, *, engine=None):
         "_warm_for_fanout",
         "_why_not_run",
         "_nothing_ran_card",
+        "_record_not_run",
         "_run_scheduled",
         "_run_scheduled_agent",
         "_scheduled_agent_message",
