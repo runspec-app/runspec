@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Drawer, Empty, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
-import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
+import { Drawer, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
+import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined, CompressOutlined, ExpandOutlined } from '@ant-design/icons'
 import { bridge, type ChatConversation, type ChatSessionInfo, type ConversationMeta, type InFlightRecord, type Runnable, type TriggerCard } from '../bridge'
 import { useFeatures } from '../features'
 import { OutputPanel, useInvocationBlocks, maskCallArgs, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
-import { useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
+import { useIsDark, textColor, MONO_FONT, RADIUS } from '../ThemeContext'
+import { EmptyState, IconAction, RowActions, StatusTag, type RowAction } from '../components/kit'
 import { useSessions } from '../useSessions'
 import { SessionStrip } from '../components/SessionStrip'
 import { cardHasOwnSession, cardLabel, sessionStatus, type Session } from '../sessions'
@@ -160,9 +161,10 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 
   if (inFlight.length === 0) return null
 
-  const bg     = isDark ? '#0d1f0d' : '#f6ffed'
-  const border = isDark ? '#1a3a1a' : '#b7eb8f'
-  const nameCol = isDark ? '#d4d4d4' : '#1a1a1a'
+  // Theme surfaces, not a fixed green: "running" is the accent everywhere else.
+  const bg     = 'var(--rs-surface-raised)'
+  const border = 'var(--rs-border)'
+  const nameCol = textColor(isDark)
 
   const handleCancel = async (id: string) => {
     await bridge.cancel_invocation(id)
@@ -181,10 +183,10 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
         const isTool = r.kind === 'builtin_tool'
         return (
         <span key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <LoadingOutlined style={{ color: '#52c41a', fontSize: 12 }} spin />
+          <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 12 }} spin />
           <Text style={{ fontFamily: MONO_FONT, fontSize: 13, color: nameCol }}>{isTool ? r.runnable : `/${r.runnable}`}</Text>
           {isTool && (
-            <Tag color="green" style={{ fontSize: 12, margin: 0 }}>agent</Tag>
+            <StatusTag tone="info">agent</StatusTag>
           )}
           {r.trigger === 'schedule' && (
             <Tooltip title="Ran on a schedule">
@@ -192,9 +194,9 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
             </Tooltip>
           )}
           {r.host && <Tag style={{ fontSize: 12, margin: 0 }}>{r.host}</Tag>}
-          {r.group && <Tag color="blue" style={{ fontSize: 12, margin: 0 }}>{r.group}</Tag>}
+          {r.group && <Text style={{ fontSize: 12, fontFamily: MONO_FONT, color: 'var(--rs-text-muted)' }}>{r.group}</Text>}
           <Text type="secondary" style={{ fontSize: 12 }}>{r.operator}</Text>
-          <Text style={{ fontSize: 12, color: '#52c41a' }}>{elapsed(r.startedAt)}</Text>
+          <Text style={{ fontSize: 12, color: 'var(--rs-accent)', fontFamily: MONO_FONT }}>{elapsed(r.startedAt)}</Text>
           <Popconfirm
             title="Cancel this run?"
             onConfirm={() => handleCancel(r.id)}
@@ -202,8 +204,8 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
             cancelText="Keep running"
             placement="bottom"
           >
-            <Button size="small" type="text" danger icon={<CloseOutlined style={{ fontSize: 11 }} />}
-              style={{ padding: '0 4px', height: 18, lineHeight: 1 }} />
+            <span><IconAction label={`Cancel ${isTool ? r.runnable : '/' + r.runnable}`} icon={<CloseOutlined style={{ fontSize: 11 }} />}
+              danger style={{ padding: '0 4px', height: 18, lineHeight: 1 }} /></span>
           </Popconfirm>
         </span>
         )
@@ -719,48 +721,24 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
           onClose={id => { void close(id) }}
         />
         {viewing && viewing.id === selectedId && (
-          <Tag color="blue" style={{ fontSize: 12, maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>
-            Resumed: {viewing.title} — your next message continues it
-          </Tag>
+          <StatusTag tone="info" tip="Your next message continues this conversation"
+            style={{ maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0 }}>
+            Resumed: {viewing.title}
+          </StatusTag>
         )}
-        {visible.length > 0 && (
-          <>
-            <Button
-              size="small" type="text"
-              onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: true } }))}
-              style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}
-            >
-              Collapse all
-            </Button>
-            <Button
-              size="small" type="text"
-              onClick={() => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: false } }))}
-              style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}
-            >
-              Expand all
-            </Button>
-          </>
-        )}
-        {ai && (
-          <Tooltip title="Browse and reopen past conversations">
-            <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openConversations} style={{ fontSize: 12, color: 'var(--rs-text-muted)' }}>
-              History
-            </Button>
-          </Tooltip>
-        )}
-        {ai ? (
-          <Tooltip title="Open another chat — this one keeps running (Alt+N)">
-            <Button size="small" icon={<PlusOutlined />} onClick={handleNewChat} style={{ flexShrink: 0 }}>
-              New chat
-            </Button>
-          </Tooltip>
-        ) : visible.length > 0 && (
-          <Tooltip title="Clear the run output">
-            <Button size="small" icon={<PlusOutlined />} onClick={handleClear} style={{ flexShrink: 0 }}>
-              Clear
-            </Button>
-          </Tooltip>
-        )}
+        {/* One visible action (New chat, or Clear with AI off), History quiet
+            beside it, and the card-wide collapse/expand behind More. */}
+        <RowActions
+          style={{ flexShrink: 0, flexWrap: 'nowrap' }}
+          primary={ai
+            ? { key: 'new', label: 'New chat', icon: <PlusOutlined />, onClick: handleNewChat, tip: 'Open another chat — this one keeps running (Alt+N)' }
+            : visible.length > 0 ? { key: 'clear', label: 'Clear', icon: <PlusOutlined />, onClick: handleClear, tip: 'Clear the run output' } : undefined}
+          secondary={ai ? [{ key: 'history', label: 'History', icon: <HistoryOutlined />, onClick: openConversations, tip: 'Browse and reopen past conversations' }] : []}
+          more={visible.length > 0 ? ([
+            { key: 'collapse', label: 'Collapse all cards', icon: <CompressOutlined />, onClick: () => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: true } })) },
+            { key: 'expand', label: 'Expand all cards', icon: <ExpandOutlined />, onClick: () => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: false } })) },
+          ] as RowAction[]) : []}
+        />
       </div>
       <OutputPanel blocks={visible} onRerun={handleRerun} onAskLlm={ai ? handleAskLlm : undefined} onToggleContext={ai ? handleToggleContext : undefined} />
 
@@ -773,7 +751,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
         styles={{ body: { padding: '8px 0' } }}
       >
         {convs.length === 0 && !convLoading ? (
-          <Empty description="No saved conversations yet" style={{ marginTop: 40 }} />
+          <EmptyState message="No saved conversations yet. Chats are saved as you go." style={{ marginTop: 24 }} />
         ) : (
           <List
             loading={convLoading}
@@ -790,7 +768,9 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
                     onCancel={(e) => e?.stopPropagation()}
                     okText="Delete" okButtonProps={{ danger: true }}
                   >
-                    <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <IconAction label={`Delete conversation ${c.title || 'Untitled'}`} tip="Delete conversation" icon={<DeleteOutlined />} danger />
+                    </span>
                   </Popconfirm>,
                 ]}
               >

@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, message, Input, Drawer, Spin, Empty, Alert, Segmented, Switch } from 'antd'
+import { Table, Tag, Typography, Tooltip, message, Input, Drawer, Spin, Alert, Segmented, Switch } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { RUN_BY_FILTERS, isScheduled, runBy } from '../runBy'
 import type { ColumnType } from 'antd/es/table'
 import type { FilterValue } from 'antd/es/table/interface'
 import { bridge, type HistoryRecord, type HistoryLogLine, type HistorySyncState, type LogViewResult, type RunningRun } from '../bridge'
 import { LogStream } from '../components/LogStream'
-import { MONO_FONT, RADIUS, useAccent, withAlpha } from '../ThemeContext'
+import { MONO_FONT, RADIUS, statusText, textColor, useAccent, useIsDark, withAlpha } from '../ThemeContext'
+import { EmptyState, IconAction, OnceHint, PageToolbar, RowActions, StatusTag, type RowAction, type StatusTone } from '../components/kit'
 
 // History shows real runnable runs only, with who initiated each (operator vs the
 // assistant). Whole agent turns and individual built-in tool calls are agent
@@ -89,11 +90,13 @@ function ArgSourceBadge({ source }: { source: string | undefined }) {
   )
 }
 
-const LOG_LEVEL_COLOUR: Record<string, string> = {
-  INFO: '#4fc1ff',
-  WARNING: '#faad14',
-  ERROR: '#ff4d4f',
-  DEBUG: '#888',
+/** Text colour for a log line's level, readable in both themes. */
+export function logLevelColour(level: string, isDark: boolean): string {
+  const st = statusText(isDark)
+  return level === 'ERROR' || level === 'CRITICAL' ? st.error
+    : level === 'WARNING' ? st.warn
+    : level === 'DEBUG' ? 'var(--rs-text-faint)'
+    : 'var(--rs-text-secondary)'
 }
 
 function formatLogsAsText(record: HistoryRecord, logLines: HistoryLogLine[]): string {
@@ -143,36 +146,29 @@ function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewF
   // multi-venv remote where the group couldn't be resolved).
   const canViewFullLog = !!(onViewFullLog && record.runId && record.group)
 
+  // Rerun is the row's action; Edit & rerun and View full log sit beside it,
+  // quieter. Edit & rerun is always offered, not gated on recorded args:
+  // secrets (password-typed args) are never written to the audit record, so a
+  // runnable whose required arg is a secret has empty `args` here and plain
+  // Rerun would fail with "missing required argument". The form is the way to
+  // supply it.
+  const secondary: RowAction[] = []
+  if (onRerun) secondary.push({
+    key: 'edit', label: 'Edit & rerun', icon: <EditOutlined />, onClick: editInForm,
+    tip: "Open the run dialog pre-filled with this run's values — rich typed inputs and every available arg, including required secrets that aren't recorded",
+  })
+  if (canViewFullLog) secondary.push({
+    key: 'log', label: 'View full log', icon: <ProfileOutlined />, onClick: () => onViewFullLog!(record),
+    tip: 'Open the complete merged log for this run — every line (the inline preview may be truncated), read from the venv log on demand',
+  })
+
   return (
     <div style={{ padding: '12px 24px 12px 48px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Rerun controls */}
       {(onRerun || canViewFullLog) && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {onRerun && (
-          <Button size="small" icon={<RedoOutlined />} onClick={() => onRerun(record)}>
-            Rerun
-          </Button>
-          )}
-          {/* Always offered — not gated on recorded args. Secrets (password-typed
-              args) are never written to the audit record, so a runnable whose
-              required arg is a secret has empty `args` here; plain Rerun would
-              fail with "missing required argument". The form is the way to supply
-              it, so the edit path must stay reachable even with nothing recorded. */}
-          {onRerun && (
-          <Tooltip title="Open the run dialog pre-filled with this run's values — rich typed inputs and every available arg, including required secrets that aren't recorded">
-            <Button size="small" icon={<EditOutlined />} onClick={editInForm}>
-              Edit & rerun
-            </Button>
-          </Tooltip>
-          )}
-          {canViewFullLog && (
-            <Tooltip title="Open the complete merged log for this run — every line (the inline preview may be truncated), read from the venv log on demand">
-              <Button size="small" icon={<ProfileOutlined />} onClick={() => onViewFullLog!(record)}>
-                View full log
-              </Button>
-            </Tooltip>
-          )}
-        </div>
+        <RowActions
+          primary={onRerun ? { key: 'rerun', label: 'Rerun', icon: <RedoOutlined />, onClick: () => onRerun(record) } : undefined}
+          secondary={secondary}
+        />
       )}
 
       {/* Args — static display (edit-and-rerun opens the Forms run dialog) */}
@@ -208,25 +204,9 @@ function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewF
         }}>
           {logLines.length > 0 && (
             <div style={{ position: 'absolute', top: 5, right: 6, display: 'flex', gap: 2 }}>
-              <Tooltip title="Copy to clipboard">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={handleCopy}
-                  style={{ color: '#555', height: 22, padding: '0 5px' }}
-                />
-              </Tooltip>
+              <IconAction label="Copy log" tip="Copy the log to the clipboard" icon={<CopyOutlined />} onClick={handleCopy} />
               {onAskLlm && (
-                <Tooltip title="Ask the assistant">
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<RobotOutlined />}
-                    onClick={handleAskLlm}
-                    style={{ color: '#555', height: 22, padding: '0 5px' }}
-                  />
-                </Tooltip>
+                <IconAction label="Ask the assistant about this log" icon={<RobotOutlined />} onClick={handleAskLlm} />
               )}
             </div>
           )}
@@ -237,7 +217,7 @@ function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewF
             : logsLoading
             ? <Spin size="small" />
             : logLines.length === 0
-            ? <span style={{ color: '#555' }}>no log lines</span>
+            ? <span style={{ color: 'var(--rs-text-muted)' }}>no log lines</span>
             : logLines.map((line, i) => <LogLine key={i} line={line} />)
           }
         </div>
@@ -247,13 +227,13 @@ function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewF
 }
 
 function LogLine({ line }: { line: HistoryLogLine }) {
-  const colour = LOG_LEVEL_COLOUR[line.level] ?? '#d4d4d4'
+  const isDark = useIsDark()
   const time = new Date(line.ts).toLocaleTimeString()
   return (
     <div>
-      <span style={{ color: '#555', marginRight: 10 }}>{time}</span>
-      <span style={{ color: colour, marginRight: 10, minWidth: 56, display: 'inline-block' }}>{line.level}</span>
-      <span style={{ color: '#d4d4d4' }}>{line.message}</span>
+      <span style={{ color: 'var(--rs-text-muted)', marginRight: 10 }}>{time}</span>
+      <span style={{ color: logLevelColour(line.level, isDark), marginRight: 10, minWidth: 56, display: 'inline-block' }}>{line.level}</span>
+      <span style={{ color: textColor(isDark) }}>{line.message}</span>
     </div>
   )
 }
@@ -291,7 +271,7 @@ function RunLogDrawer({ record, onClose }: { record: HistoryRecord | null; onClo
       ) : !result?.ok ? (
         <Alert type="error" showIcon message={result?.error || 'Failed to read logs'} />
       ) : result.records.length === 0 ? (
-        <Empty description="No records" />
+        <EmptyState message="No log records for this run." />
       ) : (
         <LogStream records={result.records} />
       )}
@@ -799,16 +779,14 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       // A `runspec exec` skip (lock held / already running) has exit code 0 but
       // never ran — its own tag, and excluded from both ok and error.
       render: (c: number, record: HistoryRecord) => (
-        <span>
+        <span style={{ display: 'inline-flex', gap: 4 }}>
           {record.status === 'skipped'
-            ? <Tooltip title={`Didn't start — the previous run was still going${record.label ? ` (${record.label})` : ''}`}><Tag>skipped</Tag></Tooltip>
+            ? <StatusTag tone="neutral" tip={`Didn't start — the previous run was still going${record.label ? ` (${record.label})` : ''}`}>skipped</StatusTag>
             : record.status === 'not_started'
-              ? <Tooltip title={`The runnable never started${record.reason ? `: ${record.reason}` : ''}. Recorded by this console, since the host has no record of it.`}><Tag color="red">didn't start</Tag></Tooltip>
-              : <Tag color={c === 0 ? 'green' : 'red'}>{c === 0 ? 'ok' : `exit ${c}`}</Tag>}
+              ? <StatusTag tone="failed" tip={`The runnable never started${record.reason ? `: ${record.reason}` : ''}. Recorded by this console, since the host has no record of it.`}>didn't start</StatusTag>
+              : <StatusTag tone={c === 0 ? 'ok' : 'failed'}>{c === 0 ? 'ok' : `exit ${c}`}</StatusTag>}
           {record.pending && (
-            <Tooltip title="Another account's run, still in the venv's logs inbox — the owner's next run (or Sweep inbox under Logs → Runs index) indexes it">
-              <Tag color="gold">inbox</Tag>
-            </Tooltip>
+            <StatusTag tone="info" tip="Another account's run, still in the venv's logs inbox — the owner's next run (or Sweep inbox under Logs → Runs index) indexes it">inbox</StatusTag>
           )}
         </span>
       ),
@@ -839,7 +817,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+      <OnceHint id="history.rows">
+        Click a run to see its arguments and log, and to rerun it. In the search, <span style={{ fontFamily: MONO_FONT }}>-name</span> leaves a runnable out.
+      </OnceHint>
+      <PageToolbar>
         <Input
           prefix={<SearchOutlined />}
           placeholder="Search runnable, host, operator… (-name excludes)"
@@ -887,47 +868,68 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
             </Tag>
           </Tooltip>
         )}
-      </div>
+      </PageToolbar>
       {/* Live "Running now" strip — in-flight runs from the runs index (see
           RunningNowStrip). Shown only when something is running so it stays
           unobtrusive; pinned above the finished-runs table. */}
       {running.length > 0 && <RunningNowStrip rows={running} accent={accent} />}
-      {/* Per-host fetch strip — one chip per host with its run count and fetch
-          time (amber when slow, red on error), so a slow SSH connection or an
-          offline host is visible instead of hiding in one fleet-wide spinner.
-          Only shown when reading more than the local host. */}
-      {targets.length > 1 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>Per-host fetch:</Text>
-          {targets.map(name => {
-            const s = hostStatus[name]
-            const st = s?.status ?? 'loading'
-            const cache = st === 'done' ? syncNote(sync[name]) : null
-            const colour = st === 'error' ? '#ff4d4f'
-              : st === 'loading' ? 'var(--rs-text-faint)'
-              : cache?.stale || slowMs(s?.ms) ? '#faad14' : 'var(--rs-text-muted)'
-            const detail = st === 'loading' ? '…' : st === 'error' ? 'failed'
-              : cache?.stale ? `${s?.count ?? 0}·${cache.note}` : `${s?.count ?? 0}·${fmtMs(s?.ms)}`
-            const tip = st === 'error' ? (s?.error || 'fetch failed')
-              : st === 'loading' ? 'fetching…'
-              : cache ? `${s?.count ?? 0} run(s) — ${cache.tip}`
-              : `${s?.count ?? 0} run(s) in ${fmtMs(s?.ms)}${slowMs(s?.ms) ? ' — slow' : ''}`
-            return (
-              <Tooltip key={name} title={tip}>
-                <span style={{ fontSize: 12, fontFamily: MONO_FONT, color: colour, border: '1px solid var(--rs-border)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap' }}>
-                  {name} <span style={{ opacity: 0.7 }}>{detail}</span>
-                </span>
-              </Tooltip>
-            )
-          })}
-        </div>
-      )}
+      {/* Hosts read: one quiet line when every host answered, and a chip only
+          for a host that is still loading, slow, failed or showing a stale
+          cache, so an offline host is visible without a debug strip on every
+          visit. Only shown when reading more than the local host. */}
+      {targets.length > 1 && (() => {
+        const chips = targets.map(name => {
+          const s = hostStatus[name]
+          const st = s?.status ?? 'loading'
+          const cache = st === 'done' ? syncNote(sync[name]) : null
+          const tone: StatusTone = st === 'error' ? 'failed'
+            : st === 'loading' ? 'neutral'
+            : cache?.stale || slowMs(s?.ms) ? 'attention' : 'ok'
+          const detail = st === 'loading' ? 'loading…' : st === 'error' ? 'failed'
+            : cache?.stale ? cache.note : `slow · ${fmtMs(s?.ms)}`
+          const tip = st === 'error' ? (s?.error || 'fetch failed')
+            : st === 'loading' ? 'fetching…'
+            : cache ? `${s?.count ?? 0} run(s) — ${cache.tip}`
+            : `${s?.count ?? 0} run(s) in ${fmtMs(s?.ms)}${slowMs(s?.ms) ? ' — slow' : ''}`
+          return { name, tone, detail, tip, count: s?.count ?? 0 }
+        })
+        const issues = chips.filter(c => c.tone !== 'ok')
+        const allTip = chips.map(c => `${c.name}: ${c.tip}`).join('\n')
+        return (
+          <div data-testid="history-hosts" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
+            <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{allTip}</span>}>
+              <Text type="secondary" style={{ fontSize: 12, cursor: 'default' }}>
+                {targets.length} hosts{issues.length === 0 ? ' · all loaded' : ''}
+              </Text>
+            </Tooltip>
+            {issues.map(c => (
+              <StatusTag key={c.name} tone={c.tone} tip={c.tip} mono>
+                {c.name} · {c.detail}
+              </StatusTag>
+            ))}
+          </div>
+        )
+      })()}
       <Table
         dataSource={filtered}
         columns={columns}
         rowKey={rowKeyOf}
         size="small"
         loading={loading && records.length === 0}
+        // Narrow windows scroll sideways instead of squeezing columns to one
+        // character each.
+        scroll={{ x: 'max-content' }}
+        locale={{
+          emptyText: loading ? ' ' : (
+            <EmptyState
+              message={search ? 'No runs match the search.'
+                : sinceDays ? `No runs in the last ${sinceDays} days.` : 'No runs recorded yet.'}
+              action={search ? { label: 'Clear search', onClick: () => onSearchChange('') }
+                : sinceDays && sinceDays < 90 ? { label: `Show ${sinceDays === 7 ? 30 : 90} days`, onClick: () => setSinceDays(sinceDays === 7 ? 30 : 90) }
+                : undefined}
+            />
+          ),
+        }}
         pagination={{ pageSize: 50, showSizeChanger: true }}
         onChange={(_, filters) => setColFilters(filters)}
         expandable={{
@@ -982,11 +984,8 @@ export function integrityBadge(r: Pick<HistoryRecord, 'integrity' | 'integrityFi
 function IntegrityTag({ record }: { record: HistoryRecord }) {
   const badge = integrityBadge(record)
   if (!badge) return null
-  return (
-    <Tooltip title={badge.tip}>
-      <Tag color={badge.color} style={{ marginInlineEnd: 0, flex: '0 0 auto' }}>{badge.text}</Tag>
-    </Tooltip>
-  )
+  const tone: StatusTone = badge.color === 'error' ? 'attention' : 'neutral'
+  return <StatusTag tone={tone} tip={badge.tip} style={{ flex: '0 0 auto' }}>{badge.text}</StatusTag>
 }
 
 export function accountNote(r: Pick<HistoryRecord, 'account' | 'operator' | 'runAs'>): string {

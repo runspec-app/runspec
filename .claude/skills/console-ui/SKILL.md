@@ -71,6 +71,17 @@ so a rename is a two-sided change.
 you'll see in `src/views/RotaView.test.tsx` — copy it. `src/test/setup.ts`
 already polyfills `matchMedia`/`ResizeObserver` for antd; don't re-stub them.
 
+**Shared kit (`src/components/kit.tsx`) — use it before reaching for raw
+antd.** A status is a `StatusTag` (`ok`/`running`/`waiting`/`attention`/
+`failed`/`info`/`neutral`), never a coloured `<Tag>` or a hex literal. An
+icon-only button is an `IconAction` with a `label` (it becomes the tooltip and
+the aria-label). A row or card's actions go through `RowActions`: one `primary`,
+quiet `secondary`, and destructive or rare ones in `more` (with `confirm`). A
+tab's search/filters + actions row is a `PageToolbar`; a tab title is a
+`PageHeader`; guidance that only the first visit needs is a `OnceHint`, not a
+permanent paragraph; an empty list is an `EmptyState` (one line + at most one
+action), not antd's `<Empty>` illustration.
+
 **Layout.** Views live in `src/views/`, reusable pieces in `src/components/`,
 shared run-dialog bits in `src/components/runShared.tsx`. A new top-level tab is
 wired in `App.tsx` (nav + routing) and reads its data through `bridge`. Keep the
