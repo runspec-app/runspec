@@ -10,7 +10,7 @@
 // editing them happens in the repo.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Empty, Input, Popconfirm, Space, Spin, Tag, Tooltip, Typography, message } from 'antd'
+import { Alert, Button, Empty, Input, Popconfirm, Space, Spin, Tag, Tooltip, Typography, message, theme } from 'antd'
 import { ApartmentOutlined, EditOutlined, ExportOutlined, HistoryOutlined, MessageOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons'
 
 import { bridge, type KnowledgeFact, type Runnable, type WikiCheck, type WikiDraft, type WikiPage, type WikiPages } from '../bridge'
@@ -101,6 +101,7 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus, onRun
 }) {
   const isDark = useIsDark()
   const accent = useAccent()
+  const { token } = theme.useToken()
   const sf = surfaces(isDark)
   const [wiki, setWiki] = useState<WikiPages | null>(null)
   const [query, setQuery] = useState('')
@@ -249,14 +250,21 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus, onRun
             <div key={venv}>
               <div style={groupStyle(isDark)}><span>{venv}</span><span style={{ fontFamily: MONO_FONT, fontWeight: 500, letterSpacing: 0 }}>{list.length}</span></div>
               {list.map(t => (
-                <button key={t.name} type="button" aria-current={selected === t.name ? 'true' : undefined}
-                  data-testid={`tool-${t.name}`} style={rowStyle(selected === t.name)} onClick={() => setSelected(t.name)}>
-                  <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{t.name}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}>
-                    {drafts.some(d => d.path === `runnables/${t.name}.md`) && <Tooltip title="Edited on this console"><EditOutlined aria-label="edited" style={{ color: accent }} /></Tooltip>}
-                    {t.page && <span aria-label="has a team page" title="Has a team page" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 4, background: '#52c41a' }} />}
-                  </span>
-                </button>
+                (() => {
+                  const edited = drafts.some(d => d.path === `runnables/${t.name}.md`)
+                  // One name for the row, so a screen reader hears "backup, has a team page, edited on this console".
+                  const label = [t.name, t.page ? 'has a team page' : 'no page yet', ...(edited ? ['edited on this console'] : [])].join(', ')
+                  return (
+                    <button key={t.name} type="button" aria-current={selected === t.name ? 'true' : undefined} aria-label={label}
+                      data-testid={`tool-${t.name}`} style={rowStyle(selected === t.name)} onClick={() => setSelected(t.name)}>
+                      <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{t.name}</span>
+                      <span aria-hidden="true" style={{ marginLeft: 'auto', fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}>
+                        {edited && <Tooltip title="Edited on this console"><EditOutlined style={{ color: accent }} /></Tooltip>}
+                        {t.page && <Tooltip title="Has a team page"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: token.colorSuccess }} /></Tooltip>}
+                      </span>
+                    </button>
+                  )
+                })()
               ))}
             </div>
           ))}

@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.414.0] — 2026-11-13
+
+### Added
+
+- **Preview in the page editor.** Knowledge → Tools → Edit page (or Start a
+  page) has Write / Preview; Preview renders the page as it will read, without
+  its frontmatter.
+
+### Fixed
+
+- The "has a team page" marker in the tools index uses the theme's success
+  colour instead of a hard-coded green, and is 8px.
+- Screen readers hear one name per tools-index row ("backup, has a team page,
+  edited on this console") instead of "backup edited".
+
 ## [0.413.0] — 2026-11-13
 
 ### Added

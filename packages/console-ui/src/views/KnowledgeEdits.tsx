@@ -6,11 +6,12 @@
 //                 dialog that pushes them to contrib/<lane> and links the MR
 
 import { useEffect, useState } from 'react'
-import { Alert, Button, Input, Modal, Space, Typography, message } from 'antd'
+import { Alert, Button, Input, Modal, Segmented, Space, Typography, message } from 'antd'
 import { useAccent } from '../ThemeContext'
 import { BranchesOutlined, EditOutlined, ExportOutlined } from '@ant-design/icons'
 
 import { bridge, type WikiDraft } from '../bridge'
+import { Markdown } from '../components/Markdown'
 import { MONO_FONT, RADIUS, surfaces, textColor, textMuted, textSecondary, useIsDark } from '../ThemeContext'
 
 const { Text } = Typography
@@ -61,6 +62,12 @@ export function DiffView({ diff, maxHeight = 260 }: { diff: string; maxHeight?: 
   )
 }
 
+/** A page's Markdown without its OKF frontmatter, for the editor's preview. */
+export function pageBody(text: string): string {
+  const m = text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/)
+  return m ? text.slice(m[0].length).replace(/^\s+/, '') : text
+}
+
 export function PageEditor({ path, entity, description = '', onClose, onSaved }: {
   path: string
   entity: string
@@ -74,6 +81,8 @@ export function PageEditor({ path, entity, description = '', onClose, onSaved }:
   const [isNew, setIsNew] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [mode, setMode] = useState<'write' | 'preview'>('write')
+  const isDark = useIsDark()
   useEffect(() => {
     let live = true
     bridge.knowledge_draft_text(path, entity, description).then(r => {
@@ -107,11 +116,21 @@ export function PageEditor({ path, entity, description = '', onClose, onSaved }:
   return (
     <Modal open title={<span>{isNew ? 'New page ' : 'Edit '}<span style={{ fontFamily: MONO_FONT }}>{path}</span></span>}
       width={760} okText="Save edit" onOk={save} confirmLoading={saving} onCancel={close} okButtonProps={{ disabled: text === null }}>
-      <Text style={{ display: 'block', marginBottom: 8, color: textSecondary(useIsDark()) }}>
-        Your edit stays on this console until you propose it. Write what holds on any teammate&rsquo;s console: no host names, home directories or accounts.
-      </Text>
-      <Input.TextArea aria-label="Page Markdown" value={text ?? ''} onChange={e => setText(e.target.value)} autoSize={{ minRows: 14, maxRows: 26 }}
-        style={{ fontFamily: MONO_FONT, fontSize: 13 }} disabled={text === null} />
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+        <Text style={{ flex: 1, color: textSecondary(isDark) }}>
+          Your edit stays on this console until you propose it. Write what holds on any teammate&rsquo;s console: no host names, home directories or accounts.
+        </Text>
+        <Segmented size="small" value={mode} onChange={v => setMode(v as 'write' | 'preview')}
+          options={[{ label: 'Write', value: 'write' }, { label: 'Preview', value: 'preview' }]} />
+      </div>
+      {mode === 'write' ? (
+        <Input.TextArea aria-label="Page Markdown" value={text ?? ''} onChange={e => setText(e.target.value)} autoSize={{ minRows: 14, maxRows: 26 }}
+          style={{ fontFamily: MONO_FONT, fontSize: 13 }} disabled={text === null} />
+      ) : (
+        <div data-testid="page-preview" style={{ minHeight: 300, maxHeight: 560, overflowY: 'auto', padding: '8px 12px', borderRadius: RADIUS.md, border: `1px solid ${surfaces(isDark).border}`, background: surfaces(isDark).sunken }}>
+          <Markdown color={textColor(isDark)}>{pageBody(text ?? '')}</Markdown>
+        </div>
+      )}
       {error && <Alert type="error" showIcon message={error} style={{ marginTop: 8 }} />}
     </Modal>
   )
