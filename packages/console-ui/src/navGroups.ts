@@ -10,13 +10,51 @@
  */
 
 export const NAV_GROUPS: readonly (readonly string[])[] = [
-  ['console', 'forms', 'history', 'logs', 'files'],
-  ['schedules', 'triggers'],
+  ['console', 'forms', 'history', 'files'],
+  ['automation'],
   ['knowledge', 'marketplace'],
 ]
 
 /** Tabs that live in the More menu. */
-export const NAV_OVERFLOW: readonly string[] = ['analytics', 'rota', 'specs', 'improve', 'evals', 'dev']
+export const NAV_OVERFLOW: readonly string[] = ['quality', 'dev']
+
+/**
+ * Tabs that hold several views behind a section switch. Each view keeps its
+ * own key (so code that opens "triggers" still works); the tab bar shows the
+ * parent, and the parent opens the section used last.
+ */
+export const NAV_SECTIONS: Readonly<Record<string, readonly { key: string; label: string }[]>> = {
+  forms: [{ key: 'forms', label: 'Run' }, { key: 'specs', label: 'Specs' }],
+  history: [{ key: 'history', label: 'Runs' }, { key: 'analytics', label: 'Charts' }, { key: 'logs', label: 'Log files' }],
+  automation: [{ key: 'schedules', label: 'Schedules' }, { key: 'triggers', label: 'Triggers' }, { key: 'rota', label: 'Working hours' }],
+  quality: [{ key: 'improve', label: 'Improve' }, { key: 'evals', label: 'Evals' }],
+}
+
+/** The tab a view belongs to: its parent, or itself when it has none. */
+export function parentOf(view: string): string {
+  for (const [parent, sections] of Object.entries(NAV_SECTIONS)) {
+    if (sections.some(s => s.key === view)) return parent
+  }
+  return view
+}
+
+/** The tabs to show for the visible views, in order of first appearance: a
+ *  parent stands for its visible sections; a view with no parent stands for
+ *  itself. A parent whose sections are all hidden (AI off) is dropped. */
+export function groupViews(visible: readonly string[]): { key: string; sections: { key: string; label: string }[] }[] {
+  const seen = new Map<string, { key: string; sections: { key: string; label: string }[] }>()
+  for (const v of visible) {
+    const p = parentOf(v)
+    if (!seen.has(p)) seen.set(p, { key: p, sections: [] })
+    const sec = NAV_SECTIONS[p]?.find(s => s.key === v)
+    if (sec) seen.get(p)!.sections.push(sec)
+  }
+  for (const g of seen.values()) {
+    const order = NAV_SECTIONS[g.key]
+    if (order) g.sections.sort((a, b) => order.findIndex(s => s.key === a.key) - order.findIndex(s => s.key === b.key))
+  }
+  return [...seen.values()]
+}
 
 export interface NavLayout<T> {
   /** Non-empty groups, in NAV_GROUPS order. */

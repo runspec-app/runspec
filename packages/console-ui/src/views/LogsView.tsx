@@ -507,7 +507,7 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
   return (
     <div>
       <PageHeader
-        title={<>Logs <span style={{ fontFamily: MONO_FONT, fontWeight: 500, color: 'var(--rs-text-muted)' }}>{host}</span></>}
+        title={<>Log files <span style={{ fontFamily: MONO_FONT, fontWeight: 500, color: 'var(--rs-text-muted)' }}>{host}</span></>}
         description="Each run's own log file, per venv: read them, compress old ones, delete the oldest."
         actions={<>
           <Tooltip title="Run analytics for this host — charts, success rate, durations and top runnables, scanned over the connection this tab just warmed">

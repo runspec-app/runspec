@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Modal, Tooltip } from 'antd'
 
-import { antTone, EmptyState, IconAction, pressable, withLabel, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
+import { antTone, EmptyState, IconAction, pressable, SectionSwitch, withLabel, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
 import { contrastRatio, readableAccent, surfaces, DEFAULT_ACCENT, ThemeContext } from '../ThemeContext'
 import { CopyOutlined, DeleteOutlined } from '@ant-design/icons'
 
@@ -187,5 +187,19 @@ describe('withLabel', () => {
     render(<>{withLabel(<Ctl />, 'Enable sounds')}{withLabel(<input data-testid="b" aria-label="Own" />, 'Row')}</>)
     expect(screen.getByTestId('a').getAttribute('aria-label')).toBe('Enable sounds')
     expect(screen.getByTestId('b').getAttribute('aria-label')).toBe('Own')
+  })
+})
+
+describe('SectionSwitch', () => {
+  it('shows the sections, a count where something waits, and switches', () => {
+    const go = vi.fn()
+    render(<SectionSwitch label="Automation" value="schedules" onChange={go} sections={[
+      { key: 'schedules', label: 'Schedules' },
+      { key: 'triggers', label: 'Triggers', count: 2, countTone: 'waiting' },
+      { key: 'rota', label: 'Working hours' },
+    ]} />)
+    expect(screen.getByText('2').getAttribute('data-tone')).toBe('waiting')
+    fireEvent.click(screen.getByText('Working hours'))
+    expect(go).toHaveBeenCalledWith('rota')
   })
 })

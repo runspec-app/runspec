@@ -10,7 +10,7 @@
 
 import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, SyntheticEvent } from 'react'
 import { cloneElement, isValidElement, useState } from 'react'
-import { Button, Dropdown, Modal, Tooltip, Typography } from 'antd'
+import { Button, Dropdown, Modal, Segmented, Tooltip, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 import { CloseOutlined, EllipsisOutlined, InfoCircleOutlined } from '@ant-design/icons'
 
@@ -258,6 +258,37 @@ export function PageHeader({ title, description, actions, style }: {
         {description && <div style={{ marginTop: 2, fontSize: 13, color: textSecondary(isDark) }}>{description}</div>}
       </div>
       {actions && <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>{actions}</div>}
+    </div>
+  )
+}
+
+// ── SectionSwitch ────────────────────────────────────────────────────────────
+
+/** The sections of a tab that holds several views (Automation: Schedules /
+ *  Triggers / Working hours). A count shows beside a section that has
+ *  something running or waiting, so it's visible from the others. */
+export function SectionSwitch({ label, sections, value, onChange }: {
+  label: string
+  sections: { key: string; label: string; count?: number; countTone?: StatusTone }[]
+  value: string
+  onChange: (key: string) => void
+}) {
+  return (
+    <div data-testid="section-switch" style={{ marginBottom: 16, flexShrink: 0 }}>
+      <Segmented
+        aria-label={`${label} sections`}
+        value={value}
+        onChange={v => onChange(String(v))}
+        options={sections.map(s => ({
+          value: s.key,
+          label: (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {s.label}
+              {s.count ? <StatusTag tone={s.countTone ?? 'info'} style={{ lineHeight: '16px', padding: '0 5px' }}>{s.count}</StatusTag> : null}
+            </span>
+          ),
+        }))}
+      />
     </div>
   )
 }
