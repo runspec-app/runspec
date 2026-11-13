@@ -11,8 +11,9 @@ import {
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
   ApiOutlined, DownOutlined, RightOutlined, VerticalAlignBottomOutlined,
   TableOutlined, CodeOutlined, PauseCircleOutlined, StopOutlined, EllipsisOutlined, BulbOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons'
-import { pressable } from './kit'
+import { pressable, StatusTag, type StatusTone } from './kit'
 
 const { Text } = Typography
 
@@ -1073,6 +1074,17 @@ export function approvalAnnouncement(pending: PendingConfirm[]): string {
   return `Approval needed: ${name}${host ? ` on ${host}` : ''}${more}`
 }
 
+/** How a finished card reads. A turn that ended because you denied a call
+ *  says "declined", in neutral, not a red "error": declining was a correct,
+ *  careful choice. Pure, for tests. */
+export function blockOutcome(block: Pick<InvocationBlock, 'stopped' | 'exitCode' | 'segments'>): { text: string; tone: StatusTone; tip?: string } {
+  if (block.stopped) return { text: 'stopped', tone: 'neutral', tip: 'You stopped this' }
+  if (block.exitCode === 0) return { text: 'ok', tone: 'ok' }
+  const declined = (block.segments ?? []).some(s => s.kind === 'tool' && s.entry.operatorDecision === 'denied')
+  if (declined) return { text: 'declined', tone: 'neutral', tip: 'You denied a call, so it did not run' }
+  return { text: 'error', tone: 'failed' }
+}
+
 export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: OutputPanelProps) {
   const c = useCardTheme()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -1414,7 +1426,7 @@ function ToolCallBlock({
           }>
             <Text style={{
               fontSize: 11, flexShrink: 0, fontWeight: 600, textTransform: 'uppercase',
-              color: entry.operatorDecision === 'denied' ? '#ff4d4f' : entry.operatorDecision === 'edited' ? '#faad14' : '#52c41a',
+              color: entry.operatorDecision === 'denied' ? 'var(--rs-text-muted)' : entry.operatorDecision === 'edited' ? 'var(--rs-warn)' : 'var(--rs-ok)',
             }}>
               {entry.operatorDecision}
             </Text>
@@ -1491,9 +1503,9 @@ function ToolCallBlock({
             The assistant wants to {v}{' '}
             {resolved ? <Text code style={{ fontSize: 12 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text> : 'this'}
             {targetHost && <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{targetHost}</Text></>}
-            . It waits for your go-ahead
-            <Tooltip title={`This tool's autonomy level is “${awaiting}”: it never runs without your approval.`}>
-              <span style={{ color: textMuted(c.isDark), borderBottom: `1px dotted ${textMuted(c.isDark)}`, marginLeft: 6, cursor: 'help' }}>({awaiting})</span>
+            . It waits for your go-ahead.
+            <Tooltip title={`This tool is set to ask first (autonomy “${awaiting}”), so it never runs without your approval.`}>
+              <InfoCircleOutlined aria-label={`Why: this tool is set to ask first (autonomy ${awaiting})`} style={{ color: textMuted(c.isDark), marginLeft: 6, cursor: 'help' }} />
             </Tooltip>
           </div>
           {runsAs && (
@@ -2257,15 +2269,14 @@ const BlockCard = memo(function BlockCard({
             </Button>
           </Tooltip>
         )}
-        {block.done && block.durationMs !== undefined && (
-          <Tag
-            bordered={false}
-            style={{ marginLeft: 4, fontSize: 12 }}
-            color={block.stopped ? 'default' : block.exitCode === 0 ? 'green' : 'red'}
-          >
-            {block.stopped ? 'stopped' : block.exitCode === 0 ? 'ok' : 'error'} · {(block.durationMs / 1000).toFixed(2)}s
-          </Tag>
-        )}
+        {block.done && block.durationMs !== undefined && (() => {
+          const o = blockOutcome(block)
+          return (
+            <StatusTag tone={o.tone} tip={o.tip} style={{ marginLeft: 4 }} testId="card-outcome">
+              {o.text} · {(block.durationMs / 1000).toFixed(2)}s
+            </StatusTag>
+          )
+        })()}
         {block.tokenUsage && (() => {
           const { input, output, cacheRead, cacheCreation } = block.tokenUsage!
           const promptTotal = input + cacheRead + cacheCreation

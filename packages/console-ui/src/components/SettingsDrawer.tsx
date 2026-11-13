@@ -19,7 +19,7 @@ import {
   runnableSelectOptions, TargetFormItems, runnablesForTarget, splitFixedAndOpen,
   type Target,
 } from '../views/RunnableAction'
-import { MONO_FONT, RADIUS, textSecondary, useAccent, useIsDark, withAlpha } from '../ThemeContext'
+import { MONO_FONT, RADIUS, textMuted, textSecondary, useAccent, useIsDark, withAlpha } from '../ThemeContext'
 import { ModelSelect } from './ModelSelect'
 import {
   copilotModelIds, groupProviderOptions, providerKeys, switchProvider,
@@ -6838,6 +6838,30 @@ export function VoiceTab() {
 /** The Settings tab strip: every tab along the top, wrapping onto a second row
  *  rather than hiding tabs behind antd's overflow "…" menu. It sits above the
  *  scrolling content, so it stays on screen however far down a tab goes. */
+// The Settings sections, grouped so 17 tabs read as five short lists. A tab
+// whose key no group names lands in the last group, so nothing is ever lost.
+export const SETTINGS_GROUPS: { label: string; keys: string[] }[] = [
+  { label: 'Connections', keys: ['ssh', 'jumpHosts', 'localVenvs', 'network', 'repos'] },
+  { label: 'Access & sync', keys: ['credentials', 'configSync', 'memorySync'] },
+  { label: 'Assistant', keys: ['llm', 'agentTools', 'mcp', 'mcpServer', 'chatHistory', 'voice', 'selfService'] },
+  { label: 'Alerts & mail', keys: ['sounds', 'mailbox'] },
+  { label: 'Diagnostics', keys: ['telemetry'] },
+]
+
+/** The visible tabs bucketed into SETTINGS_GROUPS order, empty groups dropped.
+ *  Pure, for tests. */
+export function groupSettingsTabs<T extends { key: string }>(items: T[]): { label: string; items: T[] }[] {
+  const named = new Set(SETTINGS_GROUPS.flatMap(g => g.keys))
+  const groups = SETTINGS_GROUPS.map((g, i) => ({
+    label: g.label,
+    items: [
+      ...g.keys.flatMap(k => items.filter(it => it.key === k)),
+      ...(i === SETTINGS_GROUPS.length - 1 ? items.filter(it => !named.has(it.key)) : []),
+    ],
+  }))
+  return groups.filter(g => g.items.length > 0)
+}
+
 export function SettingsTabBar({ items, activeKey, onSelect }: {
   items: { key: string; label: ReactNode }[]
   activeKey: string
@@ -6846,29 +6870,34 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
   const isDark = useIsDark()
   const accent = useAccent()
   return (
-    <div role="tablist" aria-label="Settings sections" className="rs-settings-tabbar">
-      {items.map(item => {
-        const active = item.key === activeKey
-        return (
-          <button
-            key={item.key}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            className="rs-nav-tab"
-            onClick={() => onSelect(item.key)}
-            style={{
-              padding: '6px 8px', fontSize: 13, whiteSpace: 'nowrap',
-              fontWeight: active ? 600 : 500,
-              color: active ? accent : textSecondary(isDark),
-              borderBottom: `2px solid ${active ? accent : 'transparent'}`,
-              borderRadius: `${RADIUS.sm}px ${RADIUS.sm}px 0 0`,
-            }}
-          >
-            {item.label}
-          </button>
-        )
-      })}
+    <div role="tablist" aria-label="Settings sections" aria-orientation="vertical" className="rs-settings-tabbar">
+      {groupSettingsTabs(items).map(group => (
+        <div key={group.label} className="rs-settings-group">
+          <div aria-hidden className="rs-settings-group-label" style={{ color: textMuted(isDark) }}>{group.label}</div>
+          {group.items.map(item => {
+            const active = item.key === activeKey
+            return (
+              <button
+                key={item.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className="rs-nav-tab rs-settings-tab"
+                onClick={() => onSelect(item.key)}
+                style={{
+                  fontWeight: active ? 600 : 500,
+                  color: active ? accent : textSecondary(isDark),
+                  background: active ? withAlpha(accent, isDark ? 0.12 : 0.08) : undefined,
+                  borderLeft: `2px solid ${active ? accent : 'transparent'}`,
+                  borderRadius: `0 ${RADIUS.sm}px ${RADIUS.sm}px 0`,
+                }}
+              >
+                {item.label}
+              </button>
+            )
+          })}
+        </div>
+      ))}
     </div>
   )
 }
@@ -6893,7 +6922,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
   const items = visibleSettingsTabs([
     { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} activeProfile={activeProfile} /> },
     { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
-    { key: 'jumpHosts', label: 'Jump Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
+    { key: 'jumpHosts', label: 'Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
     { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
     { key: 'network',   label: 'Network',    children: <NetworkTab /> },
     { key: 'agentTools', label: 'Tool visibility', children: <AgentToolsTab /> },
@@ -6924,6 +6953,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
     >
       <Tabs
         size="small"
+        tabPosition="left"
         className="rs-settings-tabs"
         activeKey={activeTab}
         onChange={setActiveTab}

@@ -23,11 +23,11 @@ Two reasons to want this:
 | Keeps working | Goes away |
 |---|---|
 | **Console** tab as the run-output pane (command bar `/` runnables and `>` saved runs, Forms runs, History reruns) | Chat: plain text in the command bar, conversation History, "Ask the assistant", include-in-context toggles, the context gauge |
-| **Forms**, **History**, **Logs**, **Analytics**, **Specs**, **Dev** | **Improve**, **Evals**, **Triggers** and **Rota** tabs |
+| **Forms**, **History**, **Logs**, **Analytics**, **Specs**, **Dev** | **Improve**, **Evals**, **Triggers** and **Working hours** tabs |
 | **Schedules** — `runnable`, `saved_run`, `saved_transfer` actions | `prompt`, `runbook` and `eval` schedules (refused as invalid); the `event` action is hidden (its only consumer is a Triggers rule) |
 | A seeded **rule trigger still runs** in the backend (fixed run, claim gate, replies) — it just has no tab | The **Triggers** editor; agent-mode triggers and a rule's LLM `pre_turn` (refused as invalid); the **Rota** gate goes inert, so it never suppresses a runnable schedule |
 | **Rooms** — join, read, reply; portal requests for runnables are enacted | Runbooks in the room catalog; agent replies / claim cards from agent-mode chat triggers |
-| Settings: SSH, Jump Hosts, Local venvs, Agent tools, Saved runs, Self-Service, Filters, Repos, Credentials, Denylist, **MCP Server**, Config Sync, Teams, Sounds, Telemetry (metrics only) | Settings: Model / API, Runbooks, MCP (client), Chat History, **Voice**, **Mailbox** |
+| Settings: SSH, Hosts, Local venvs, Agent tools, Saved runs, Self-Service, Filters, Repos, Credentials, Denylist, **MCP Server**, Config Sync, Teams, Sounds, Telemetry (metrics only) | Settings: Model / API, Runbooks, MCP (client), Chat History, **Voice**, **Mailbox** |
 | | **Dictation** — the composer's mic button and Ctrl+M (there is no assistant to dictate to; `start_dictation` is refused) |
 | **The console as an MCP server** — an *external* coding agent (Claude Code) still reaches the fleet through the console's confirm gate | Tracing, external MCP servers and the code sandbox are not started (they only serve the agent) |
 

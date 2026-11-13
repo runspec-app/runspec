@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import { SettingsDrawer } from './SettingsDrawer'
+import { SettingsDrawer, groupSettingsTabs } from './SettingsDrawer'
 
 vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
@@ -28,7 +28,7 @@ describe('Settings modal', () => {
     expect(document.querySelector('.rs-settings-modal')).toBeTruthy()
     const strip = screen.getByRole('tablist', { name: 'Settings sections' })
     const labels = screen.getAllByRole('tab').map(t => t.textContent)
-    expect(labels).toEqual(expect.arrayContaining(['SSH', 'Jump Hosts', 'Telemetry', 'Voice']))
+    expect(labels).toEqual(expect.arrayContaining(['SSH', 'Hosts', 'Telemetry', 'Voice']))
     // No antd overflow ("more") dropdown: the strip wraps instead.
     expect(document.querySelector('.ant-tabs-nav-operations')).toBeNull()
     // The strip is not inside the scrolling content holder.
@@ -37,10 +37,20 @@ describe('Settings modal', () => {
 
   it('switches tab when a strip button is clicked', async () => {
     render(<SettingsDrawer open onClose={() => {}} />)
-    fireEvent.click(await screen.findByRole('tab', { name: 'Jump Hosts' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'Hosts' }))
     await waitFor(() => {
       const sel = screen.getAllByRole('tab').find(t => t.getAttribute('aria-selected') === 'true')
-      expect(sel?.textContent).toBe('Jump Hosts')
+      expect(sel?.textContent).toBe('Hosts')
     })
+  })
+})
+
+describe('groupSettingsTabs', () => {
+  it('buckets tabs into the five groups in order, dropping empty groups and keeping unknown tabs', () => {
+    const t = (...keys: string[]) => keys.map(key => ({ key }))
+    const groups = groupSettingsTabs(t('telemetry', 'ssh', 'credentials', 'jumpHosts', 'brandnew'))
+    expect(groups.map(g => g.label)).toEqual(['Connections', 'Access & sync', 'Diagnostics'])
+    expect(groups[0].items.map(i => i.key)).toEqual(['ssh', 'jumpHosts'])
+    expect(groups[2].items.map(i => i.key)).toEqual(['telemetry', 'brandnew'])
   })
 })

@@ -9,6 +9,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.422.0] — 2026-11-13
+
+### Changed
+
+- **Settings is grouped.** The 17 tabs in one row became a left rail of five
+  labelled groups: Connections (SSH, Hosts, Local venvs, Network, Repos),
+  Access & sync (Credentials, Config Sync, Memory Sync), Assistant (Model / API,
+  Tool visibility, MCP, MCP Server, Chat History, Voice), Alerts & mail
+  (Notifications, Mailbox) and Diagnostics (Telemetry). **Jump Hosts** is now
+  called **Hosts**: it holds every host, not only jump hosts.
+- **Analytics is a tab.** It was a drawer inside Logs; it now opens from
+  **More → Analytics**, from an **Analytics** button on History, and from the
+  same button on Logs.
+- **Rota is called Working hours**, matching the page it opens.
+- **Uninstall starts with nothing ticked.** It used to tick every venv that
+  had the package, one click from removing it fleet-wide; Install / Update keep
+  their defaults.
+- **A declined call isn't an error.** A turn that ended because you denied a
+  call shows a neutral **declined** (with "You denied a call, so it did not
+  run") instead of a red **error**, and the "denied" badge on the call is grey,
+  not red.
+- **Plainer words.** The approval card says "It waits for your go-ahead." with
+  the autonomy level behind an info icon instead of "(confirm)"; Forms cards
+  say "2 required", not "2 req"; the Triggers intro says what a trigger does
+  instead of naming `source:event` and `runspec_triggers.toml`; the command
+  bar reads "Ask the assistant, or type / to run a runnable ($ runbook,
+  > saved run)".
+
 ## [0.421.0] — 2026-11-13
 
 ### Fixed

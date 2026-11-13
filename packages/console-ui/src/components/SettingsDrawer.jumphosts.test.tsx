@@ -78,7 +78,7 @@ describe('Jump Hosts tab', { timeout: 20_000 }, () => {
   async function openTab() {
     render(<SettingsDrawer open onClose={() => {}} />)
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('tab', { name: 'Jump Hosts' }))
+    await user.click(await screen.findByRole('tab', { name: 'Hosts' }))
     await screen.findByText('5 hosts · 3 groups')
     return user
   }

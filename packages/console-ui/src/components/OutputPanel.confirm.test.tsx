@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { OutputPanel, approvalAnnouncement, type PendingConfirm } from './OutputPanel'
+import { OutputPanel, approvalAnnouncement, blockOutcome, type PendingConfirm } from './OutputPanel'
 import type { InvocationBlock } from './OutputPanel'
 
 // The real `bridge` is a Proxy that lazily waits for window.pywebview (2.5s
@@ -91,6 +91,14 @@ describe('OutputPanel autonomy-gate confirm', () => {
     const live = screen.getByTestId('approval-announce')
     expect(live.getAttribute('aria-live')).toBe('polite')
     expect(live.textContent).toBe('Approval needed: drain-node on web-01')
+  })
+
+  it('a turn ended by a denied call reads "declined" in neutral, not a red error', () => {
+    const denied = { kind: 'tool' as const, entry: { name: 'flush-dns', input: {}, operatorDecision: 'denied' as const } }
+    expect(blockOutcome({ exitCode: 1, segments: [denied as never] })).toMatchObject({ text: 'declined', tone: 'neutral' })
+    expect(blockOutcome({ exitCode: 1, segments: [] })).toMatchObject({ text: 'error', tone: 'failed' })
+    expect(blockOutcome({ exitCode: 0, segments: [denied as never] })).toMatchObject({ text: 'ok', tone: 'ok' })
+    expect(blockOutcome({ stopped: true, exitCode: 1, segments: [] })).toMatchObject({ text: 'stopped', tone: 'neutral' })
   })
 
   it('approvalAnnouncement names the newest call and counts the rest', () => {

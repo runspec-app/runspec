@@ -11,7 +11,7 @@ what `runspec local --format json` would; that CLI is the per-venv fallback
 when the scan can't be trusted (a Windows remote, no `runspec.toml` found, or
 an editable install).
 
-Add hosts either in **Settings → Jump Hosts** or by asking the agent — its
+Add hosts either in **Settings → Hosts** or by asking the agent — its
 `manage_hosts` tool edits the same config behind a confirmation card. Once a
 host is connected, everything on it — running, file transfer, log analysis,
 denylist control — is agent-drivable too.
@@ -45,7 +45,7 @@ identityFile  = "C:/Users/me/.ssh/app-01_ed25519" # optional per-host key
   own key, or your `~/.ssh/config`). The console honours `ProxyCommand` from
   `~/.ssh/config` when `[ssh] use_ssh_config = true`.
 
-On a large fleet the **Jump Hosts** tab opens on a **group overview** — one
+On a large fleet the **Hosts** tab opens on a **group overview** — one
 row per group with its host count, how many are connected right now, and the
 profiles its hosts belong to. Click a group to drill into its hosts (reorder,
 test, copy key, edit, delete); the search box (name / hostname / user / group)
@@ -68,7 +68,7 @@ connectivity and inventories its runnables. Ask the agent:
 ### Provision a venv from the console
 
 A host with no runspec venv yet (or one that needs another venv) can get one
-straight from **Settings → Jump Hosts**: **Provision venv…** in the toolbar
+straight from **Settings → Hosts**: **Provision venv…** in the toolbar
 (pick any hosts, or **+ Group** / **+ Profile** to tick a whole set), the
 cloud icon on a host row, or **Provision new venv…** under a saved host's
 runspec paths. Nothing needs to be on the host except Python and SSH.

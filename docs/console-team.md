@@ -127,7 +127,7 @@ pickers, collapsed defaults and all. A visitor submits a request; an
 operator's console enacts it under the usual autonomy gates. The room itself
 never executes anything.
 
-Console-side setup is on the host entry (**Settings → Jump Hosts**): the
+Console-side setup is on the host entry (**Settings → Hosts**): the
 room/queue fields on the host that runs the server, and the visible catalogue
 under **Settings → Self-Service**. When several hosts run the same queue for
 redundancy, the console connects to exactly one at a time — the **Connected

@@ -10,14 +10,14 @@ const keys = (ts: { key: string }[]) => ts.map(t => t.key)
 describe('layoutNavTabs()', () => {
   it('groups the main tabs and folds the occasional ones into More', () => {
     const all = tabs('console', 'history', 'logs', 'files', 'knowledge', 'improve', 'evals',
-      'specs', 'forms', 'marketplace', 'schedules', 'triggers', 'rota', 'dev')
+      'specs', 'forms', 'marketplace', 'schedules', 'triggers', 'analytics', 'rota', 'dev')
     const { groups, overflow, ordered } = layoutNavTabs(all)
     expect(groups.map(keys)).toEqual([
       ['console', 'forms', 'history', 'logs', 'files'],
       ['schedules', 'triggers'],
       ['knowledge', 'marketplace'],
     ])
-    expect(keys(overflow)).toEqual(['rota', 'specs', 'improve', 'evals', 'dev'])
+    expect(keys(overflow)).toEqual(['analytics', 'rota', 'specs', 'improve', 'evals', 'dev'])
     expect(ordered).toHaveLength(all.length)
     expect(keys(ordered).slice(0, 5)).toEqual(['console', 'forms', 'history', 'logs', 'files'])
   })

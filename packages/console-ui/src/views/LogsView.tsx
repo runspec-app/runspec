@@ -410,9 +410,11 @@ interface LogsViewProps {
   activeScope: string[]
   onScopeToggle: (group: string) => void
   active: boolean
+  // Opens the Analytics tab; without it the dashboard opens in a drawer here.
+  onOpenAnalytics?: () => void
 }
 
-export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
+export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }: LogsViewProps) {
   const [venvs, setVenvs] = useState<LogStatusVenv[]>([])
   const [loading, setLoading] = useState(false)
   const [maintTarget, setMaintTarget] = useState<MaintTarget | null>(null)
@@ -509,7 +511,7 @@ export function LogsView({ selectedHost, activeScope, active }: LogsViewProps) {
         description="Each run's own log file, per venv: read them, compress old ones, delete the oldest."
         actions={<>
           <Tooltip title="Run analytics for this host — charts, success rate, durations and top runnables, scanned over the connection this tab just warmed">
-            <Button size="small" icon={<BarChartOutlined />} onClick={() => setAnalyticsOpen(true)}>Analytics</Button>
+            <Button size="small" icon={<BarChartOutlined />} onClick={() => (onOpenAnalytics ? onOpenAnalytics() : setAnalyticsOpen(true))}>Analytics</Button>
           </Tooltip>
           <IconAction label="Refresh" tip="Read this host's logs again" icon={<ReloadOutlined spin={loading} />} onClick={refresh} />
         </>}

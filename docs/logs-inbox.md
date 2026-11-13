@@ -174,7 +174,7 @@ accepts for the inbox.
 
 ### When the console provisions the venv
 
-The console's **Settings → Jump Hosts → Provision venv…** does all of the above
+The console's **Settings → Hosts → Provision venv…** does all of the above
 for you: it builds the venv as the run-as account with normalised permissions
 and runs `runspec logs share --inbox` as the last step. (runspec-linux's
 `create-venv` did this too until it was removed in 0.20.0.)

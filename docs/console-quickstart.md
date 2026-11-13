@@ -84,7 +84,7 @@ No configuration is needed for the first start. You'll see:
 - the **Console** tab — the agent chat (empty until you add an API key in the
   next step);
 - **Forms** — every discovered runnable as a typed run dialog;
-- **Triggers**, **Schedules**, **Rota** — automation, covered in
+- **Triggers**, **Schedules**, **Working hours** — automation, covered in
   [Automation](console-automation.md);
 - **History** — past runs and conversations.
 
