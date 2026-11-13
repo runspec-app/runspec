@@ -35,6 +35,34 @@ describe('statusTone', () => {
     }
   }
 
+  it('running, failed, waiting and attention stay apart under any brand', () => {
+    const hue = (hex: string) => {
+      const n = parseInt(hex.slice(1), 16)
+      const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(v => v / 255)
+      const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
+      if (d === 0) return 0
+      const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+      return (h * 60 + 360) % 360
+    }
+    const gap = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b))
+    for (const isDark of [true, false]) {
+      for (const brand of ['#9b031a', '#e8590c', '#0b7a6e', '#2f54eb']) {
+        const accent = readableAccent(brand, isDark)
+        const c = (t: StatusTone) => statusTone(t, isDark, accent).color
+        // Running is never the brand: it has its own fixed colour.
+        expect(c('running')).toBe(statusTone('running', isDark, '#123456').color)
+        expect(gap(hue(c('running')), hue(c('failed'))), `${brand} running vs failed`).toBeGreaterThan(60)
+        expect(gap(hue(c('running')), hue(c('attention')))).toBeGreaterThan(60)
+      }
+    }
+  })
+
+  it('waiting and attention carry different icons', () => {
+    render(<><StatusTag tone="waiting" testId="w">being handled</StatusTag><StatusTag tone="attention" testId="a">stale</StatusTag></>)
+    expect(screen.getByTestId('w').querySelector('.anticon-pause-circle')).toBeTruthy()
+    expect(screen.getByTestId('a').querySelector('.anticon-exclamation-circle')).toBeTruthy()
+  })
+
   it('failed never shares the accent when the brand is red', () => {
     const accent = readableAccent('#9b031a', true)
     expect(statusTone('failed', true, accent).color).not.toBe(statusTone('running', true, accent).color)

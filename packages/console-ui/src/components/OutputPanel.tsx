@@ -14,6 +14,7 @@ import {
   InfoCircleOutlined,
 } from '@ant-design/icons'
 import { pressable, StatusTag, type StatusTone } from './kit'
+import { approvalConsequence, useConsoleInfo } from '../consoleInfo'
 
 const { Text } = Typography
 
@@ -1394,6 +1395,16 @@ function ToolCallBlock({
   const v = verb || 'run'
   const go = approveColors(c.isDark)
   const targetHost = awaiting ? (host || confirmHost(resolved?.input, entry.input)) : ''
+  // What approving will do: the runnable's purpose, a root / disruptive marker
+  // and how many hosts a group target reaches (consoleInfo.tsx).
+  const info = useConsoleInfo()
+  const shownName = (resolved?.name ?? entry.name).replace(/^[^_]+__/, '')
+  const cmdArg = (resolved?.input ?? entry.input)?.command
+  const consequence = awaiting ? approvalConsequence({
+    name: shownName,
+    command: Array.isArray(cmdArg) ? cmdArg.join(' ') : typeof cmdArg === 'string' ? cmdArg : undefined,
+    runsAs, host: targetHost, info,
+  }) : null
   const args = Object.entries(entry.input)
   // The row's label: search-mode wrappers show the runnable / tool they ran.
   const display = toolDisplay(entry)
@@ -1576,8 +1587,21 @@ function ToolCallBlock({
             The assistant wants to {v}{' '}
             {resolved ? <Text code style={{ fontSize: 12 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text> : 'this'}
             {targetHost && <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{targetHost}</Text></>}
+            {consequence && consequence.fanout > 0 && (
+              <Text data-testid="confirm-fanout" style={{ fontWeight: 600, color: textColor(c.isDark) }}>
+                {' '}({consequence.fanout} host{consequence.fanout === 1 ? '' : 's'})
+              </Text>
+            )}
             . It waits for your go-ahead.
           </div>
+          {consequence && (consequence.description || consequence.markers.length > 0) && (
+            <div data-testid="confirm-consequence" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+              {consequence.markers.map(m => <StatusTag key={m.text} tone={m.tone} tip={m.tip}>{m.text}</StatusTag>)}
+              {consequence.description && (
+                <span style={{ fontSize: 13, color: textColor(c.isDark) }}>{consequence.description}</span>
+              )}
+            </div>
+          )}
           <div data-testid="confirm-meta" style={{ fontSize: 12, color: textMuted(c.isDark), marginBottom: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <span>Set to ask first (autonomy <Text code style={{ fontSize: 11 }}>{awaiting}</Text>)</span>
             {runsAs && (

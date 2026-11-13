@@ -155,8 +155,8 @@ export function readableAccent(hex: string, isDark: boolean, min = 4.5): string 
  * dots may keep the brighter fills (3:1 is enough for a non-text mark).
  */
 export const statusText = (isDark: boolean) => (isDark
-  ? { ok: '#6fd38a', warn: '#ffb74d', error: '#ff8f87', waiting: '#e3b341' }
-  : { ok: '#16632f', warn: '#8f4200', error: '#b42318', waiting: '#6b4f00' })
+  ? { ok: '#6fd38a', warn: '#ff9a57', error: '#ff8f87', waiting: '#e3b341', running: '#8fc7ff' }
+  : { ok: '#16632f', warn: '#8f4200', error: '#b42318', waiting: '#6b4f00', running: '#174f8f' })
 
 /** Hue in degrees (0-360) and saturation (0-1) of a '#rgb'/'#rrggbb' colour. */
 export function hueSat(hex: string): { hue: number; sat: number } {
