@@ -194,3 +194,65 @@ def test_run_without_a_policy_is_reported():
     with patch.object(b, "_run_logs", return_value=(1, json.dumps(res), "")):
         out = b.logs_retention_run("prod-1", "ops")
     assert not out["ok"] and "no retention policy" in out["error"]
+
+
+WIN_RP = r"C:\venvs\tools\Scripts\runspec.exe"
+
+
+def _windows_bridge():
+    b = _bridge()
+    b._hosts.append({"name": "laptop", "runspec_paths": [WIN_RP]})
+    return b
+
+
+def test_windows_local_venv_sets_and_applies_cleanup_directly():
+    """A local Windows venv has one account, so Log cleanup runs the venv's own
+    runspec directly instead of refusing with "the logs inbox is POSIX-only"."""
+    b = _windows_bridge()
+    entry = b._hosts[-1]
+    with (
+        patch.object(b, "_host_entry", return_value=entry),
+        patch("runspec_console.bridge_reporting.os.name", "nt"),
+        patch.object(b, "_run_logs", return_value=(0, json.dumps(SHOW), "")) as m,
+    ):
+        code, out, _err, as_user = b._run_as_venv_owner(
+            "laptop", WIN_RP, ["logs", "retention", "--json"], windows_ok=True
+        )
+    assert code == 0 and as_user == "" and json.loads(out) == SHOW
+    assert m.call_args.args[:3] == ("laptop", WIN_RP, ["logs", "retention", "--json"])
+    assert "run_as" not in m.call_args.kwargs
+
+
+def test_windows_local_venv_still_refuses_inbox_verbs():
+    b = _windows_bridge()
+    entry = b._hosts[-1]
+    with (
+        patch.object(b, "_host_entry", return_value=entry),
+        patch("runspec_console.bridge_reporting.os.name", "nt"),
+        patch.object(b, "_run_logs") as m,
+    ):
+        code, _out, err, _as = b._run_as_venv_owner(
+            "laptop", WIN_RP, ["history", "sweep", "--json"]
+        )
+    assert code == -1 and "POSIX" in err and not m.called
+
+
+def test_retention_set_and_apply_ask_for_the_windows_path():
+    b = _bridge()
+    with patch.object(
+        b, "_run_as_venv_owner", return_value=(0, json.dumps(SHOW), "", "")
+    ) as m:
+        b.logs_retention_set("prod-1", "ops", {"delete_after": "7d"})
+    assert m.call_args.kwargs.get("windows_ok") is True
+    res = {
+        "verb": "retention",
+        "pass": {"compacted": 0, "deleted": 1, "freed_bytes": 1},
+    }
+    with (
+        patch.object(
+            b, "_run_as_venv_owner", return_value=(0, json.dumps(res), "", "")
+        ) as m,
+        patch.object(b, "_invalidate_remote_history"),
+    ):
+        b.logs_retention_run("prod-1", "ops", dry_run=False)
+    assert m.call_args.kwargs.get("windows_ok") is True

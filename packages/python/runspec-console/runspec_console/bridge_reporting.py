@@ -1888,13 +1888,22 @@ class ReportingMixin:
         timeout: int = 120,
         *,
         acl_login: bool = False,
+        windows_ok: bool = False,
     ) -> tuple[int, str, str, str]:
         """Run ``<rp> <argv>`` as the venv's owner by the owner → root ladder.
         Returns ``(code, stdout, stderr, as_user)`` with the ``=====AS`` line
-        stripped (``as_user`` is ``""`` when it ran as the login user)."""
+        stripped (``as_user`` is ``""`` when it ran as the login user).
+
+        A local venv on Windows has no ladder: there is one account, and it's
+        the console's. ``windows_ok`` runs the command there directly (the log
+        cleanup policy, which core applies on Windows too); the inbox verbs
+        leave it off, since there is no logs inbox on Windows."""
         entry = self._host_entry(host)
         if entry is None:
             return -1, "", f"unknown host {host}", ""
+        if windows_ok and not entry.get("ssh") and os.name != "posix":
+            code, out, err = self._run_logs(host, rp, argv, timeout)
+            return code, out, err, ""
         cmd = utils_mod.venv_escalation_cmd(
             rp, argv, ["logs", "status", "--json"], acl_login=acl_login
         )
@@ -2270,7 +2279,9 @@ class ReportingMixin:
             argv = prov.retention_edit_argv(payload or {})
         except prov.ProvisionError as exc:
             return {"ok": False, "group": group, "error": str(exc)}
-        code, out, err, as_user = self._run_as_venv_owner(host, rp, argv, timeout=60)
+        code, out, err, as_user = self._run_as_venv_owner(
+            host, rp, argv, timeout=60, windows_ok=True
+        )
         data = self._retention_payload(out)
         if data is None or code != 0:
             return self._retention_failure(group, code, out, err)
@@ -2313,7 +2324,7 @@ class ReportingMixin:
             code, out, err = self._run_logs(host, rp, argv, timeout=300)
         else:
             code, out, err, as_user = self._run_as_venv_owner(
-                host, rp, argv, timeout=600
+                host, rp, argv, timeout=600, windows_ok=True
             )
         data = self._retention_payload(out)
         if data is None or not isinstance(data.get("pass"), dict):

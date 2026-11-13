@@ -56,6 +56,22 @@ The policy file is ignored if it is writable by group or others, or owned by
 anyone other than the owner or root. That stops another account from making
 the owner delete files.
 
+### On Windows
+
+A venv on a Windows machine works the same way, with one account: you. Every
+run you start is the owner's, so the once-a-day pass runs at the end of
+whichever run is first that day. Nothing needs scheduling.
+
+In the console, open **Logs** → the local venv → **Log cleanup…** and set the
+policy; the console runs the venv's own `runspec logs retention` directly (no
+`sudo`). From a shell, run the commands below from the venv's `Scripts\`
+folder. For logs kept about a week, use *delete after* `7d` and leave *compress
+after* blank:
+
+```powershell
+.\runspec logs retention --compact-after off --delete-after 7d
+```
+
 ## Settings
 
 The policy is `{venv}/runspec_logs_retention.toml`:
