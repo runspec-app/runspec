@@ -5,7 +5,7 @@ import { bridge } from '../bridge'
 import { toCommandPath } from '../views/formsMatch'
 import { Markdown } from './Markdown'
 import { shortcutHint } from '../shortcuts'
-import { useIsDark, textColor, useAccent, surfaces, textFaint, textMuted, textSecondary, MONO_FONT, RADIUS } from '../ThemeContext'
+import { useIsDark, textColor, useAccent, surfaces, textFaint, textMuted, textSecondary, statusText, approveColors, MONO_FONT, RADIUS } from '../ThemeContext'
 import {
   ThunderboltOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
   RedoOutlined, EditOutlined, CopyOutlined, RobotOutlined, CaretRightOutlined,
@@ -912,6 +912,20 @@ export interface PendingConfirm {
   // The gated tool call's id (runspec:tool_confirm `call_id`). Absent on older
   // backends and on gates with no agent tool call (rule runs).
   call_id?: string
+  // When the gate parked here (ms since epoch), for the "waiting 4m" clock.
+  since?: number
+}
+
+/** The host a gated call targets, when its input names one (`host`, or the
+ *  `_host`/`__host` spelling a runnable with its own `host` arg gets). */
+export function confirmHost(...inputs: Array<Record<string, unknown> | undefined>): string {
+  for (const inp of inputs) {
+    for (const k of ['host', '_host', '__host']) {
+      const v = inp?.[k]
+      if (typeof v === 'string' && v.trim()) return v.trim()
+    }
+  }
+  return ''
 }
 
 /**
@@ -930,7 +944,13 @@ export function confirmOwnsSegment(pc: PendingConfirm | null | undefined, entry:
 // What the currently-active block is doing right now, for the sticky footer:
 // a running tool (its short name + any live progress) wins, else the model is
 // streaming its reply, else it's thinking/acting between steps.
-function activeActivity(block: InvocationBlock): { label: string; tool?: string; progress?: string } {
+// A parked confirm gate wins over everything: nothing runs until the operator
+// answers, so the bar says "Waiting for you", never "Running".
+export function activeActivity(block: InvocationBlock, pending?: PendingConfirm | null): { label: string; tool?: string; progress?: string; waiting?: boolean } {
+  if (pending) {
+    const name = (pending.display_name || pending.tool_name).replace(/^[^_]+__/, '')
+    return { label: 'Waiting for you', tool: name, waiting: true }
+  }
   if (block.type === 'run') return { label: 'Running', tool: block.label.replace(/^\//, '') }
   for (let i = block.segments.length - 1; i >= 0; i--) {
     const seg = block.segments[i]
@@ -969,14 +989,14 @@ export function thinkingTail(text: string, max = THINKING_MAX_CHARS): string {
 // live "still working" signal — the current step + elapsed time — pinned at the
 // bottom, and doubles as a jump-to-latest button. Its own 1s ticker keeps the
 // clock live without re-rendering the whole panel.
-function ActivityIndicator({ block, onClick }: { block: InvocationBlock; onClick: () => void }) {
+function ActivityIndicator({ block, pending, onClick }: { block: InvocationBlock; pending?: PendingConfirm | null; onClick: () => void }) {
   const c = useCardTheme()
   const [, setTick] = useState(0)
   useEffect(() => {
     const t = setInterval(() => setTick(x => x + 1), 1000)
     return () => clearInterval(t)
   }, [])
-  const act = activeActivity(block)
+  const act = activeActivity(block, pending)
   // Reasoning summaries (runspec:thinking — sent by the anthropic built-in with
   // [llm] thinking_display = "summarized"). Shown only while the turn is between
   // steps; a new step (a tool starting, text streaming) starts a fresh summary.
@@ -991,22 +1011,27 @@ function ActivityIndicator({ block, onClick }: { block: InvocationBlock; onClick
   }, [block.id])
   useEffect(() => { setThinking('') }, [act.label, act.tool])
   const thinkingLine = act.label === 'Working…' ? thinkingTail(thinking) : ''
-  const secs = Math.max(0, Math.floor((Date.now() - new Date(block.startedAt).getTime()) / 1000))
-  const elapsed = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`
+  // While a gate is parked the clock counts the wait, not the turn.
+  const from = act.waiting && pending?.since ? pending.since : new Date(block.startedAt).getTime()
+  const secs = Math.max(0, Math.floor((Date.now() - from) / 1000))
+  const span = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`
+  const elapsed = act.waiting ? `waiting ${span}` : span
   return (
     <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 10, maxWidth: '90%' }}>
-      <Tooltip title="Jump to the latest activity">
+      <Tooltip title={act.waiting ? `Jump to the approval (Approve ${shortcutHint('approve')} · Deny ${shortcutHint('deny')})` : 'Jump to the latest activity'}>
         <div
           onClick={onClick}
           style={{
             display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-            background: c.headerBg, border: `1px solid ${c.cardBorder}`, borderRadius: 14,
+            background: act.waiting ? AWAIT_BG : c.headerBg, border: `1px solid ${act.waiting ? AWAIT_BORDER : c.cardBorder}`, borderRadius: 14,
             padding: '4px 12px', maxWidth: '100%',
             boxShadow: 'var(--rs-shadow-md)',
           }}
         >
-          <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} spin />
-          <Text style={{ fontSize: 13, color: c.dim, flexShrink: 0 }}>{thinkingLine ? 'Thinking…' : act.label}</Text>
+          {act.waiting
+            ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)', fontSize: 13 }} />
+            : <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} spin />}
+          <Text data-testid="activity-label" style={{ fontSize: 13, color: act.waiting ? statusText(c.isDark).waiting : c.dim, fontWeight: act.waiting ? 600 : undefined, flexShrink: 0 }}>{thinkingLine ? 'Thinking…' : act.label}</Text>
           {thinkingLine && (
             // Wraps up to 3 rows (and widens to 640px) so a longer summary
             // reads in full instead of being cut to one short line; the
@@ -1074,7 +1099,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
         display_name?: string; display_input?: Record<string, unknown>; confirm_verb?: string; runs_as?: string; autonomy: string
         call_id?: string
       }
-      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy, ...(runs_as ? { runs_as } : {}), ...(call_id ? { call_id } : {}) } }))
+      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy, since: prev[id]?.request_id === request_id ? prev[id].since : Date.now(), ...(runs_as ? { runs_as } : {}), ...(call_id ? { call_id } : {}) } }))
     }
     // Authoritative "this gate finished" from the backend (approved / denied /
     // timed out) — request-id-precise so a late signal can't clear a newer gate
@@ -1184,7 +1209,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
           spinner out of view; doubles as jump-to-latest. When nothing is active,
           the plain jump-to-bottom pill takes over (only when scrolled up). */}
       {activeBlock ? (
-        <ActivityIndicator block={activeBlock} onClick={scrollToBottom} />
+        <ActivityIndicator block={activeBlock} pending={pendingConfirms[activeBlock.id] ?? null} onClick={scrollToBottom} />
       ) : showScrollDown ? (
         <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
           <Button
@@ -1243,6 +1268,7 @@ function ToolCallBlock({
   resolved,
   verb,
   runsAs,
+  host,
   editable,
   onAnswer,
 }: {
@@ -1261,6 +1287,8 @@ function ToolCallBlock({
   // login account (a shared venv's owner, a runnable's `run_as`). Shown in the
   // approval panel so the operator knows whose identity they're approving.
   runsAs?: string
+  // The host the gated call targets, shown in the approval sentence.
+  host?: string
   // The operator may edit the args before approving (editable confirmations).
   // Only when the displayed call equals the real call (a plain/direct tool, not
   // the search-mode `run_runnable` wrapper whose display args would re-wrap lossily).
@@ -1270,6 +1298,8 @@ function ToolCallBlock({
   const c = useCardTheme()
   const [expanded, setExpanded] = useState(false)
   const v = verb || 'run'
+  const go = approveColors(c.isDark)
+  const targetHost = awaiting ? (host || confirmHost(resolved?.input, entry.input)) : ''
   const args = Object.entries(entry.input)
   // The row's label: search-mode wrappers show the runnable / tool they ran.
   const display = toolDisplay(entry)
@@ -1346,7 +1376,7 @@ function ToolCallBlock({
         onClick={() => canExpand && setExpanded(x => !x)}
       >
         {awaiting
-          ? <PauseCircleOutlined style={{ color: '#e6a23c', fontSize: 14 }} />
+          ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)', fontSize: 14 }} />
           : entry.running
             ? <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} />
             : <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />}
@@ -1386,7 +1416,7 @@ function ToolCallBlock({
           </Tooltip>
         )}
         {awaiting && (
-          <Text style={{ color: '#e6a23c', fontSize: 12, marginLeft: 'auto', flexShrink: 0 }}>needs approval</Text>
+          <Text style={{ color: statusText(c.isDark).waiting, fontSize: 12, fontWeight: 600, marginLeft: 'auto', flexShrink: 0 }}>waiting for you</Text>
         )}
         {!awaiting && entry.running && (
           <Text ellipsis style={{ color: c.dim, fontSize: 12, marginLeft: 'auto', flexShrink: 0, maxWidth: '50%', fontFamily: entry.progress ? 'monospace' : undefined }}>
@@ -1445,9 +1475,12 @@ function ToolCallBlock({
         <div style={{ padding: '2px 14px 14px' }}>
           <div style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
             The assistant wants to {v}{' '}
-            {resolved && <Text code style={{ fontSize: 12 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text>}
-            {resolved ? ' ' : 'this '}— autonomy is{' '}
-            <strong style={{ color: '#e6a23c' }}>{awaiting}</strong>, so it needs your go-ahead.
+            {resolved ? <Text code style={{ fontSize: 12 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text> : 'this'}
+            {targetHost && <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{targetHost}</Text></>}
+            . It waits for your go-ahead
+            <Tooltip title={`This tool's autonomy level is “${awaiting}”: it never runs without your approval.`}>
+              <span style={{ color: textMuted(c.isDark), borderBottom: `1px dotted ${textMuted(c.isDark)}`, marginLeft: 6, cursor: 'help' }}>({awaiting})</span>
+            </Tooltip>
           </div>
           {runsAs && (
             <div data-testid="confirm-runs-as" style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
@@ -1532,12 +1565,15 @@ function ToolCallBlock({
           />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Tooltip title={`Approve (${shortcutHint('approve')})`}>
-              <Button type="primary" shape="round" icon={<CaretRightOutlined />} onClick={approve} data-rs-confirm="approve">
+              {/* One fixed look whatever the brand accent: green go, neutral Deny. */}
+              <Button shape="round" icon={<CaretRightOutlined />} onClick={approve} data-rs-confirm="approve"
+                className="rs-approve"
+                style={{ background: go.bg, borderColor: go.bg, color: go.text, ['--rs-approve-hover' as string]: go.hover }}>
                 Approve &amp; {v}
               </Button>
             </Tooltip>
             <Tooltip title={reason.trim() ? `Deny and send your reason to the assistant (${shortcutHint('deny')})` : `Deny (${shortcutHint('deny')})`}>
-              <Button shape="round" danger onClick={deny} data-rs-confirm="deny">
+              <Button shape="round" onClick={deny} data-rs-confirm="deny">
                 {reason.trim() ? 'Deny with reason' : 'Deny'}
               </Button>
             </Tooltip>
@@ -1695,6 +1731,7 @@ export function ChatTranscript({
                 resolved={pc && pc.display_name ? { name: pc.display_name, input: pc.display_input ?? {} } : null}
                 verb={pc ? pc.confirm_verb : undefined}
                 runsAs={pc ? pc.runs_as : undefined}
+                host={pc ? confirmHost(pc.display_input, pc.tool_input) : undefined}
                 editable={!!pc && (pc.display_name ?? pc.tool_name) === pc.tool_name}
                 onAnswer={onAnswerConfirm}
               />
@@ -1987,7 +2024,9 @@ const BlockCard = memo(function BlockCard({
       ? block.lines.slice(0, TRUNCATE_AT)
       : block.lines
 
-  const statusIcon = !block.done
+  const statusIcon = !block.done && pendingConfirm
+    ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)' }} />
+    : !block.done
     ? <LoadingOutlined style={{ color: 'var(--rs-accent)' }} />
     : block.stopped
       ? <PauseCircleOutlined style={{ color: '#8c8c8c' }} />
@@ -2169,7 +2208,10 @@ const BlockCard = memo(function BlockCard({
           {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </Text>
         {/* Live elapsed clock while the turn runs (chat turns have no InFlightStrip row). */}
-        {!block.done && (
+        {!block.done && pendingConfirm && (
+          <Text data-testid="card-waiting" style={{ color: statusText(c.isDark).waiting, fontSize: 12, fontWeight: 600 }}>waiting for you</Text>
+        )}
+        {!block.done && !pendingConfirm && (
           <Text style={{ color: 'var(--rs-accent)', fontSize: 12, fontFamily: MONO_FONT }}>{fmtElapsed(block.startedAt)}</Text>
         )}
         {toolCount > 0 && (
@@ -2307,6 +2349,7 @@ const BlockCard = memo(function BlockCard({
                 resolved={cardGate.display_name ? { name: cardGate.display_name, input: cardGate.display_input ?? {} } : null}
                 verb={cardGate.confirm_verb}
                 runsAs={cardGate.runs_as}
+                host={confirmHost(cardGate.display_input, cardGate.tool_input)}
                 editable={(cardGate.display_name ?? cardGate.tool_name) === cardGate.tool_name}
                 onAnswer={answerThis}
               />

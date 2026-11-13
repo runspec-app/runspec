@@ -39,7 +39,12 @@ agent honours it:
 
 - `autonomous` — the agent runs it without asking.
 - `confirm` (the default) — the agent proposes the call; a confirmation card
-  appears with the exact arguments, which you can **edit before approving**.
+  appears with the exact arguments and the host it targets, which you can
+  **edit before approving**. While it waits, the card, its header and the
+  activity bar at the bottom say **Waiting for you** (amber, with how long it
+  has waited), never "Running": nothing runs until you answer. The card looks
+  the same whatever your brand colour: a green **Approve** and a plain
+  **Deny**.
 - `supervised` / `manual` — stricter still; `manual` runnables are never run
   by the agent.
 

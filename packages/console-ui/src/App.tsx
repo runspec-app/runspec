@@ -89,7 +89,7 @@ import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type OtherHost, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
-import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning, dangerColors, statusText } from './ThemeContext'
 import GateMark from './components/GateMark'
 import {
   anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
@@ -931,6 +931,7 @@ export default function App() {
   const titleCol  = brandTheme.accent_color
     ? readableAccent(brandTheme.accent_color, isDark)
     : (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
+  const danger    = dangerColors(brandTheme.accent_color || undefined, isDark)
   const contentBg = sf.base
   const iconCol   = textMuted(isDark)
   const textCol   = isDark ? '#ccc'    : '#333'
@@ -941,6 +942,8 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
     document.documentElement.style.setProperty('--rs-accent', titleCol)
+    document.documentElement.style.setProperty('--rs-danger', danger.text)
+    document.documentElement.style.setProperty('--rs-waiting', statusText(isDark).waiting)
     // Mirror the muted-text tokens as CSS vars for call sites without isDark
     // in scope (inline `var(--rs-text-*)` styles) — same source of truth.
     document.documentElement.style.setProperty('--rs-text-secondary', textSecondary(isDark))
@@ -959,7 +962,7 @@ export default function App() {
     root.setProperty('--rs-shadow-sm', s.shadowSm)
     root.setProperty('--rs-shadow-md', s.shadowMd)
     root.setProperty('--rs-shadow-lg', s.shadowLg)
-  }, [isDark, titleCol])
+  }, [isDark, titleCol, danger.text])
 
   const navTabs = visibleNavTabs([
     {
@@ -1151,6 +1154,13 @@ export default function App() {
             // colour (white text on it), and on the dark surfaces it is ~2.2:1.
             colorLink: titleCol,
             colorLinkHover: titleCol,
+            // Danger (Delete, Uninstall, Stop): red that reads as text on these
+            // surfaces, moved to magenta when the brand itself is red so a
+            // primary and a destructive button never share a colour.
+            colorError: danger.text,
+            colorErrorHover: danger.text,
+            colorErrorText: danger.text,
+            colorErrorTextHover: danger.text,
           },
           components: {
             // Active tab text and its underline: the text accent, not the fill.
@@ -1160,7 +1170,10 @@ export default function App() {
             Drawer: { colorBgElevated: sf.overlay },
             Table: { headerBg: sf.overlay, headerSplitColor: 'transparent', borderColor: sf.border, rowHoverBg: withAlpha(titleCol, isDark ? 0.06 : 0.04) },
             Tag: { borderRadiusSM: 4 },
-            Button: { fontWeight: 500, primaryShadow: `0 1px 2px ${withAlpha(titleCol, 0.25)}` },
+            Button: { fontWeight: 500, primaryShadow: `0 1px 2px ${withAlpha(titleCol, 0.25)}`, dangerColor: danger.onFill, dangerShadow: 'none' },
+            // Ant paints these in colorPrimary as TEXT; use the text accent.
+            Pagination: { itemActiveColor: titleCol, itemActiveColorHover: titleCol },
+            Menu: { itemSelectedColor: titleCol },
             Input: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}` },
             Select: { optionSelectedBg: withAlpha(titleCol, isDark ? 0.16 : 0.1) },
             Segmented: { itemSelectedBg: sf.overlay, trackBg: sf.sunken },

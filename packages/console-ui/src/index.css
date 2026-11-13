@@ -166,6 +166,40 @@ body {
   border-color: color-mix(in srgb, var(--rs-accent) 55%, var(--rs-border-strong)) !important;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--rs-accent) 16%, transparent) !important;
 }
+/* The composer's placeholder: the muted token, not the browser's #757575
+   (2.6:1 on gunmetal). */
+.rs-composer textarea::placeholder { color: var(--rs-text-muted); opacity: 1; }
+
+/* Ant's preset tag colours (green, purple, gold...) are fill tints whose text
+   reads at 2.8-4.2:1. Keep their tinted background, give the text a shade that
+   clears 4.5:1 in each theme. Filled (-inverse) tags are untouched. */
+.ant-tag.ant-tag-green { color: #6fd38a; }
+.ant-tag.ant-tag-gold { color: #e3b341; }
+.ant-tag.ant-tag-orange { color: #ffb74d; }
+.ant-tag.ant-tag-red { color: #ff8f87; }
+.ant-tag.ant-tag-volcano { color: #ff9a76; }
+.ant-tag.ant-tag-purple { color: #c5a3ff; }
+.ant-tag.ant-tag-geekblue { color: #a3b4ff; }
+.ant-tag.ant-tag-blue { color: #7cc0ff; }
+.ant-tag.ant-tag-cyan { color: #5fd6d6; }
+.ant-tag.ant-tag-magenta { color: #ff8fc4; }
+.ant-tag.ant-tag-lime { color: #b8e06b; }
+html[data-theme='light'] .ant-tag.ant-tag-green { color: #16632f; }
+html[data-theme='light'] .ant-tag.ant-tag-gold { color: #6b4f00; }
+html[data-theme='light'] .ant-tag.ant-tag-orange { color: #8f4200; }
+html[data-theme='light'] .ant-tag.ant-tag-red { color: #b42318; }
+html[data-theme='light'] .ant-tag.ant-tag-volcano { color: #a3340f; }
+html[data-theme='light'] .ant-tag.ant-tag-purple { color: #5b2b9e; }
+html[data-theme='light'] .ant-tag.ant-tag-geekblue { color: #263f9e; }
+html[data-theme='light'] .ant-tag.ant-tag-blue { color: #0b5394; }
+html[data-theme='light'] .ant-tag.ant-tag-cyan { color: #075e5e; }
+html[data-theme='light'] .ant-tag.ant-tag-magenta { color: #9c1458; }
+html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
+
+/* Approve on a confirm gate: a fixed green whatever the brand (inline colours;
+   hover lifts to the lighter or deeper shade set in --rs-approve-hover). */
+.rs-approve:not(:disabled):hover { background: var(--rs-approve-hover) !important; border-color: var(--rs-approve-hover) !important; }
+
 /* The composer's venv scope menu button. */
 .rs-scope-btn {
   display: inline-flex; align-items: center; gap: 6px; max-width: 260px;

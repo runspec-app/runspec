@@ -148,6 +148,59 @@ export function readableAccent(hex: string, isDark: boolean, min = 4.5): string 
   return isDark ? '#ffffff' : '#000000'
 }
 
+/**
+ * Status colours for TEXT (labels like "fired", "failed", "waiting for you"),
+ * each >= 4.5:1 on every surface of its theme. Ant's #52c41a / #faad14 /
+ * #ff4d4f are fill colours and read at ~2:1 as text on aluminium. Icons and
+ * dots may keep the brighter fills (3:1 is enough for a non-text mark).
+ */
+export const statusText = (isDark: boolean) => (isDark
+  ? { ok: '#6fd38a', warn: '#ffb74d', error: '#ff8f87', waiting: '#e3b341' }
+  : { ok: '#16632f', warn: '#8f4200', error: '#b42318', waiting: '#6b4f00' })
+
+/** Hue in degrees (0-360) and saturation (0-1) of a '#rgb'/'#rrggbb' colour. */
+export function hueSat(hex: string): { hue: number; sat: number } {
+  const full = _hex6(hex)
+  if (!full) return { hue: 0, sat: 0 }
+  const n = parseInt(full, 16)
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(v => v / 255)
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
+  const l = (max + min) / 2
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1))
+  let hue = 0
+  if (d !== 0) {
+    if (max === r) hue = 60 * (((g - b) / d) % 6)
+    else if (max === g) hue = 60 * ((b - r) / d + 2)
+    else hue = 60 * ((r - g) / d + 4)
+  }
+  return { hue: (hue + 360) % 360, sat }
+}
+
+/**
+ * Danger colour (Delete, Uninstall, Stop, Reject) for this theme. Normally red;
+ * when the white-label accent is itself a red, danger moves to magenta so a
+ * primary button and a destructive one never share a colour. `text` reads at
+ * 4.5:1 on every surface; `onFill` is the text on a filled danger button (dark
+ * text on the light dark-theme red, white on the deep light-theme one).
+ */
+export function dangerColors(accent: string | undefined, isDark: boolean): { text: string; onFill: string } {
+  const { hue, sat } = hueSat(accent || '')
+  const dist = Math.min(Math.abs(hue - 4), 360 - Math.abs(hue - 4))
+  const redBrand = !!accent && sat > 0.35 && dist < 30
+  if (isDark) return { text: redBrand ? '#ff8fc4' : '#ff8f87', onFill: '#1e2428' }
+  return { text: redBrand ? '#9c1458' : '#b42318', onFill: '#ffffff' }
+}
+
+/**
+ * The Approve button on a confirm gate: one fixed "go" colour whatever the
+ * white-label accent is, the way an OS permission prompt looks the same in
+ * every app. Green, never the brand, so a red brand's Approve can't read as
+ * danger.
+ */
+export const approveColors = (isDark: boolean) => (isDark
+  ? { bg: '#6fd38a', hover: '#8ade9f', text: '#10261a' }
+  : { bg: '#16632f', hover: '#1d7a3b', text: '#ffffff' })
+
 /** 'rgba(r,g,b,a)' from a '#rgb'/'#rrggbb' hex — for accent-tinted hover fills. */
 export function withAlpha(hex: string, alpha: number): string {
   const h = hex.replace('#', '')

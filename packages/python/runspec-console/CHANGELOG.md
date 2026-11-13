@@ -9,6 +9,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.416.0] — 2026-11-13
+
+### Fixed
+
+- **A call waiting for your approval no longer says "Running".** The activity
+  bar, the card header and the tool row say **Waiting for you** in amber, and
+  the clock counts how long it has waited; it goes back to Running once you
+  answer. The approval sentence names the host the call targets, and the
+  autonomy level moves to a small "(confirm)" with an explanation on hover.
+- **The approval card has one look whatever the brand colour.** Approve is a
+  fixed green and Deny a plain button (Deny isn't destructive), so under a red
+  white-label accent the two no longer look alike.
+- **Danger colour.** Stop, Delete and Uninstall use a red that reads at 4.5:1 on
+  every surface (Stop was 2.8:1 on gunmetal); when the brand accent is itself a
+  red, danger moves to magenta (`dangerColors` in `ThemeContext`).
+- **Accent text that Ant painted in the raw brand colour** (the active page
+  number, selected menu items) uses the readable accent; History's page number
+  was 1.4:1 under a deep red brand.
+- **Readable status and tag text.** Coloured tags (green, gold, blue, purple,
+  …) keep their tint but their text clears 4.5:1 in both themes (several were
+  2.8–4.2:1); the trigger event log shows "fired" in a readable green and
+  intended skips (working hours, screen locked, already handled) in muted text
+  instead of orange; the command bar's placeholder uses the muted token (was
+  the browser's 2.6:1 grey). New `statusText` tokens in `ThemeContext`.
+
 ## [0.415.0] — 2026-11-13
 
 ### Added

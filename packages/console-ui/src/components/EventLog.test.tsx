@@ -22,7 +22,7 @@ describe('EventLog disposition', () => {
   it('labels a lock skip distinctly from a rota skip', () => {
     const locked = disposition(ev({ skipped: ['vip'], skip_reasons: { vip: 'screen locked' } }), DIM)
     expect(locked.text).toBe('skipped (screen locked): vip')
-    expect(locked.color).toBe(COLUMN_COLOR.awaiting_human)
+    expect(locked.color).toBe(DIM)  // an intended skip is muted, not a warning
 
     const rota = disposition(ev({ skipped: ['vip'], skip_reasons: { vip: 'working hours' } }), DIM)
     expect(rota.text).toBe('skipped (working hours): vip')
@@ -45,7 +45,7 @@ describe('EventLog disposition', () => {
   it('labels a once_per_thread repeat as already handled (not "no match")', () => {
     const d = disposition(ev({ deduped: ['vip'] }), DIM)
     expect(d.text).toBe('skipped (already handled): vip')
-    expect(d.color).toBe(COLUMN_COLOR.awaiting_human)
+    expect(d.color).toBe(DIM)
   })
 
   it('reports no match when nothing fired, skipped, or deduped', () => {
