@@ -38,8 +38,10 @@ Arrow keys move, **Enter** runs the highlighted item, **Esc** closes.
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous chat session |
 | Esc (in the command bar) | Stop the running turn |
 | Ctrl+M (in the command bar) | Start / stop dictation |
+| J / K (Knowledge inbox) | Next / previous fact |
+| P / A / E / R (Knowledge inbox) | Add the highlighted fact to its page / approve / edit and approve / reject (asks first) |
 
-Single keys (**?** and **/**) only work when focus isn't in a text field, so
+Single keys (**?**, **/** and the inbox keys) only work when focus isn't in a text field, so
 they never interfere with typing. No shortcut fires while a dialog or drawer is
 open.
 

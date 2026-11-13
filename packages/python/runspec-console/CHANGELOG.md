@@ -9,6 +9,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.413.0] — 2026-11-13
+
+### Added
+
+- **From a tool's page to using it.** Under a tool's name in Knowledge → Tools:
+  **Run…** (its run form), **Ask about** (puts a question in the command bar to
+  finish; AI only), **Recent runs** (its History) and **Show connections** (the
+  fact graph on it).
+- **Inbox keys.** J / K move between facts; P, A, E and R add to page, approve,
+  edit or reject the highlighted one (Reject still asks). Listed in the
+  shortcuts sheet under "Knowledge inbox".
+
+### Changed
+
+- **The fact graph opens over the tab** (the Fact graph button beside Pull,
+  Show connections on a page, or an entity on an inbox fact) instead of being a
+  view of its own. Knowledge's views are Tools and Inbox.
+- **Inbox:** one **Find facts** menu holds Capture usage, Suggest from chats
+  and the range; the count says how many facts wait for review; the
+  explanation is a one-time hint; each fact has one main button (Add to page
+  when it has a page, else Approve) with Edit and Reject as quieter buttons.
+- A page for a runnable no connected host has is tagged *not installed here*,
+  and the selected row in the index scrolls into view after a jump.
+
+### Fixed
+
+- **A white-label `accent_color` used as text is readable.** Links, the active
+  tab and other accent text are lightened (dark theme) or darkened (light) just
+  enough to reach 4.5:1 (`readableAccent` in `ThemeContext`); a deep brand red
+  measured 1.9:1 on gunmetal. Fills keep the colour as given. Graph highlights
+  use a neutral stroke instead of the accent.
+
 ## [0.412.0] — 2026-11-13
 
 ### Changed

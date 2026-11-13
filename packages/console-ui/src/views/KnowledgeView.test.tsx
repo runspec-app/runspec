@@ -118,10 +118,28 @@ describe('KnowledgeView', () => {
     await waitFor(() => expect(overview).toHaveBeenCalled())
     fireEvent.click(screen.getByText('Inbox'))
     await waitFor(() => expect(screen.getByText('web-01 has 64GB RAM')).toBeTruthy())
-    expect(screen.getByText('Capture usage')).toBeTruthy()  // the fact tools live in the Inbox
+    fireEvent.click(screen.getByRole('button', { name: /Find facts/ }))  // the fact tools live in the Inbox
+    expect(await screen.findByText('Capture usage')).toBeTruthy()
     expect(screen.queryByText('Suggest from chats')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
     await waitFor(() => expect(review).toHaveBeenCalledWith('k_p', true))
+  })
+
+  it('triages the inbox from the keyboard', async () => {
+    overview.mockResolvedValue({
+      ...(await overview()),
+      inbox: [
+        fact('k_1', 'first fact', ['term:bau'], 'pending'),
+        fact('k_2', 'second fact', ['term:bau'], 'pending'),
+      ],
+    })
+    render(<KnowledgeView active aiEnabled />)
+    await waitFor(() => expect(overview).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('Inbox'))
+    await waitFor(() => expect(screen.getByText('second fact')).toBeTruthy())
+    fireEvent.keyDown(window, { key: 'j', code: 'KeyJ' })
+    fireEvent.keyDown(window, { key: 'a', code: 'KeyA' })
+    await waitFor(() => expect(review).toHaveBeenCalledWith('k_2', true))
   })
 
   it('marks this-console facts, pins only approved ones, and confirms a reject', async () => {
@@ -178,8 +196,9 @@ describe('KnowledgeView', () => {
     render(<KnowledgeView active aiEnabled />)
     await waitFor(() => expect(overview).toHaveBeenCalled())
     fireEvent.click(screen.getByText('Inbox'))
-    await waitFor(() => expect(screen.getByText('All history')).toBeTruthy())
-    fireEvent.click(screen.getByText('Suggest from chats'))
+    await waitFor(() => expect(screen.getByText(/all history/)).toBeTruthy())  // the remembered range
+    fireEvent.click(screen.getByRole('button', { name: /Find facts/ }))
+    fireEvent.click(await screen.findByText('Suggest from chats'))
     await waitFor(() => expect(distill).toHaveBeenCalledWith(0))
   })
 

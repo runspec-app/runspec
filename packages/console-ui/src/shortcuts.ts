@@ -17,8 +17,9 @@
  *    unit test fails if a binding ever collides with one of these.
  *  - Ctrl matches Cmd on macOS (metaKey), like the composer's Ctrl+M.
  *
- * Shortcuts whose `scope` is 'composer' are handled inside CommandInput (they
- * only make sense there); they're listed here so the help sheet shows them.
+ * Shortcuts whose `scope` is 'composer' are handled inside CommandInput, and
+ * 'inbox' ones inside the Knowledge inbox (they only make sense there); they're
+ * listed here so the help sheet shows them.
  */
 import { useEffect, useRef } from 'react'
 
@@ -27,8 +28,9 @@ export type ShortcutId =
   | 'switchTab' | 'refreshHosts' | 'approve' | 'deny'
   | 'newChat' | 'nextSession' | 'prevSession'
   | 'stopTurn' | 'dictation'
+  | 'inboxNext' | 'inboxPrev' | 'inboxAddToPage' | 'inboxApprove' | 'inboxEdit' | 'inboxReject'
 
-export type ShortcutGroup = 'General' | 'Navigation' | 'Console' | 'Command bar'
+export type ShortcutGroup = 'General' | 'Navigation' | 'Console' | 'Command bar' | 'Knowledge inbox'
 
 export interface ShortcutDef {
   id: ShortcutId
@@ -40,8 +42,9 @@ export interface ShortcutDef {
   group: ShortcutGroup
   /** Hidden when the console runs with AI off (`[console] ai = false`). */
   aiOnly?: boolean
-  /** 'global' = the App-level listener; 'composer' = handled in CommandInput. */
-  scope?: 'global' | 'composer'
+  /** 'global' = the App-level listener; 'composer' = handled in CommandInput;
+   *  'inbox' = handled by the Knowledge inbox while it is open. */
+  scope?: 'global' | 'composer' | 'inbox'
   /** Offer it as an action in the Ctrl+K palette. */
   palette?: boolean
 }
@@ -63,6 +66,12 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'prevSession', keys: ['Ctrl+Shift+Tab'], label: 'Previous session', group: 'Console', palette: true },
   { id: 'stopTurn', keys: ['Escape'], display: ['Esc'], label: 'Stop the running turn', group: 'Command bar', aiOnly: true, scope: 'composer' },
   { id: 'dictation', keys: ['Ctrl+M'], label: 'Start / stop dictation', group: 'Command bar', aiOnly: true, scope: 'composer' },
+  { id: 'inboxNext', keys: ['J'], label: 'Next fact', group: 'Knowledge inbox', scope: 'inbox' },
+  { id: 'inboxPrev', keys: ['K'], label: 'Previous fact', group: 'Knowledge inbox', scope: 'inbox' },
+  { id: 'inboxAddToPage', keys: ['P'], label: 'Add the fact to its page', group: 'Knowledge inbox', scope: 'inbox' },
+  { id: 'inboxApprove', keys: ['A'], label: 'Approve the fact', group: 'Knowledge inbox', scope: 'inbox' },
+  { id: 'inboxEdit', keys: ['E'], label: 'Edit and approve the fact', group: 'Knowledge inbox', scope: 'inbox' },
+  { id: 'inboxReject', keys: ['R'], label: 'Reject the fact (asks first)', group: 'Knowledge inbox', scope: 'inbox' },
 ]
 
 /** Browser / WebView2 keys the console must never take over. */
@@ -149,7 +158,7 @@ export function resolveShortcut(
 ): { def: ShortcutDef; index: number } | null {
   const editable = isEditableTarget(e.target)
   for (const def of activeShortcuts(ai)) {
-    if (def.scope === 'composer') continue
+    if (def.scope === 'composer' || def.scope === 'inbox') continue
     for (let i = 0; i < def.keys.length; i++) {
       const combo = def.keys[i]
       if (isReserved(combo)) continue
@@ -175,6 +184,17 @@ export function shortcutHint(id: ShortcutId): string {
 }
 
 export type ShortcutHandlers = Partial<Record<ShortcutId, (index: number) => void>>
+
+/** The bare-key shortcuts of one local `scope` ('inbox'): which one a keydown is,
+ *  or null — never while typing in a field or with a modal/drawer open. */
+export function resolveScoped(e: KeyLike & { target: EventTarget | null }, scope: 'inbox'): ShortcutId | null {
+  if (isEditableTarget(e.target) || overlayOpen()) return null
+  for (const def of SHORTCUTS) {
+    if (def.scope !== scope) continue
+    if (def.keys.some(k => matchesCombo(e, k))) return def.id
+  }
+  return null
+}
 
 /**
  * Install the global keydown listener. `handlers` may change every render —

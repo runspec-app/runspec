@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import {
+  readableAccent, contrastRatio,
   surfaces, RADIUS, UI_FONT, MONO_FONT, FONT_SIZE, withAlpha, type Surfaces,
   textSecondary, textMuted, textFaint, textColor, DEFAULT_ACCENT,
 } from './ThemeContext'
@@ -199,5 +200,29 @@ describe('withAlpha()', () => {
     expect(withAlpha('#fff', 0.5)).toBe('rgba(255, 255, 255, 0.5)')
     expect(withAlpha('#4fc1ff', 0.1)).toBe('rgba(79, 193, 255, 0.1)')
     expect(withAlpha('red', 0.1)).toBe('red')
+  })
+})
+
+describe('readableAccent()', () => {
+  const levels = ['sunken', 'base', 'raised', 'overlay'] as const
+  it('leaves the default accents alone', () => {
+    expect(readableAccent(DEFAULT_ACCENT.dark, true)).toBe(DEFAULT_ACCENT.dark)
+    expect(readableAccent(DEFAULT_ACCENT.light, false)).toBe(DEFAULT_ACCENT.light)
+  })
+  for (const brand of ['#b3001b', '#1d4ed8', '#7c3aed', '#ffd400', '#00a3e0']) {
+    for (const isDark of [true, false]) {
+      it(`${brand} as text reaches 4.5:1 on every ${isDark ? 'dark' : 'light'} surface`, () => {
+        const c = readableAccent(brand, isDark)
+        for (const lvl of levels) expect(contrastRatio(c, surfaces(isDark)[lvl]), `${c} on ${lvl}`).toBeGreaterThanOrEqual(4.5)
+      })
+    }
+  }
+  it('keeps the hue: a deep red stays red on dark', () => {
+    const c = readableAccent('#b3001b', true)
+    const n = parseInt(c.slice(1), 16)
+    expect((n >> 16) & 255).toBeGreaterThan(((n >> 8) & 255) + 40)
+  })
+  it('passes through what it cannot parse', () => {
+    expect(readableAccent('teal', true)).toBe('teal')
   })
 })
