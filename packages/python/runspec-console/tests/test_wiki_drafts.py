@@ -33,6 +33,12 @@ def test_page_paths_and_new_pages():
     assert [s["heading"] for s in parsed["sections"]] == list(wd.RUNNABLE_SECTIONS)
 
 
+def test_new_runnable_page_starts_with_its_description():
+    page = wd.new_page("runnable:backup", "Back up a directory.")
+    assert "## What it's for\n\nBack up a directory.\n" in page
+    assert wd.text_hash(page) == wd.text_hash(page + "\n\n")
+
+
 def test_target_for_picks_page_and_section():
     pair = {"kind": "pairing", "about": ["term:BAU", "runnable:cron"]}
     assert wd.target_for(pair) == ("runnable:cron", "Works with")

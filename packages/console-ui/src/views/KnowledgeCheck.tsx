@@ -4,11 +4,11 @@
 // lists the tools so you can start one.
 
 import { useState } from 'react'
-import { Button, Tag, Tooltip, Typography } from 'antd'
+import { Tag, Tooltip, Typography } from 'antd'
 import { CheckCircleOutlined, DownOutlined, RightOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
 
 import type { WikiCheck } from '../bridge'
-import { MONO_FONT, RADIUS, surfaces, textColor, textMuted, textSecondary, useIsDark } from '../ThemeContext'
+import { MONO_FONT, RADIUS, surfaces, textColor, textMuted, textSecondary, useAccent, useIsDark } from '../ThemeContext'
 
 const { Text } = Typography
 
@@ -39,6 +39,7 @@ export function WikiCheckPanel({ check, onOpen }: {
   onOpen: (target: string) => void
 }) {
   const isDark = useIsDark()
+  const accent = useAccent()
   const sf = surfaces(isDark)
   const [open, setOpen] = useState(false)
   if (!check) return null
@@ -70,7 +71,7 @@ export function WikiCheckPanel({ check, onOpen }: {
                   {f.names.slice(0, 12).map((n, j) => (
                     <span key={n}>
                       {j > 0 && ', '}
-                      <a role="button" onClick={() => onOpen(n)} style={{ fontFamily: MONO_FONT }}>{n}</a>
+                      <a role="button" onClick={() => onOpen(n)} style={{ fontFamily: MONO_FONT, color: accent }}>{n}</a>
                     </span>
                   ))}
                   {f.names.length > 12 && ` and ${f.names.length - 12} more`}
@@ -78,7 +79,7 @@ export function WikiCheckPanel({ check, onOpen }: {
               ) : (
                 <span>
                   {f.message}{' '}
-                  {f.entity && <Button size="small" type="link" style={{ padding: 0, height: 'auto' }} onClick={() => onOpen(f.entity)}>Open page</Button>}
+                  {f.entity && <a role="button" onClick={() => onOpen(f.entity)} style={{ color: accent }}>Open page</a>}
                 </span>
               )}
             </li>

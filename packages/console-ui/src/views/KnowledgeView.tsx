@@ -32,6 +32,7 @@ import {
 } from './knowledgeGraph'
 import { KnowledgeSync, SyncResultBanner } from './KnowledgeSync'
 import { KnowledgeTools } from './KnowledgeTools'
+import { pageTargetFor } from './KnowledgeEdits'
 import type { SyncResult } from '../components/MemorySyncTab'
 
 const RANGE_OPTIONS = [
@@ -96,6 +97,12 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
   const [range, setRange] = useState<number | null>(null)
   const rangeDays = range ?? overview?.capture_days ?? 30
   const [editing, setEditing] = useState<{ fact?: KnowledgeFact; review?: boolean } | null>(null)
+  // Ask the Tools view to open a page (from the fact graph's side panel).
+  const [toolFocus, setToolFocus] = useState<{ target: string; n: number } | null>(null)
+  const openWikiPage = (entity: string) => {
+    setToolFocus(prev => ({ target: entity, n: (prev?.n ?? 0) + 1 }))
+    setTab('tools')
+  }
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -137,7 +144,6 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
     setQuery(q)
     searchRef.current.query = q
     if (!q.trim()) { setResults(null); return }
-    setTab('graph')  // results show in the side panel beside the graph
     try { setResults(await bridge.knowledge_search(q)) } catch { setResults([]) }
   }
 
@@ -202,7 +208,13 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
   }
 
   const types = overview?.entity_types ?? []
-  const isStale = useMemo(() => staleCheck(overview?.installed_runnables), [overview])
+  // One installed list for the whole tab: discovery (what the Tools view
+  // uses) when it has run, else what the backend saw.
+  const installed = useMemo(
+    () => (runnables.length ? [...new Set(runnables.map(r => r.name))] : overview?.installed_runnables),
+    [runnables, overview],
+  )
+  const isStale = useMemo(() => staleCheck(installed), [installed])
   const staleCount = useMemo(
     () => (isStale ? (overview?.graph.nodes ?? []).filter(n => isStale(n.id)).length : 0),
     [overview, isStale],
@@ -220,59 +232,50 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
 
   return (
     <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, height: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <Input.Search
-          allowClear
-          placeholder="Search the wiki — hosts, files, jargon, tools…"
-          style={{ maxWidth: 420 }}
-          onSearch={runSearch}
-          onChange={e => { if (!e.target.value) runSearch('') }}
-        />
-        <Text style={{ color: textSecondary(isDark) }}>
-          {s ? `${s.entities} entities · ${s.approved} facts · ${s.observed} observed` : ''}
-        </Text>
-        <div style={{ flex: 1 }} />
-        <Space wrap>
-          <Tooltip title="How far back Capture and Suggest from chats read.">
-            <Select
-              aria-label="History range"
-              value={rangeDays}
-              onChange={v => setRange(v)}
-              options={RANGE_OPTIONS}
-              style={{ width: 130 }}
-            />
-          </Tooltip>
-          <Tooltip title="Reads this console's run history (which tools run one after another) and config (triggers, schedules, runbooks, file filters). What it finds stays on this console. No AI.">
-            <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture</Button>
-          </Tooltip>
-          {aiEnabled && (
-            <Tooltip title="Ask the model to suggest facts from your saved chats in the range. Chats already read are skipped, so re-running only reads what is new. Suggestions go to the inbox for you to review.">
-              <Button icon={<BulbOutlined />} loading={busy === 'distill'} onClick={distill}>Suggest from chats</Button>
-            </Tooltip>
-          )}
-          <KnowledgeSync onOpenSettings={() => onOpenSettings?.('memorySync')} onResult={setSyncResult} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>Add fact</Button>
-        </Space>
-      </div>
-      <SyncResultBanner result={syncResult} onClose={() => setSyncResult(null)} />
-
       <Tabs
         activeKey={tab}
         onChange={k => setTab(k as 'tools' | 'graph' | 'inbox')}
         items={[
           { key: 'tools', label: 'Tools' },
           { key: 'inbox', label: <Badge count={inboxCount} size="small" offset={[8, -2]}>Inbox</Badge> },
-          { key: 'graph', label: 'Graph' },
+          { key: 'graph', label: 'Fact graph' },
         ]}
+        tabBarExtraContent={<KnowledgeSync onOpenSettings={() => onOpenSettings?.('memorySync')} onResult={setSyncResult} />}
         style={{ marginBottom: -8 }}
       />
+      <SyncResultBanner result={syncResult} onClose={() => setSyncResult(null)} />
 
       {tab === 'tools' ? (
-        <KnowledgeTools runnables={runnables} active={active} onOpenSettings={onOpenSettings} />
+        <KnowledgeTools runnables={runnables} active={active} onOpenSettings={onOpenSettings} focus={toolFocus} />
       ) : loading && !overview ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin /></div>
       ) : tab === 'inbox' ? (
         <Inbox
+          toolbar={
+            <Space wrap>
+              <Text style={{ color: textSecondary(isDark) }}>
+                {s ? `${s.approved} facts · ${s.observed} observed` : ''}
+              </Text>
+              <Tooltip title="How far back Capture usage and Suggest from chats read.">
+                <Select
+                  aria-label="History range"
+                  value={rangeDays}
+                  onChange={v => setRange(v)}
+                  options={RANGE_OPTIONS}
+                  style={{ width: 130 }}
+                />
+              </Tooltip>
+              <Tooltip title="Reads this console's run history (which tools run one after another) and config (triggers, schedules, runbooks, file filters). What it finds stays on this console. No AI.">
+                <Button icon={<ReloadOutlined />} loading={busy === 'capture'} onClick={capture}>Capture usage</Button>
+              </Tooltip>
+              {aiEnabled && (
+                <Tooltip title="Ask the model to suggest facts from your saved chats in the range. Chats already read are skipped, so re-running only reads what is new. Suggestions land here for you to review.">
+                  <Button icon={<BulbOutlined />} loading={busy === 'distill'} onClick={distill}>Suggest from chats</Button>
+                </Tooltip>
+              )}
+              <Button icon={<PlusOutlined />} onClick={() => setEditing({})}>Add fact</Button>
+            </Space>
+          }
           facts={overview?.inbox ?? []}
           onApprove={f => review(f, true)}
           onAddToPage={async f => {
@@ -292,6 +295,13 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
         <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <Input.Search
+                allowClear
+                placeholder="Search facts — hosts, files, jargon, tools…"
+                style={{ maxWidth: 360 }}
+                onSearch={runSearch}
+                onChange={e => { if (!e.target.value) runSearch('') }}
+              />
               <TypeFilter types={types} hidden={hidden} onToggle={t => setHidden(prev => {
                 const next = new Set(prev)
                 if (next.has(t)) next.delete(t)
@@ -339,6 +349,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
             onEntity={e => { setSelected(e); setResults(null) }}
             onEdit={f => setEditing({ fact: f })}
             onRetire={retire}
+            onOpenWikiPage={openWikiPage}
             pinned={overview?.pinned ?? []}
             pins={pins}
           />
@@ -533,7 +544,8 @@ export interface Pins {
   onPin: (f: KnowledgeFact, on: boolean) => void
 }
 
-function SidePanel({ query, results, page, onEntity, onEdit, onRetire, pinned = [], pins, isStale = null }: {
+function SidePanel({ query, results, page, onEntity, onEdit, onRetire, onOpenWikiPage, pinned = [], pins, isStale = null }: {
+  onOpenWikiPage?: (entity: string) => void
   query: string
   pinned?: KnowledgeFact[]
   pins?: Pins
@@ -567,6 +579,9 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, pinned = 
           <span style={{ width: 10, height: 10, borderRadius: 5, background: typeColor(page.type), display: 'inline-block' }} />
           <Text style={{ color: textMuted(isDark) }}>{page.type}</Text>
           {isStale?.(page.entity) && <Tag style={{ marginInlineEnd: 0 }}>not installed</Tag>}
+          {onOpenWikiPage && /^(runnable|service|term|topic|team|runbook|host):/.test(page.entity) && (
+            <a role="button" onClick={() => onOpenWikiPage(page.entity)} style={{ marginLeft: 'auto', fontSize: 12 }}>Open wiki page</a>
+          )}
         </div>
         <div style={{ fontSize: 18, fontWeight: 600, fontFamily: MONO_FONT, color: textColor(isDark), wordBreak: 'break-all', margin: '2px 0 8px' }}>
           {page.name}
@@ -694,8 +709,9 @@ function FactRow({ fact, current, onEntity, onEdit, onRetire, actions, pins }: {
 
 // ── inbox ────────────────────────────────────────────────────────────────────
 
-function Inbox({ facts, onApprove, onAddToPage, onReject, onEdit, onEntity, pins }: {
+function Inbox({ facts, toolbar, onApprove, onAddToPage, onReject, onEdit, onEntity, pins }: {
   facts: KnowledgeFact[]
+  toolbar?: React.ReactNode
   pins?: Pins
   onApprove: (f: KnowledgeFact) => void
   onAddToPage?: (f: KnowledgeFact) => void
@@ -705,19 +721,23 @@ function Inbox({ facts, onApprove, onAddToPage, onReject, onEdit, onEntity, pins
 }) {
   const isDark = useIsDark()
   const sf = surfaces(isDark)
-  if (facts.length === 0) {
-    return <Empty style={{ marginTop: 60 }} description={<span style={{ color: textSecondary(isDark) }}>No facts waiting for review.</span>} />
-  }
   return (
-    <div style={{ overflow: 'auto', maxWidth: 900, background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, padding: '4px 14px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflow: 'auto' }}>
+      {toolbar}
+      {facts.length === 0 ? (
+        <Empty style={{ marginTop: 40 }} description={<span style={{ color: textSecondary(isDark) }}>No facts waiting for review.</span>} />
+      ) : (
+    <div style={{ maxWidth: 900, background: sf.raised, border: `1px solid ${sf.border}`, borderRadius: RADIUS.md, padding: '4px 14px' }}>
       <div style={{ color: textSecondary(isDark), padding: '8px 0' }}>
-        Proposed by the agent, by an MCP client such as Claude Code, or suggested from your chats. Nothing joins the wiki until you approve it.
+        Proposed by the agent, by an MCP client such as Claude Code, or suggested from your chats. Nothing joins the wiki until you approve it. <b>Add to page</b> puts a fact on its page in the team wiki; <b>Approve</b> keeps it as a fact.
       </div>
-      {facts.map(f => (
+      {facts.map(f => {
+        const target = f.scope !== 'local' ? pageTargetFor(f) : null
+        return (
         <FactRow key={f.id} fact={f} onEntity={onEntity} pins={pins} actions={
           <Space size={4}>
-            {onAddToPage && f.scope !== 'local' && (
-              <Tooltip title="Approve it and add it to its page in the team wiki, as an edit you propose later">
+            {onAddToPage && target && (
+              <Tooltip title={`Approve it and add it to ${target.path} under \u201c${target.heading}\u201d, as an edit you propose later`}>
                 <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => onAddToPage(f)}>Add to page</Button>
               </Tooltip>
             )}
@@ -726,14 +746,21 @@ function Inbox({ facts, onApprove, onAddToPage, onReject, onEdit, onEntity, pins
             </Tooltip>
             <Button size="small" icon={<EditOutlined />} onClick={() => onEdit(f)}>Edit</Button>
             <Popconfirm title="Reject this fact?" description="It leaves the inbox and isn't added to the wiki." okText="Reject" okButtonProps={{ danger: true }} onConfirm={() => onReject(f)}>
-              <Button size="small" danger icon={<CloseOutlined />}>Reject</Button>
+              {/* Ant's danger red is ~2.8:1 on the gunmetal card; lift it for text. */}
+              <Button size="small" danger icon={<CloseOutlined />} style={isDark ? { color: DANGER_TEXT_DARK, borderColor: DANGER_TEXT_DARK } : undefined}>Reject</Button>
             </Popconfirm>
           </Space>
         } />
-      ))}
+        )
+      })}
+    </div>
+      )}
     </div>
   )
 }
+
+// Danger text that clears 4.5:1 on the dark card (Ant's #dc4446 is ~2.8:1).
+const DANGER_TEXT_DARK = '#ff8f87'
 
 // ── add / edit / edit-and-approve ────────────────────────────────────────────
 

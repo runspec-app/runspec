@@ -81,7 +81,17 @@ def new_page(entity: str, description: str = "") -> str:
     if kind == "runnable":
         for heading in RUNNABLE_SECTIONS:
             lines += [f"## {heading}", ""]
+            if heading == "What it's for" and description:
+                lines += [description, ""]
     return "\n".join(lines)
+
+
+def text_hash(text: str) -> str:
+    """A short fingerprint of a page's text (trailing newlines ignored), to tell
+    whether a draft is still the version that was proposed."""
+    import hashlib
+
+    return hashlib.sha256(text.rstrip("\n").encode("utf-8")).hexdigest()[:16]
 
 
 def target_for(fact: dict[str, Any]) -> tuple[str, str] | None:

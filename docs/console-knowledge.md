@@ -8,6 +8,11 @@ Where [agent memory](console-agent.md) holds a handful of machine-local notes, t
 wiki is structured: every fact is *about* one or more entities, and the entities
 link together through the facts they share.
 
+The tab has three views: **Tools** (the team's pages, the default), **Inbox**
+(facts waiting for review, plus the buttons that gather more) and **Fact graph**
+(every fact drawn as a graph, with its own search). **Pull** sits beside the
+view names and updates all three from the team's wiki repo.
+
 ## Tools: the team's pages
 
 The **Tools** view (the tab's default) is the team tools wiki. It lists every
@@ -42,7 +47,8 @@ You change the team's pages from the console as **page edits**: the page's new
 text, kept on this console (`{app_dir}/knowledge/drafts/`) until you propose it.
 
 - **Add to page** (on an inbox fact, or on a team fact under a page) approves the
-  fact and adds it as a bullet to its page: on a runnable's page, how tools
+  fact and adds it as a bullet to its page (the button only shows on facts that
+  have a page to go on, and its tooltip names the page and section): on a runnable's page, how tools
   connect (`pairing`, `effect`) goes under **Works with** and everything else
   under **Watch out for**; other pages get a **Notes** section. A fact about
   several things goes on the first of runnable, service, term, topic, team,
@@ -50,17 +56,25 @@ text, kept on this console (`{app_dir}/knowledge/drafts/`) until you propose it.
   (`status: draft`). Facts that stay on this console can't be added.
 - **Add all facts to pages** does that once for every approved team fact that
   isn't on a page yet (yours and the team's; not the built-in ones). Use it when
-  you move a team from facts to pages.
+  you move a team from facts to pages. It asks before it changes any pages.
 - **Edit page** (or **Start a page** on a tool with none) opens the page's
-  Markdown to change it by hand.
+  Markdown to change it by hand. A new runnable page starts with the runnable's
+  own description under **What it's for**. Closing the editor with unsaved
+  changes asks first.
 
 An edited page shows its diff against the team's page, with **Edit** and
-**Discard**, and the index marks it. **Propose changes** pushes every page edit
+**Discard** (which asks first), and the index marks it. **Propose changes** pushes every page edit
 in one commit to your own branch `contrib/<lane>` (never a force push) and gives
 you a link that opens the merge request into the team branch on GitLab (or the
 compare view on GitHub). The team reviews it there like any change to the repo.
 Your edits stay on this console until a Pull shows the team's page matching
 them, so you can keep editing and propose again; the same branch updates.
+
+Once proposed, the bar above the Tools view says the pages are *proposed in
+`contrib/<lane>`, waiting for the team to merge*, with an **Open merge request**
+link, and each page's header says the same. Change a proposed page again and it
+counts as *not proposed yet* until the next **Propose changes**, which only
+lists the pages that changed.
 
 ### The wiki check
 
@@ -126,8 +140,11 @@ fact written before a group existed joins it once it does. Very common words
 such as `local` are only linked when a fact names them as a subject, not when
 they appear in a sentence.
 
-Nothing proposed joins the wiki until you approve it in the **Inbox** tab, where
-you can approve, edit and approve, or reject each fact.
+**Capture usage**, **Suggest from chats**, the range they read and **Add fact**
+are at the top of the **Inbox** view. Nothing proposed joins the wiki until you
+approve it there, where you can add each fact to its page, approve it as a fact,
+edit and approve it, or reject it. A fact's side panel in the Fact graph has an
+**Open wiki page** link to the page it belongs on.
 
 A runnable with past runs that isn't installed on any connected host now is
 drawn faded and marked *not installed*; tick **Hide not installed** to take

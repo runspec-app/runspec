@@ -814,14 +814,31 @@ class KnowledgeMixin:
         merged): ``{drafts: [{path, entity, new, added, removed, diff}],
         drafted: [fact ids already turned into page edits]}``."""
         root = self._knowledge_store().root
+        try:
+            sync = self._memory_sync_state()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — no Memory Sync on this bridge
+            sync = {}
+        proposed = (
+            sync.get("proposed") if isinstance(sync.get("proposed"), dict) else {}
+        )
+        drafts = []
+        for d in wiki_drafts.list_drafts(root):
+            text = wiki_drafts.read_draft(root, d["path"]) or ""
+            d["proposed"] = proposed.get(d["path"]) == wiki_drafts.text_hash(text)
+            drafts.append(d)
         return {
-            "drafts": wiki_drafts.list_drafts(root),
+            "drafts": drafts,
             "drafted": self._drafted_ids(),
+            "proposed_branch": str(sync.get("last_propose_branch") or ""),
+            "merge_request_url": str(sync.get("last_propose_url") or ""),
         }
 
-    def knowledge_draft_text(self, path: str, entity: str = "") -> dict[str, Any]:
+    def knowledge_draft_text(
+        self, path: str, entity: str = "", description: str = ""
+    ) -> dict[str, Any]:
         """The text to edit for ``path``: its draft, else the team's page, else a
-        new page. ``base`` is the team's page (``None`` when it doesn't exist)."""
+        new page (with ``description``, the runnable's own, under "What it's
+        for"). ``base`` is the team's page (``None`` when it doesn't exist)."""
         root = self._knowledge_store().root
         try:
             path = str(path or "") or wiki_drafts.page_path_for(str(entity or ""))
@@ -831,7 +848,9 @@ class KnowledgeMixin:
         return {
             "ok": True,
             "path": path,
-            "text": wiki_drafts.current_text(root, path, str(entity or "")),
+            "text": wiki_drafts.current_text(
+                root, path, str(entity or ""), str(description or "")
+            ),
             "base": wiki_drafts.base_text(root, path),
             "drafted": wiki_drafts.read_draft(root, path) is not None,
         }
