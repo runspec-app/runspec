@@ -343,3 +343,67 @@ def test_api_key_command_forwarded_as_absolute_path(monkeypatch, tmp_path):
         bridge._get_adapter()
     _, kwargs = load.call_args
     assert kwargs["api_key_command"] == f"{helper} --scope llm"
+
+
+# ── GitHub Copilot + the provider list ───────────────────────────────────────
+
+
+def test_copilot_settings_threaded():
+    cfg = {
+        "llm": {
+            "provider": "copilot",
+            "model": "gpt-5",
+            "api_key": "ghp_x",
+            "cli_path": " /opt/copilot ",
+            "effort": "high",
+            "max_tokens": 9000,  # not a Copilot setting: never forwarded
+            "base_url": "",
+        }
+    }
+    with patch(LOAD, return_value="ADAPTER") as load:
+        _StubBridge(cfg)._get_adapter()
+    _, kwargs = load.call_args
+    assert kwargs["cli_path"] == "/opt/copilot"
+    assert kwargs["effort"] == "high"
+    assert kwargs["api_key"] == "ghp_x"
+    assert "max_tokens" not in kwargs
+
+
+def test_cli_path_only_reaches_copilot():
+    cfg = {"llm": {"provider": "anthropic", "cli_path": "/opt/copilot"}}
+    with patch(LOAD, return_value="ADAPTER") as load:
+        _StubBridge(cfg)._get_adapter()
+    assert "cli_path" not in load.call_args[1]
+
+
+def test_list_providers_puts_builtins_first_then_plugins():
+    def mycorp_factory(tenant_id: str = "", **kwargs):  # pragma: no cover - never built
+        raise AssertionError
+
+    with patch.dict(base._REGISTRY, {"mycorp": mycorp_factory}):
+        rows = _StubBridge({"llm": {"provider": "mycorp"}}).list_providers()
+    values = [r["value"] for r in rows]
+    assert values[:5] == ["anthropic", "openai", "bedrock", "langserve", "copilot"]
+    assert rows[4]["label"] == "GitHub Copilot"
+    mycorp = next(r for r in rows if r["value"] == "mycorp")
+    assert mycorp["kind"] == "plugin" and mycorp["keys"] == ["tenant_id"]
+    assert all(r["kind"] == "builtin" for r in rows[:5])
+
+
+def test_list_providers_shows_a_configured_module_path():
+    rows = _StubBridge({"llm": {"provider": "json:JSONDecoder"}}).list_providers()
+    path = rows[-1]
+    assert path["value"] == "json:JSONDecoder" and path["kind"] == "path"
+    assert {"anthropic", "copilot"} <= {r["value"] for r in rows}
+
+
+def test_copilot_status_without_the_sdk_says_how_to_install():
+    class B(_StubBridge):
+        copilot_status = Bridge.copilot_status
+
+    with patch(
+        "runspec_console.adapters.copilot._load_sdk", side_effect=ImportError("no sdk")
+    ):
+        out = B({"llm": {}}).copilot_status({"api_key": ""})
+    assert out["ok"] is False
+    assert "runspec-console[copilot]" in out["message"]

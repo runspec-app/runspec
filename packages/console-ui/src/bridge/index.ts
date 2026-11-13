@@ -2863,7 +2863,19 @@ export interface BridgeApi {
   check_for_update: () => Promise<{ ok: boolean; current: string; latest: string | null; update_available: boolean }>
   docs_url: () => Promise<string>
   open_docs: () => Promise<void>
-  list_providers: () => Promise<{ value: string; label: string }[]>
+  // Built-ins first (kind "builtin"), then providers installed packages add
+  // ("plugin"), then a configured module:Class path ("path"). `keys` = extra
+  // [llm] settings a plugin's adapter declares. Older backends omit kind/keys.
+  list_providers: () => Promise<{ value: string; label: string; kind?: 'builtin' | 'plugin' | 'path'; keys?: string[] }[]>
+  // Settings → Model / API → GitHub Copilot → Check sign-in. `settings` = the
+  // unsaved form's api_key / api_key_command / cli_path. Never rejects.
+  copilot_status: (settings?: { api_key?: string; api_key_command?: string; cli_path?: string }) => Promise<{
+    ok: boolean
+    login?: string
+    host?: string
+    message?: string
+    models?: { id: string; name: string; enabled: boolean; multiplier?: number | null }[]
+  }>
   save_config: (data: Record<string, unknown>) => Promise<void>
   // The built-in base system prompt (what runs when `[llm] system` is unset).
   // Settings → Model / API pre-fills the field with it; a saved value equal to

@@ -79,6 +79,7 @@ pip install "runspec-console[anthropic]"   # Claude
 pip install "runspec-console[openai]"      # OpenAI
 pip install "runspec-console[bedrock]"     # Claude via AWS Bedrock
 pip install "runspec-console[langserve]"   # corporate LLM gateway (LangServe /invoke)
+pip install "runspec-console[copilot]"     # GitHub Copilot (your Copilot plan)
 ```
 
 ### LangServe gateway (no Anthropic/OpenAI account)

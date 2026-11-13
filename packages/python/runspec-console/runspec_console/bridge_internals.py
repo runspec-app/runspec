@@ -1639,21 +1639,105 @@ class InternalsMixin:
             import_plugin_modules(list(modules))
         self._plugins_imported = True
 
-    def list_providers(self) -> list[dict[str, str]]:
-        """Resolvable LLM providers as {value, label} — built-ins plus any
-        discovered plugins (entry points + `[plugins] modules`). Drives the
-        Settings provider dropdown so installed plugin providers show up."""
+    def list_providers(self) -> list[dict[str, Any]]:
+        """Every LLM provider the Settings dropdown offers, as
+        ``{value, label, kind, keys}``: the built-ins first (``kind="builtin"``),
+        then any an installed package adds (entry points / ``[plugins] modules``,
+        ``kind="plugin"``), then a configured ``module:Class`` path that neither
+        lists (``kind="path"``) — so a plugin provider sits *beside* the built-ins
+        and switching between them is one click. ``keys`` are the extra ``[llm]``
+        settings a plugin's adapter declares, which the Settings tab keeps per
+        provider when switching."""
         cfg = self.get_config()
         self._ensure_plugins_imported(cfg)
-        from .adapters.base import available_providers
+        from .adapters.base import (
+            adapter_config_keys,
+            available_providers,
+            builtin_provider_names,
+        )
 
         labels = {
             "anthropic": "Anthropic",
             "openai": "OpenAI",
             "bedrock": "AWS Bedrock",
             "langserve": "LangServe gateway",
+            "copilot": "GitHub Copilot",
         }
-        return [{"value": p, "label": labels.get(p, p)} for p in available_providers()]
+        builtins = builtin_provider_names()
+        names = available_providers()
+        out: list[dict[str, Any]] = [
+            {"value": p, "label": labels[p], "kind": "builtin", "keys": []}
+            for p in labels
+            if p in builtins and p in names
+        ]
+        for p in names:
+            if p in builtins:
+                continue
+            out.append(
+                {
+                    "value": p,
+                    "label": p,
+                    "kind": "plugin",
+                    "keys": sorted(adapter_config_keys(p)),
+                }
+            )
+        current = str((cfg.get("llm") or {}).get("provider") or "").strip()
+        if current and current not in names:
+            out.append(
+                {
+                    "value": current,
+                    "label": current,
+                    "kind": "path",
+                    "keys": sorted(adapter_config_keys(current)),
+                }
+            )
+        return out
+
+    def copilot_status(self, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Settings → Model / API → GitHub Copilot's *Check sign-in*: start the
+        Copilot runtime and report who is signed in and which models the account
+        can use. ``settings`` (the unsaved form: ``api_key`` / ``api_key_command``
+        / ``cli_path``) wins over the saved ``[llm]``. Never raises."""
+        cfg = self.get_config()
+        llm = dict(cfg.get("llm") or {})
+        if isinstance(settings, dict):
+            for key in ("api_key", "api_key_command", "cli_path"):
+                if key in settings:
+                    llm[key] = settings[key]
+        kwargs: dict[str, Any] = {}
+        if str(llm.get("api_key") or "").strip():
+            kwargs["api_key"] = str(llm["api_key"])
+        if str(llm.get("api_key_command") or "").strip():
+            from .adapters.base import api_key_command_env, prepare_api_key_command
+
+            kwargs["api_key_command"] = prepare_api_key_command(
+                str(llm["api_key_command"]), api_key_command_env()
+            )
+        if str(llm.get("cli_path") or "").strip():
+            kwargs["cli_path"] = str(llm["cli_path"]).strip()
+        try:
+            from .adapters.copilot import CopilotAdapter
+
+            return CopilotAdapter(**kwargs).status()
+        except ImportError:
+            return {
+                "ok": False,
+                "login": "",
+                "models": [],
+                "message": (
+                    "The Copilot SDK isn't installed. Install it with: "
+                    "pip install runspec-console[copilot]"
+                ),
+            }
+        except Exception as exc:  # noqa: BLE001 - shown in Settings
+            from .adapters.base import describe_exception
+
+            return {
+                "ok": False,
+                "login": "",
+                "models": [],
+                "message": describe_exception(exc),
+            }
 
     def _get_adapter(
         self, system_override: str | None = None, model_override: str | None = None
@@ -1728,8 +1812,13 @@ class InternalsMixin:
             "anthropic",
             "bedrock",
             "langserve",
+            "copilot",
         }:
             kwargs["effort"] = effort
+        # Copilot-only: a Copilot CLI runtime to use instead of the one the SDK
+        # downloads on first use (air-gapped / locked-down machines).
+        if provider == "copilot" and str(llm_cfg.get("cli_path") or "").strip():
+            kwargs["cli_path"] = str(llm_cfg["cli_path"]).strip()
         # Built-in `anthropic`-only extras (direct Claude API): 1h prompt cache,
         # refusal fallbacks, thinking summaries. Forwarded only to that provider so
         # bedrock / langserve / plugin adapters never see them.
@@ -1770,6 +1859,7 @@ class InternalsMixin:
             "openai",
             "bedrock",
             "langserve",
+            "copilot",
         }:
             kwargs["model_limits"] = llm_cfg["model_limits"]
         # The block above is an allowlist of keys the built-in adapters
@@ -1793,7 +1883,9 @@ class InternalsMixin:
 
             adapter = load_adapter(provider, **kwargs)
         except ImportError as exc:
-            builtins = {"anthropic", "openai", "bedrock", "langserve"}
+            from .adapters.base import builtin_provider_names
+
+            builtins = builtin_provider_names()
             if provider in builtins:
                 raise ImportError(
                     f"Model provider '{provider}' requires its optional dependency. "

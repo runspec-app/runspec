@@ -52,8 +52,8 @@ Set in **Settings → Model / API**.
 
 | Key | Meaning |
 |---|---|
-| `provider` | `anthropic`, `openai`, `bedrock`, `langserve`, or a [plugin adapter](console-adapters.md) |
-| `api_key` | Static API key |
+| `provider` | `anthropic`, `openai`, `bedrock`, `langserve`, `copilot` ([GitHub Copilot](#llm-copilot)), or a [plugin adapter](console-adapters.md) |
+| `api_key` | Static API key (for `copilot`: an optional GitHub token) |
 | `api_key_command` / `api_key_ttl_ms` | Instead of a static key: a command whose stdout is a short-lived token, re-run after the TTL |
 | `base_url` | Corporate proxy / gateway endpoint |
 | `model` / `models` | Active model id / the dropdown's list of available ids |
@@ -76,6 +76,8 @@ Set in **Settings → Model / API**.
 | `tool_index` | Search mode only: fold the always-on one-line-per-runnable catalogue menu into the prompt (default **true**). `false` ⇒ the agent discovers purely via `search_runnables` |
 | `tool_index_limit` | Search mode only: max runnables listed in the catalogue menu (default **300**; `0` = no limit). Beyond it the agent still finds runnables via `search_runnables`; the console logs the overflow and the context gauge shows *N beyond menu*. To *reduce* the surface instead, hide runnables via `[tool_visibility] hidden_from_agent` |
 | `tool_output_cap` | Truncation cap for tool results returned to the model |
+| `cli_path` | **`copilot` provider only.** A Copilot CLI runtime to use instead of the one the SDK downloads on first use (machines that can't reach GitHub releases) |
+| `saved_providers` | Written by Settings: the settings of providers you switched away from, one table per provider (see [below](#llm-saved-providers)). The console never reads it at run time |
 
 Bedrock adds the standard AWS credential chain (`aws_region`,
 `aws_access_key`, `aws_secret_key`, `aws_session_token`) or a
@@ -85,6 +87,60 @@ Bedrock adds the standard AWS credential chain (`aws_region`,
 over `/stream_events`, falling back to `/invoke` if unavailable) and
 `cache_markers` (default **off** — add Anthropic `cache_control` breakpoints for a
 gateway that forwards them) — see [adapters](console-adapters.md).
+
+### GitHub Copilot {#llm-copilot}
+
+`provider = "copilot"` uses your GitHub Copilot plan, through GitHub's official
+[Copilot SDK](https://github.com/github/copilot-sdk). Install the extra:
+
+```
+pip install "runspec-console[copilot]"
+```
+
+- **Sign-in.** Leave the GitHub token blank to use your `copilot login` on this
+  machine, or paste a GitHub token, or set a token command such as
+  `gh auth token` under Advanced. **Check sign-in** in Settings → Model / API
+  shows who is signed in and adds the models your account can use. Your
+  organisation's Copilot policy has to allow the Copilot CLI.
+- **Cost.** About one premium request per chat turn (times the model's
+  multiplier). Tool steps inside the turn don't add requests.
+- **The runtime.** The SDK runs the Copilot CLI runtime (about 180 MB), which it
+  downloads from GitHub on first use. On a machine that can't, install the
+  Copilot CLI another way and point `cli_path` at it.
+- **What Copilot can do.** Only what the console offers: each Copilot session
+  gets the console's tools and system prompt, and none of Copilot's own shell,
+  file or web tools, repo instructions, skills or memory. When Copilot asks for
+  a tool, the console runs it through its normal approval gate and hands the
+  result back to the same Copilot turn.
+- `effort` is passed on to models that take a reasoning effort; `max_tokens`
+  doesn't apply (Copilot sets its own limits).
+
+GitHub Models, the old OpenAI-style endpoint for GitHub-hosted models, was
+retired in July 2026, so the SDK is the supported route.
+
+### Switching providers {#llm-saved-providers}
+
+The Provider dropdown lists the built-in providers, then any that an installed
+package adds (an [adapter plugin](console-adapters.md)), then a `module:Class`
+provider set in config. When you switch, Settings parks the old provider's
+connection settings (key, token command, URL, models, and any settings its
+plugin adapter declares) under `[llm.saved_providers.<name>]` and brings back
+the new one's, so switching back loses nothing:
+
+```toml
+[llm]
+provider = "copilot"
+model    = "claude-sonnet-4.6"
+models   = ["claude-sonnet-4.6", "gpt-5"]
+
+[llm.saved_providers.mycorp]
+base_url        = "https://gateway.corp/my-chain"
+api_key_command = "vend-token --print"
+model           = "corp-large"
+```
+
+The system prompt, tool mode, `effort`, `max_tokens` and the other console-wide
+settings are shared by every provider.
 
 ### `effort` — how hard the model thinks {#llm-effort}
 

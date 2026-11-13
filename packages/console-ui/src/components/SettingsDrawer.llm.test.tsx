@@ -31,10 +31,12 @@ const INITIAL_CONFIG: Record<string, unknown> = {
   },
 }
 
-const { getConfig, saveConfig, defaultSystemPrompt } = vi.hoisted(() => ({
+const { getConfig, saveConfig, defaultSystemPrompt, listProviders, copilotStatus } = vi.hoisted(() => ({
   getConfig: vi.fn(),
   saveConfig: vi.fn(),
   defaultSystemPrompt: vi.fn(),
+  listProviders: vi.fn(async () => [] as unknown[]),
+  copilotStatus: vi.fn(),
 }))
 
 const DEFAULT_PROMPT = 'You are an assistant embedded in runspec-console.\n\nAsk one brief clarifying question instead of guessing.'
@@ -48,7 +50,8 @@ vi.mock('../bridge', () => ({
         if (prop === 'get_config') return getConfig
         if (prop === 'save_config') return saveConfig
         if (prop === 'config_dir') return async () => 'C:/cfg'
-        if (prop === 'list_providers') return async () => []
+        if (prop === 'list_providers') return listProviders
+        if (prop === 'copilot_status') return copilotStatus
         if (prop === 'default_system_prompt') return defaultSystemPrompt
         return vi.fn()
       },
@@ -189,5 +192,110 @@ describe('LlmTab system prompt default', () => {
 
     await act(async () => { await user.click(screen.getByText('Reset to default')) })
     expect((screen.getByDisplayValue(/You are an assistant embedded/) as HTMLTextAreaElement).value).toBe(DEFAULT_PROMPT)
+  })
+})
+
+
+describe('LlmTab switching providers', () => {
+  const PROVIDERS = [
+    { value: 'anthropic', label: 'Anthropic', kind: 'builtin', keys: [] },
+    { value: 'copilot', label: 'GitHub Copilot', kind: 'builtin', keys: [] },
+    { value: 'mycorp', label: 'mycorp', kind: 'plugin', keys: ['tenant_id'] },
+  ]
+  const CORP = {
+    llm: {
+      provider: 'mycorp',
+      base_url: 'https://gateway.corp/chain',
+      api_key_command: 'vend-token --print',
+      tenant_id: 'ops',
+      model: 'corp-large',
+      models: ['corp-large'],
+    },
+  }
+
+  beforeEach(() => {
+    saveConfig.mockReset().mockResolvedValue(undefined)
+    defaultSystemPrompt.mockReset().mockResolvedValue(DEFAULT_PROMPT)
+    listProviders.mockReset().mockResolvedValue(PROVIDERS)
+    getConfig.mockReset().mockResolvedValue(CORP)
+  })
+
+  async function pickProvider(user: ReturnType<typeof userEvent.setup>, label: string) {
+    await user.click(screen.getByLabelText('Provider'))
+    await user.click(await screen.findByTitle(label))
+  }
+
+  it('lists the plugin provider beside the built-ins', async () => {
+    render(<LlmTab />)
+    await screen.findByDisplayValue('https://gateway.corp/chain')
+    const user = userEvent.setup()
+    await user.click(screen.getByLabelText('Provider'))
+    expect(await screen.findByText('Built in')).toBeTruthy()
+    expect(screen.getByText('From installed packages')).toBeTruthy()
+    expect(screen.getByTitle('GitHub Copilot')).toBeTruthy()
+  })
+
+  it('parks the plugin\'s settings when switching to Copilot and saving', async () => {
+    render(<LlmTab />)
+    await screen.findByDisplayValue('https://gateway.corp/chain')
+    const user = userEvent.setup()
+    await pickProvider(user, 'GitHub Copilot')
+    expect(screen.queryByDisplayValue('https://gateway.corp/chain')).toBeNull()
+    await screen.findByText('Check sign-in')
+
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    const { llm } = saveConfig.mock.calls[0][0] as { llm: Record<string, unknown> }
+    expect(llm.provider).toBe('copilot')
+    expect(llm.base_url).toBeUndefined()
+    expect(llm.api_key_command).toBeUndefined()
+    expect(llm.saved_providers).toEqual({
+      mycorp: {
+        base_url: 'https://gateway.corp/chain',
+        api_key_command: 'vend-token --print',
+        tenant_id: 'ops',
+        model: 'corp-large',
+        models: ['corp-large'],
+      },
+    })
+  })
+
+  it('brings the plugin\'s settings back when switching back', async () => {
+    render(<LlmTab />)
+    await screen.findByDisplayValue('https://gateway.corp/chain')
+    const user = userEvent.setup()
+    await pickProvider(user, 'GitHub Copilot')
+    await screen.findByText('Check sign-in')
+    await pickProvider(user, 'mycorp')
+    await screen.findByDisplayValue('https://gateway.corp/chain')
+
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    const { llm } = saveConfig.mock.calls[0][0] as { llm: Record<string, unknown> }
+    expect(llm).toEqual(CORP.llm)
+  })
+
+  it('Check sign-in shows the account and adds its models', async () => {
+    copilotStatus.mockReset().mockResolvedValue({
+      ok: true,
+      login: 'octocat',
+      models: [
+        { id: 'gpt-5', name: 'GPT-5', enabled: true },
+        { id: 'blocked', name: 'Blocked', enabled: false },
+      ],
+    })
+    getConfig.mockReset().mockResolvedValue({ llm: { provider: 'copilot' } })
+    render(<LlmTab />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /Check sign-in/ }))
+    await screen.findByText('Signed in to Copilot as octocat')
+    await user.click(screen.getByRole('button', { name: 'Add the 1 models it can use' }))
+
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
+    const { llm } = saveConfig.mock.calls[0][0] as { llm: Record<string, unknown> }
+    expect(llm.models).toEqual(['gpt-5'])
+    expect(llm.model).toBe('gpt-5')
+    expect(copilotStatus).toHaveBeenCalledWith({ api_key: '', api_key_command: '', cli_path: '' })
   })
 })

@@ -50,7 +50,7 @@ Windows runnable pack (see below). Other extras you can add now or later:
 
 | Extra | What it enables |
 |---|---|
-| `anthropic` / `openai` / `bedrock` / `langserve` | AI provider adapters (pick at least one) |
+| `anthropic` / `openai` / `bedrock` / `langserve` / `copilot` | AI provider adapters (pick at least one; `copilot` uses your GitHub Copilot plan) |
 | `credentials` | Named credentials with secrets in the OS keychain |
 | `git-sync` | Config Sync — pull team config from a git repo |
 | `schedule` | Cron/interval schedules |
@@ -126,7 +126,7 @@ models   = ["claude-sonnet-4-6"]
     If static API keys aren't allowed, `api_key_command` runs a command whose
     output is used as a short-lived token (with `api_key_ttl_ms` controlling
     refresh), and `base_url` points the adapter at an internal proxy. AWS
-    Bedrock and LangServe gateway adapters are also available. See the
+    Bedrock, LangServe gateway and GitHub Copilot adapters are also available. See the
     [config reference](console-reference.md#llm) for every knob.
 
 ---
