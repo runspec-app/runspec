@@ -54,7 +54,7 @@ describe('Tools view page edits', () => {
     render(<KnowledgeTools runnables={[rn('cron'), rn('df')]} active />)
     await waitFor(() => expect(screen.getByTestId('page-draft')).toBeTruthy())
     expect(screen.getByTestId('draft-diff').textContent).toContain('+- remove by --match')
-    expect(screen.getByLabelText('edited')).toBeTruthy()  // marked in the index
+    expect(screen.getByTestId('tool-cron').getAttribute('aria-label')).toBe('cron, has a team page, edited on this console')  // marked in the index
     // Facts already drafted, and built-in ones, aren't offered again.
     await waitFor(() => expect(screen.getByText('clear removes every line')).toBeTruthy())
     expect(screen.queryByText('already on a page')).toBeNull()
@@ -76,6 +76,13 @@ describe('Tools view page edits', () => {
     await waitFor(() => expect(m.draftText).toHaveBeenCalledWith('runnables/df.md', 'runnable:df', ''))
     const box = await screen.findByLabelText('Page Markdown')
     fireEvent.change(box, { target: { value: '---\ntype: Runnable\n---\n\n# df\n\n## Works with\n\n- journal-vacuum\n' } })
+    // Preview renders the Markdown without the frontmatter, and Write goes back to the text.
+    fireEvent.click(screen.getByText('Preview'))
+    const preview = await screen.findByTestId('page-preview')
+    expect(preview.textContent).toContain('journal-vacuum')
+    expect(preview.textContent).not.toContain('type: Runnable')
+    fireEvent.click(screen.getByText('Write'))
+    await screen.findByLabelText('Page Markdown')
     fireEvent.click(screen.getByRole('button', { name: 'Save edit' }))
     await waitFor(() => expect(m.draftSave).toHaveBeenCalledWith('runnables/df.md', expect.stringContaining('journal-vacuum')))
   })

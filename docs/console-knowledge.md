@@ -64,7 +64,7 @@ text, kept on this console (`{app_dir}/knowledge/drafts/`) until you propose it.
   isn't on a page yet (yours and the team's; not the built-in ones). Use it when
   you move a team from facts to pages. It asks before it changes any pages.
 - **Edit page** (or **Start a page** on a tool with none) opens the page's
-  Markdown to change it by hand. A new runnable page starts with the runnable's
+  Markdown to change it by hand (**Preview** shows how it will read). A new runnable page starts with the runnable's
   own description under **What it's for**. Closing the editor with unsaved
   changes asks first.
 
