@@ -592,7 +592,7 @@ class _Runtime:
         assert conv.events is not None
         text = ""
         streamed: set[str] = set()
-        usage = SimpleNamespace(input_tokens=0, output_tokens=0)
+        usage = new_usage()
         while True:
             if cancelled.is_set():
                 await self._close(conv)
@@ -611,8 +611,7 @@ class _Runtime:
                     text += delta
                     emit(("text", delta))
             elif isinstance(data, sdk.AssistantUsageData):
-                usage.input_tokens += int(getattr(data, "input_tokens", 0) or 0)
-                usage.output_tokens += int(getattr(data, "output_tokens", 0) or 0)
+                add_usage(usage, data)
             elif isinstance(data, sdk.AssistantMessageData):
                 if getattr(data, "parent_tool_call_id", None):
                     continue
@@ -847,6 +846,51 @@ class CopilotAdapter(ModelAdapter):
                 caps.max_output_tokens = getattr(limits, "max_output_tokens", None)
             break
         return caps
+
+
+# Copilot bills in AI credits; usage events report them in nano-AIU.
+NANO_AIU_PER_CREDIT = 1_000_000_000
+
+
+def new_usage() -> SimpleNamespace:
+    """Usage for one adapter call, in the field names the console reads."""
+    return SimpleNamespace(
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+        ai_credits=0.0,
+        premium_requests=0.0,
+    )
+
+
+def add_usage(usage: SimpleNamespace, data: Any) -> None:
+    """Add one Copilot ``assistant.usage`` event to ``usage``.
+
+    Copilot's ``input_tokens`` is the whole prompt, cached part included; the
+    console wants the uncached part with cache reads and writes beside it (as
+    Anthropic reports them), so the cached tokens are taken out of the input.
+    ``copilot_usage.total_nano_aiu`` becomes AI credits and ``cost`` (the
+    model's premium-request multiplier for this call) premium requests."""
+
+    def num(name: str) -> int:
+        try:
+            return max(0, int(getattr(data, name, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    read, write = num("cache_read_tokens"), num("cache_write_tokens")
+    usage.input_tokens += max(0, num("input_tokens") - read - write)
+    usage.output_tokens += num("output_tokens")
+    usage.cache_read_input_tokens += read
+    usage.cache_creation_input_tokens += write
+    billed = getattr(data, "copilot_usage", None)
+    nano = getattr(billed, "total_nano_aiu", None) if billed is not None else None
+    if isinstance(nano, (int, float)) and nano > 0:
+        usage.ai_credits += float(nano) / NANO_AIU_PER_CREDIT
+    cost = getattr(data, "cost", None)
+    if isinstance(cost, (int, float)) and cost > 0:
+        usage.premium_requests += float(cost)
 
 
 _PROXY_VARS = (

@@ -239,7 +239,82 @@ def merged_native(
             body = dict(trig)
             triggers[str(body.pop("name"))] = body
         return {"triggers": triggers}
+    if name == CONFIG_FILE:
+        incoming = rehome_llm(local, incoming, preserve)
     return merge_mapping(local, incoming, preserve, fill_missing=fill_missing)
+
+
+# ── [llm]: provider settings follow the operator's provider ──────────────────
+
+CONFIG_FILE = "config.toml"
+LLM_SAVED_PROVIDERS = "saved_providers"
+
+# [llm] keys that are console-wide rather than one provider's connection.
+# Mirrors SHARED_KEYS in console-ui src/components/llmProviders.ts (a test
+# keeps the two in step): the Settings dropdown parks every other key under
+# [llm.saved_providers.<name>] while that provider isn't the active one.
+LLM_SHARED_KEYS = frozenset(
+    {
+        "provider",
+        "system",
+        "system_append",
+        "tool_mode",
+        "effort",
+        "max_tokens",
+        "max_continuations",
+        "max_tool_rounds",
+        "max_network_retries",
+        "max_self_recoveries",
+        "max_parallel_tools",
+        "tool_index",
+        "tool_index_limit",
+        "defer_builtins",
+        "model_limits",
+        LLM_SAVED_PROVIDERS,
+    }
+)
+
+
+def rehome_llm(
+    local: dict[str, Any], incoming: dict[str, Any], preserve: list[list[str]]
+) -> dict[str, Any]:
+    """``incoming`` with its ``[llm]`` re-shaped for the provider ``local`` runs.
+
+    When ``llm.provider`` is preserved and the operator runs a different provider
+    from the incoming one, the incoming top-level provider settings are parked
+    under ``saved_providers.<incoming provider>`` and the incoming
+    ``saved_providers.<local provider>`` comes up to the top level, as the
+    Settings dropdown does on a switch. So a seed or repo keeps updating every
+    provider's settings (a new Copilot model list, a new adapter URL) without
+    mixing one provider's keys into another's. Otherwise ``incoming`` is
+    returned unchanged. Pure."""
+    if ["llm", "provider"] not in preserve:
+        return incoming
+    loc, inc = local.get("llm"), incoming.get("llm")
+    if not isinstance(loc, dict) or not isinstance(inc, dict):
+        return incoming
+    have, theirs = loc.get("provider"), inc.get("provider")
+    if not isinstance(have, str) or not isinstance(theirs, str):
+        return incoming
+    if not have or not theirs or have == theirs:
+        return incoming
+    out = dict(inc)
+    raw_saved = out.get(LLM_SAVED_PROVIDERS)
+    saved = {
+        str(k): dict(v)
+        for k, v in (raw_saved.items() if isinstance(raw_saved, dict) else [])
+        if isinstance(v, dict)
+    }
+    park = {k: out.pop(k) for k in list(out) if k not in LLM_SHARED_KEYS}
+    if park:
+        saved[theirs] = {**saved.get(theirs, {}), **park}
+    out.update(saved.pop(have, {}))
+    out["provider"] = have
+    if saved:
+        out[LLM_SAVED_PROVIDERS] = saved
+    else:
+        out.pop(LLM_SAVED_PROVIDERS, None)
+    return {**incoming, "llm": out}
 
 
 def _entries(raw: Any) -> list[dict[str, Any]]:

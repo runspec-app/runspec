@@ -1400,6 +1400,8 @@ export interface ConversationTurn {
   // The reasoning summary behind the final reply.
   reply_thinking?: { text: string; ms: number } | null
   usage?: Record<string, number> | null
+  // What a provider billed in its own units (GitHub Copilot).
+  billing?: { ai_credits?: number; premium_requests?: number } | null
   model?: string
   ts?: string
   // operator_run fields

@@ -100,12 +100,29 @@ class TurnSpec:
     summary_cap: int = 4000
 
 
+def billing_from_response(response: Any) -> dict[str, float]:
+    """What a provider bills in its own units, when it reports them: GitHub
+    Copilot's AI credits and premium requests (``ai_credits`` /
+    ``premium_requests`` on the usage). Empty for token-priced providers."""
+    usage = getattr(getattr(response, "_raw", None), "usage", None)
+    out: dict[str, float] = {}
+    for name in ("ai_credits", "premium_requests"):
+        value = getattr(usage, name, None)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if value > 0:
+                out[name] = float(value)
+    return out
+
+
 @dataclass
 class TurnResult:
     chat_id: str
     stopped: bool = False
     duration_ms: int = 0
     usage: dict[str, int] = field(default_factory=dict)
+    #: What the provider billed in its own units (Copilot: ``ai_credits``,
+    #: ``premium_requests``); empty for token-priced providers.
+    billing: dict[str, float] = field(default_factory=dict)
     #: The provider-agnostic transcript of the turn (all assistant prose).
     assistant_text: str = ""
     #: The model's closing reply (its conclusion), for the run card.
@@ -294,6 +311,7 @@ class TurnMixin(_Base):
         tools = spec.tools
         start = time.monotonic()
         usage_total = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+        billing_total: dict[str, float] = {}
         # For the context indicator: the *last* iteration's prompt size (not the
         # cross-iteration sum) is the current window fill, plus the char size of
         # the history actually sent that iteration.
@@ -459,6 +477,10 @@ class TurnMixin(_Base):
                             u = self._usage_from_response(response)
                             for key, value in u.items():
                                 usage_total[key] += value
+                            for key, amount in billing_from_response(response).items():
+                                billing_total[key] = (
+                                    billing_total.get(key, 0.0) + amount
+                                )
                             last_usage = {
                                 "input": u["input"],
                                 "cache_read": u["cache_read"],
@@ -841,6 +863,8 @@ class TurnMixin(_Base):
                             "text": "\n\n".join(reply_thinking)[:_THOUGHT_CAP],
                             "ms": reply_thinking_ms,
                         }
+                    if billing_total:
+                        persist_extra["billing"] = dict(billing_total)
                     self._persist_conversation_turn(
                         session,
                         spec.message,
@@ -873,6 +897,7 @@ class TurnMixin(_Base):
             stopped=stopped,
             duration_ms=duration_ms,
             usage=dict(usage_total),
+            billing=dict(billing_total),
             assistant_text="\n\n".join(turn_assistant_parts),
             final_text=final_text,
             actions=actions,
@@ -959,6 +984,7 @@ class TurnMixin(_Base):
                     "output_tokens": usage_total.get("output", 0),
                     "cache_read_tokens": usage_total.get("cache_read", 0),
                     "cache_creation_tokens": usage_total.get("cache_creation", 0),
+                    **{k: round(v, 6) for k, v in result.billing.items()},
                 },
             )
         self._emit_context_estimate(
