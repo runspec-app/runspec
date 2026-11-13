@@ -9,6 +9,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.415.0] — 2026-11-13
+
+### Added
+
+- **GitHub Copilot as a model provider** (`provider = "copilot"`, the new
+  `[copilot]` extra). It goes through GitHub's official Copilot SDK
+  (`github-copilot-sdk`), so it uses your Copilot plan: about one premium
+  request per chat turn, however many tool steps the turn takes. The console
+  keeps its own tools, approval cards and loop: each Copilot session gets only
+  the console's tools and system prompt (no built-in shell, file or web tools,
+  no repo instructions, skills or memory), and when Copilot asks for tools the
+  console runs them through its approval gate and hands the results back to the
+  same Copilot turn. Sign in with `copilot login` on the machine, or set a
+  GitHub token (`api_key`, or a token command such as `gh auth token`).
+  `[llm] cli_path` uses a Copilot runtime you already have instead of the one
+  the SDK downloads on first use; `effort` is passed on to models that take a
+  reasoning effort. Settings → Model / API → GitHub Copilot has **Check
+  sign-in**, which shows who is signed in and adds the models the account can
+  use. New bridge method `copilot_status(settings)`. Not tried against a real
+  Copilot account yet.
+
+### Changed
+
+- **The Provider dropdown groups providers**: built-in ones first, then the
+  ones an installed package adds ("From installed packages"), then a
+  `module:Class` provider set in config (which wasn't listed before).
+  `list_providers()` returns `kind` and `keys` (the extra `[llm]` settings a
+  plugin's adapter declares) with each provider.
+- **Each provider keeps its own settings.** Switching the Provider dropdown
+  parks the old provider's URL, key, token command, models and plugin settings
+  under `[llm.saved_providers.<name>]` and brings back the new one's, so you can
+  go between a company adapter and a built-in provider without retyping
+  anything. The system prompt, tool mode, effort and other console-wide
+  settings stay shared. The backend still reads only the top-level `[llm]`
+  keys.
+
 ## [0.414.0] — 2026-11-13
 
 ### Added

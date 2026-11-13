@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.414.0"
+version = "0.415.0"
 requires-python = ">=3.11"
 description = "Desktop console for runspec runnables: run, schedule and monitor them locally and across an SSH fleet, with an optional AI agent"
 readme = "README.md"
@@ -55,6 +55,11 @@ anthropic = ["anthropic>=0.40.0"]
 openai    = ["openai>=1.0.0"]
 bedrock   = ["anthropic[bedrock]>=0.40.0"]
 langserve = ["httpx>=0.27"]
+# GitHub Copilot as the model provider, through GitHub's official Copilot SDK.
+# The SDK drives the Copilot CLI runtime (~180 MB), which it downloads on first
+# use; [llm] cli_path points at a copy instead. Signs in with the user's
+# `copilot login` or a GitHub token; billed to their Copilot plan.
+copilot = ["github-copilot-sdk>=1.0.32,<2"]
 # Named credentials: secret values are stored in the OS keychain (Windows
 # Credential Manager / macOS Keychain / Secret Service) via keyring; metadata
 # stays in runspec_credentials.toml. The feature reports itself unavailable
@@ -129,7 +134,7 @@ windows = ["runspec-windows>=0.5.0 ; sys_platform == 'win32'"]
 # deps inside `notifications` keep their markers, so `[all]` is safe on any OS.
 # The `windows` runnable pack is not included — see its comment above.
 all = [
-    "runspec-console[anthropic,openai,bedrock,langserve,credentials,git-sync,notifications,schedule,otel,mcp,voice]",
+    "runspec-console[anthropic,openai,bedrock,langserve,copilot,credentials,git-sync,notifications,schedule,otel,mcp,voice]",
 ]
 dev = [
     "ruff==0.15.20",

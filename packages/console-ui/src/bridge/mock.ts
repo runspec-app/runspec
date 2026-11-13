@@ -1018,7 +1018,23 @@ export const mockApi: BridgeApi = {
     { value: 'openai', label: 'OpenAI' },
     { value: 'bedrock', label: 'AWS Bedrock' },
     { value: 'langserve', label: 'LangServe gateway' },
+    { value: 'copilot', label: 'GitHub Copilot', kind: 'builtin' as const, keys: [] },
+    { value: 'mycorp', label: 'mycorp', kind: 'plugin' as const, keys: ['tenant_id'] },
   ],
+  copilot_status: async () => {
+    await new Promise(r => setTimeout(r, 600))
+    return {
+      ok: true,
+      login: 'octocat',
+      host: 'https://github.com',
+      message: '',
+      models: [
+        { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', enabled: true, multiplier: 1 },
+        { id: 'gpt-5', name: 'GPT-5', enabled: true, multiplier: 1 },
+        { id: 'o-preview', name: 'Preview model', enabled: false, multiplier: 10 },
+      ],
+    }
+  },
   default_system_prompt: async () =>
     'You are an assistant embedded in runspec-console. You can run runspec runnables on local and remote hosts via tools. Use tools when they help, and confirm before anything destructive.\n\nWhen a required argument is missing or ambiguous — ask the operator one brief clarifying question instead of guessing.',
   refresh_hosts: async () => {

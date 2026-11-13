@@ -968,16 +968,28 @@ def _langserve_factory(**kwargs: Any) -> ModelAdapter:
         raise _missing_extra("langserve")(exc) from exc
 
 
+def _copilot_factory(**kwargs: Any) -> ModelAdapter:
+    # The SDK is imported in CopilotAdapter.__init__, so a missing extra
+    # surfaces at construction.
+    from .copilot import CopilotAdapter
+
+    try:
+        return CopilotAdapter(**kwargs)
+    except ImportError as exc:
+        raise _missing_extra("copilot")(exc) from exc
+
+
 register_adapter("anthropic", _anthropic_factory)
 register_adapter("openai", _openai_factory)
 register_adapter("bedrock", _bedrock_factory)
 register_adapter("langserve", _langserve_factory)
+register_adapter("copilot", _copilot_factory)
 
 # runspec-console's own providers. A provider outside this set means an external
 # distribution supplies it — the signal branding.py uses to white-label the app
 # to that package. Kept as a static constant (not ``set(_REGISTRY)``) so a plugin
 # that self-registers via register_adapter is still treated as brandable.
-_BUILTIN_NAMES = frozenset({"anthropic", "openai", "bedrock", "langserve"})
+_BUILTIN_NAMES = frozenset({"anthropic", "openai", "bedrock", "langserve", "copilot"})
 
 
 def builtin_provider_names() -> frozenset[str]:
@@ -1102,7 +1114,8 @@ def load_adapter(provider: str, **kwargs: Any) -> ModelAdapter:
     path. Raises ImportError with install instructions when a built-in's optional
     extra is missing, or ValueError for an unknown provider.
 
-    provider: a built-in ("anthropic" | "openai" | "bedrock" | "langserve"), a
+    provider: a built-in ("anthropic" | "openai" | "bedrock" | "langserve" |
+              "copilot"), a
               name registered by a plugin, or a "module:ClassOrFactory" path.
     kwargs:   passed straight through to the adapter factory / __init__.
     """

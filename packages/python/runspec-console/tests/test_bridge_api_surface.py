@@ -82,6 +82,7 @@ EXPECTED = {
     "close_chat_session",
     "compact_chat",
     "config_dir",
+    "copilot_status",
     "copy_ssh_id",
     "copy_ssh_id_all",
     "create_schedule",

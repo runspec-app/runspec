@@ -20,6 +20,10 @@ import {
 } from '../views/RunnableAction'
 import { MONO_FONT, RADIUS, textSecondary, useAccent, useIsDark, withAlpha } from '../ThemeContext'
 import { ModelSelect } from './ModelSelect'
+import {
+  copilotModelIds, groupProviderOptions, providerKeys, switchProvider,
+  type CopilotModel, type ProviderOption,
+} from './llmProviders'
 import { useFeatures, visibleSettingsTabs } from '../features'
 import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
 import { MemorySyncTab } from './MemorySyncTab'
@@ -59,15 +63,17 @@ const PROVIDER_MODELS: Record<string, string> = {
   openai: 'gpt-4o',
   bedrock: 'anthropic.claude-sonnet-4-6',
   langserve: '',  // the published LangServe chain usually pins its own model
+  copilot: '',    // blank = Copilot's default; Check sign-in lists the account's models
 }
 
-const BUILTIN_PROVIDERS = new Set(['anthropic', 'openai', 'bedrock', 'langserve'])
+const BUILTIN_PROVIDERS = new Set(['anthropic', 'openai', 'bedrock', 'langserve', 'copilot'])
 
-const BUILTIN_PROVIDER_OPTIONS = [
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'bedrock', label: 'AWS Bedrock' },
-  { value: 'langserve', label: 'LangServe gateway' },
+const BUILTIN_PROVIDER_OPTIONS: ProviderOption[] = [
+  { value: 'anthropic', label: 'Anthropic', kind: 'builtin' },
+  { value: 'openai', label: 'OpenAI', kind: 'builtin' },
+  { value: 'bedrock', label: 'AWS Bedrock', kind: 'builtin' },
+  { value: 'langserve', label: 'LangServe gateway', kind: 'builtin' },
+  { value: 'copilot', label: 'GitHub Copilot', kind: 'builtin' },
 ]
 
 // String keys the LLM form owns: written when non-empty, removed when blank, so a
@@ -77,8 +83,42 @@ const BUILTIN_PROVIDER_OPTIONS = [
 const MANAGED_LLM_STR_KEYS = [
   'provider', 'api_key', 'model', 'utility_model', 'base_url', 'aws_region', 'system', 'tool_mode',
   'api_key_command', 'auth_header', 'auth_scheme', 'input_messages_key',
-  'input_tools_key', 'aws_access_key', 'aws_secret_key', 'aws_session_token',
+  'input_tools_key', 'aws_access_key', 'aws_secret_key', 'aws_session_token', 'cli_path',
 ] as const
+
+// The form fields that belong to one provider (shown from the [llm] table, or
+// from saved_providers.<name> when switching back to a provider).
+function providerFormValues(llm: Record<string, unknown>) {
+  const str = (k: string) => (llm[k] as string) ?? ''
+  return {
+    api_key: str('api_key'),
+    model: str('model'),
+    utility_model: str('utility_model'),
+    base_url: str('base_url'),
+    aws_region: str('aws_region'),
+    api_key_command: str('api_key_command'),
+    api_key_ttl_ms: (llm.api_key_ttl_ms as number | undefined) ?? undefined,
+    auth_header: str('auth_header'),
+    auth_scheme: str('auth_scheme'),
+    input_messages_key: str('input_messages_key'),
+    input_tools_key: str('input_tools_key'),
+    tools_in_config: !!llm.tools_in_config,
+    aws_access_key: str('aws_access_key'),
+    aws_secret_key: str('aws_secret_key'),
+    aws_session_token: str('aws_session_token'),
+    cli_path: str('cli_path'),
+  }
+}
+
+// The model list for a provider: its saved list, the active model kept
+// selectable, or the provider default so the dropdown isn't empty.
+function providerModels(llm: Record<string, unknown>, provider: string): string[] {
+  const modelVal = (llm.model as string) ?? ''
+  let list = Array.isArray(llm.models) ? (llm.models as unknown[]).map(String).filter(Boolean) : []
+  if (modelVal && !list.includes(modelVal)) list = [modelVal, ...list]
+  if (list.length === 0 && PROVIDER_MODELS[provider]) list = [PROVIDER_MODELS[provider]]
+  return list
+}
 
 const TOOL_MODE_OPTIONS = [
   { value: 'dedup', label: 'Dedup — one tool per runnable, host as an argument (default)' },
@@ -415,7 +455,15 @@ export function LlmTab() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [configDir, setConfigDir] = useState<string>('')
-  const [providerOptions, setProviderOptions] = useState(BUILTIN_PROVIDER_OPTIONS)
+  const [providerOptions, setProviderOptions] = useState<ProviderOption[]>(BUILTIN_PROVIDER_OPTIONS)
+  // The [llm] table as switching providers leaves it (other providers' settings
+  // parked under saved_providers). Null until a switch: Save then starts from
+  // the freshly read config as before.
+  const draftLlm = useRef<Record<string, unknown> | null>(null)
+  const loadedLlm = useRef<Record<string, unknown>>({})
+  // GitHub Copilot's Check sign-in result.
+  const [copilotCheck, setCopilotCheck] = useState<{ ok: boolean; login?: string; message?: string; models?: CopilotModel[] } | null>(null)
+  const [copilotChecking, setCopilotChecking] = useState(false)
   // The operator-defined list of selectable models — the source for the strict
   // Model dropdown, edited via the "Available models" tag field.
   const [models, setModels] = useState<string[]>([])
@@ -442,47 +490,81 @@ export function LlmTab() {
       setDefaultSystem(dflt)
       const llm = (cfg.llm ?? {}) as Record<string, unknown>
       const p = (llm.provider as string) ?? ''
+      loadedLlm.current = llm
+      draftLlm.current = null
       setProvider(p)
-      const modelVal = (llm.model as string) ?? ''
-      let list = Array.isArray(llm.models)
-        ? (llm.models as unknown[]).map(String).filter(Boolean)
-        : []
-      // Keep a hand-edited active model selectable even if it's not in the list.
-      if (modelVal && !list.includes(modelVal)) list = [modelVal, ...list]
-      // Seed an empty list with the provider default so the dropdown isn't empty.
-      if (list.length === 0 && PROVIDER_MODELS[p]) list = [PROVIDER_MODELS[p]]
-      setModels(list)
+      setModels(providerModels(llm, p))
       form.setFieldsValue({
         provider: p,
-        api_key: (llm.api_key as string) ?? '',
-        model: modelVal,
-        utility_model: (llm.utility_model as string) ?? '',
-        base_url: (llm.base_url as string) ?? '',
-        aws_region: (llm.aws_region as string) ?? '',
+        ...providerFormValues(llm),
         system: ((llm.system as string) ?? '').trim() || dflt,
         tool_mode: (llm.tool_mode as string) ?? '',
-        api_key_command: (llm.api_key_command as string) ?? '',
-        api_key_ttl_ms: llm.api_key_ttl_ms ?? undefined,
-        auth_header: (llm.auth_header as string) ?? '',
-        auth_scheme: (llm.auth_scheme as string) ?? '',
-        input_messages_key: (llm.input_messages_key as string) ?? '',
-        input_tools_key: (llm.input_tools_key as string) ?? '',
-        tools_in_config: !!llm.tools_in_config,
-        aws_access_key: (llm.aws_access_key as string) ?? '',
-        aws_secret_key: (llm.aws_secret_key as string) ?? '',
-        aws_session_token: (llm.aws_session_token as string) ?? '',
       })
     })
   }, [form])
 
-  const handleProviderChange = (val: string) => {
-    setProvider(val)
-    const def = PROVIDER_MODELS[val]
-    if (def) {
-      // Ensure the provider default is in the list so the strict dropdown can show it.
-      setModels(prev => (prev.includes(def) ? prev : [...prev, def]))
-      if (!form.getFieldValue('model')) form.setFieldValue('model', def)
+  // Fold the form into an [llm] table: managed string keys are written when
+  // non-empty and removed when blank; anything the form doesn't manage survives.
+  const applyForm = (base: Record<string, unknown>, v: Record<string, any>, list: string[]) => {
+    const llm: Record<string, unknown> = { ...base }
+    const next: Record<string, string> = {
+      provider: v.provider ?? '',
+      api_key: v.api_key ?? '',
+      model: v.model ?? '',
+      utility_model: v.utility_model ?? '',
+      base_url: v.base_url ?? '',
+      aws_region: v.aws_region ?? '',
+      // Equal to the built-in default ⇒ not a customisation: drop the key so
+      // future default improvements still apply (the backend enforces the
+      // same rule in save_config).
+      system: (v.system?.trim() ?? '') === defaultSystem.trim() ? '' : (v.system?.trim() ?? ''),
+      tool_mode: v.tool_mode ?? '',
+      api_key_command: v.api_key_command?.trim() ?? '',
+      auth_header: v.auth_header?.trim() ?? '',
+      auth_scheme: v.auth_scheme?.trim() ?? '',
+      input_messages_key: v.input_messages_key?.trim() ?? '',
+      input_tools_key: v.input_tools_key?.trim() ?? '',
+      aws_access_key: v.aws_access_key ?? '',
+      aws_secret_key: v.aws_secret_key ?? '',
+      aws_session_token: v.aws_session_token ?? '',
+      cli_path: v.cli_path?.trim() ?? '',
     }
+    for (const k of MANAGED_LLM_STR_KEYS) {
+      if (next[k]) llm[k] = next[k]
+      else delete llm[k]
+    }
+    // Numeric TTL for the rotating-token command (blank → use the key forever).
+    if (v.api_key_ttl_ms !== undefined && v.api_key_ttl_ms !== null && v.api_key_ttl_ms !== '') {
+      llm.api_key_ttl_ms = Number(v.api_key_ttl_ms)
+    } else {
+      delete llm.api_key_ttl_ms
+    }
+    // LangServe boolean — only persist when on (keeps the section tidy).
+    if (v.tools_in_config) llm.tools_in_config = true
+    else delete llm.tools_in_config
+    // Operator-defined model list (strict Model dropdown source). Written when
+    // non-empty, removed when blank — mirrors the string set-or-delete above.
+    if (list.length) llm.models = list
+    else delete llm.models
+    return llm
+  }
+
+  const handleProviderChange = (val: string | undefined) => {
+    const to = val ?? ''
+    const from = provider
+    setProvider(to)
+    setCopilotCheck(null)
+    if (from === to) return
+    // Park the old provider's settings (as edited so far) and bring back the
+    // new one's, so switching back and forth loses nothing.
+    const current = applyForm(draftLlm.current ?? loadedLlm.current, { ...form.getFieldsValue(), provider: from }, models)
+    const switched = switchProvider(current, from, to, p => providerKeys(p, providerOptions))
+    draftLlm.current = switched
+    const list = providerModels(switched, to)
+    setModels(list)
+    const values = providerFormValues(switched)
+    if (!values.model && list.length) values.model = list[0]
+    form.setFieldsValue(values)
   }
 
   const handleSave = async () => {
@@ -490,48 +572,14 @@ export function LlmTab() {
     setSaving(true)
     try {
       const cfg = await bridge.get_config()
-      // Start from the existing [llm] section so any key the form doesn't manage
-      // survives a Save; then set-or-delete only the keys we own.
-      const llm: Record<string, unknown> = { ...((cfg.llm as Record<string, unknown>) ?? {}) }
-      const next: Record<string, string> = {
-        provider: v.provider ?? '',
-        api_key: v.api_key ?? '',
-        model: v.model ?? '',
-        utility_model: v.utility_model ?? '',
-        base_url: v.base_url ?? '',
-        aws_region: v.aws_region ?? '',
-        // Equal to the built-in default ⇒ not a customisation: drop the key so
-        // future default improvements still apply (the backend enforces the
-        // same rule in save_config).
-        system: (v.system?.trim() ?? '') === defaultSystem.trim() ? '' : (v.system?.trim() ?? ''),
-        tool_mode: v.tool_mode ?? '',
-        api_key_command: v.api_key_command?.trim() ?? '',
-        auth_header: v.auth_header?.trim() ?? '',
-        auth_scheme: v.auth_scheme?.trim() ?? '',
-        input_messages_key: v.input_messages_key?.trim() ?? '',
-        input_tools_key: v.input_tools_key?.trim() ?? '',
-        aws_access_key: v.aws_access_key ?? '',
-        aws_secret_key: v.aws_secret_key ?? '',
-        aws_session_token: v.aws_session_token ?? '',
-      }
-      for (const k of MANAGED_LLM_STR_KEYS) {
-        if (next[k]) llm[k] = next[k]
-        else delete llm[k]
-      }
-      // Numeric TTL for the rotating-token command (blank → use the key forever).
-      if (v.api_key_ttl_ms !== undefined && v.api_key_ttl_ms !== null && v.api_key_ttl_ms !== '') {
-        llm.api_key_ttl_ms = Number(v.api_key_ttl_ms)
-      } else {
-        delete llm.api_key_ttl_ms
-      }
-      // LangServe boolean — only persist when on (keeps the section tidy).
-      if (v.tools_in_config) llm.tools_in_config = true
-      else delete llm.tools_in_config
-      // Operator-defined model list (strict Model dropdown source). Written when
-      // non-empty, removed when blank — mirrors the string set-or-delete above.
-      if (models.length) llm.models = models
-      else delete llm.models
+      // Start from the [llm] section so any key the form doesn't manage
+      // survives a Save; after a provider switch, from the switched table (it
+      // holds the other providers' parked settings).
+      const base = draftLlm.current ?? ((cfg.llm as Record<string, unknown>) ?? {})
+      const llm = applyForm(base, v, models)
       await bridge.save_config({ ...cfg, llm })
+      loadedLlm.current = llm
+      draftLlm.current = null
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -539,26 +587,91 @@ export function LlmTab() {
     }
   }
 
+  const checkCopilot = async () => {
+    setCopilotChecking(true)
+    try {
+      const v = form.getFieldsValue()
+      setCopilotCheck(await bridge.copilot_status({
+        api_key: v.api_key ?? '',
+        api_key_command: v.api_key_command?.trim() ?? '',
+        cli_path: v.cli_path?.trim() ?? '',
+      }))
+    } catch (e) {
+      setCopilotCheck({ ok: false, message: String(e) })
+    } finally {
+      setCopilotChecking(false)
+    }
+  }
+
+  const addCopilotModels = () => {
+    const ids = copilotModelIds(copilotCheck?.models)
+    if (!ids.length) return
+    setModels(prev => [...prev, ...ids.filter(id => !prev.includes(id))])
+    if (!form.getFieldValue('model')) form.setFieldValue('model', ids[0])
+  }
+
   return (
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
       <SettingsColumns>
         <div>
-          <Form.Item name="provider" label="Provider">
-            <Select placeholder="None — chat disabled" allowClear onChange={handleProviderChange}>
-              {providerOptions.map(o => (
-                <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>
-              ))}
-            </Select>
+          <Form.Item
+            name="provider"
+            label="Provider"
+            help={providerOptions.some(o => o.kind === 'plugin' || o.kind === 'path')
+              ? 'Switching keeps each provider\'s settings, so you can go back and forth.'
+              : undefined}
+          >
+            <Select
+              placeholder="None — chat disabled"
+              allowClear
+              onChange={handleProviderChange}
+              options={groupProviderOptions(providerOptions).map(g => ({
+                label: g.label,
+                options: g.options.map(o => ({ value: o.value, label: o.label })),
+              }))}
+            />
           </Form.Item>
           {!!provider && (
             <>
               {provider !== 'bedrock' && (
                 <Form.Item
                   name="api_key"
-                  label={provider === 'langserve' ? 'API token' : 'API key'}
-                  help={provider === 'langserve' ? 'Bearer token. For rotating corporate tokens, use the token command under Advanced.' : undefined}
+                  label={provider === 'langserve' ? 'API token' : provider === 'copilot' ? 'GitHub token (optional)' : 'API key'}
+                  help={provider === 'langserve' ? 'Bearer token. For rotating corporate tokens, use the token command under Advanced.'
+                    : provider === 'copilot' ? 'Blank uses your `copilot login` on this machine. Or paste a GitHub token, or set a token command such as `gh auth token` under Advanced.'
+                    : undefined}
                 >
-                  <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : provider === 'openai' ? 'sk-...' : 'token'} />
+                  <Input.Password placeholder={provider === 'anthropic' ? 'sk-ant-...' : provider === 'openai' ? 'sk-...' : provider === 'copilot' ? 'github_pat_… (optional)' : 'token'} />
+                </Form.Item>
+              )}
+              {provider === 'copilot' && (
+                <Form.Item
+                  label="Copilot sign-in"
+                  help="Uses your Copilot plan: about one premium request per chat turn. The Copilot runtime (~180 MB) is downloaded on first use."
+                >
+                  <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                    <Space wrap>
+                      <Button size="small" icon={<KeyOutlined />} loading={copilotChecking} onClick={checkCopilot}>
+                        Check sign-in
+                      </Button>
+                      {copilotCheck?.ok && copilotModelIds(copilotCheck.models).length > 0 && (
+                        <Button size="small" onClick={addCopilotModels}>
+                          Add the {copilotModelIds(copilotCheck.models).length} models it can use
+                        </Button>
+                      )}
+                    </Space>
+                    {copilotCheck && (
+                      <Alert
+                        type={copilotCheck.ok ? 'success' : 'warning'}
+                        showIcon
+                        message={copilotCheck.ok
+                          ? `Signed in to Copilot as ${copilotCheck.login || 'your GitHub account'}`
+                          : (copilotCheck.message || 'Not signed in to Copilot')}
+                        description={copilotCheck.ok ? undefined
+                          : 'Sign in with `copilot login` on this machine, or set a GitHub token here.'}
+                      />
+                    )}
+                  </Space>
                 </Form.Item>
               )}
               {provider !== 'langserve' && (
@@ -579,7 +692,7 @@ export function LlmTab() {
                       }}
                       notFoundContent={null}
                       tokenSeparators={[',', ' ']}
-                      placeholder={PROVIDER_MODELS[provider] ? `e.g. ${PROVIDER_MODELS[provider]}` : 'Add model ids…'}
+                      placeholder={PROVIDER_MODELS[provider] ? `e.g. ${PROVIDER_MODELS[provider]}` : provider === 'copilot' ? 'Blank = Copilot\'s default (Check sign-in lists yours)' : 'Add model ids…'}
                       style={{ fontFamily: MONO_FONT }}
                     />
                   </Form.Item>
@@ -665,6 +778,16 @@ export function LlmTab() {
                       >
                         <InputNumber min={0} step={1000} style={{ width: '100%' }} placeholder="0" />
                       </Form.Item>
+
+                      {provider === 'copilot' && (
+                        <Form.Item
+                          name="cli_path"
+                          label="Copilot runtime path"
+                          help="Optional. Use this Copilot CLI runtime instead of downloading one (for machines that can't reach GitHub releases). Blank = download on first use."
+                        >
+                          <Input placeholder="path to copilot.exe or copilot" style={{ fontFamily: MONO_FONT }} />
+                        </Form.Item>
+                      )}
 
                       {provider === 'bedrock' && (
                         <>
