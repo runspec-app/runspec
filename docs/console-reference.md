@@ -339,7 +339,7 @@ documented with the fleet setup in [Hosts & fleet](console-hosts.md#ssh-tuning).
 ## `[terminal]` — PuTTY terminal look {#terminal}
 
 Font, colours and cursor for the PuTTY windows **Launch terminal** opens. Set in
-Settings → SSH → **Terminal look** (with a live preview), or in config.toml — so
+Settings → Terminal → **Terminal look** (with a live preview), or in config.toml — so
 it rides Config Sync and the config seed. Applies to terminals opened after the
 change.
 
@@ -377,7 +377,7 @@ theme or cursor value is ignored, never an error.
 
 Saves every console host as a PuTTY saved session, so PuTTY opened on its own
 (Start menu, taskbar, a quick connection without switching profiles) lists
-every host with everything already set. Set in Settings → SSH → **PuTTY
+every host with everything already set. Set in Settings → Terminal → **PuTTY
 sessions**, or in config.toml. Windows only (PuTTY keeps sessions in the
 registry, `HKCU\Software\SimonTatham\PuTTY\Sessions`).
 

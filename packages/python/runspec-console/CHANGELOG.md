@@ -9,6 +9,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.427.0] — 2026-11-13
+
+### Changed
+
+- **One date format everywhere.** Run history, Charts, Log files, Files, the
+  shared schedules, the Marketplace release date, Knowledge's last capture,
+  saved-transfer previews and the conversation list all show a moment the
+  same way: relative within a day ("just now", "5m ago", "in 3h"), otherwise
+  "13 Nov 19:53", or "29 May 2024" for another year, with the full timestamp
+  on hover (`when.tsx`: `fmtWhen`, `fullWhen`, `<When>`). They mixed ISO dates,
+  locale strings, "today 19:26" and "2d ago".
+- **"Runnables", not "tools".** The status-bar count reads "15 runnables".
+- **Charts say why they stop at 30 days**: they read the history cache, which
+  keeps 30 days; the range control's tooltip points to History → Runs for
+  older runs.
+- **Settings → Terminal.** The terminal look and PuTTY saved sessions moved out
+  of Settings → SSH into their own section (Connections group), so SSH holds
+  the connection, `~/.ssh/config`, quick connect and the key.
+- **Shorter intros.** Notifications, Improve and Evals open with one line; the
+  detail shows once as a tip you can dismiss.
+- **Model / API on first run** says "Pick a provider to turn on the
+  assistant" (and what works until then) instead of showing an empty picker.
+
 ## [0.426.0] — 2026-11-13
 
 ### Fixed

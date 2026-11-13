@@ -11,6 +11,7 @@ import {
   bridge, type ImproveReport, type ImproveReportMeta, type ImproveIncident,
 } from '../bridge'
 import { antTone, EmptyState, StatusTag } from '../components/kit'
+import { OnceHint } from '../components/kit'
 
 const { Text, Paragraph, Title } = Typography
 
@@ -145,12 +146,13 @@ export function ImproveView({ active }: ImproveViewProps) {
         <BulbOutlined /> Improve
       </Title>
       <Paragraph type="secondary" style={{ maxWidth: 720 }}>
-        Measure how effective the agent, its runnables, and the app are — mined from this
-        console's own saved chats and run history (tool search, argument bounces, stopped
-        turns, errors, autonomy denials). Run an evaluation, or file a problem report with a
-        comment. Reports are addressed to the configured developers; use the mail button to
-        hand one off.
+        How well the assistant and your runnables are working, from this console's own chats and runs.
       </Paragraph>
+      <OnceHint id="quality.improve" style={{ maxWidth: 720 }}>
+        Run an evaluation to see where the assistant struggled (searches that found nothing, arguments it got
+        wrong, turns you stopped, errors, calls you denied), or report a problem in your own words. Reports go to
+        the developers named in Settings; the mail button hands one off.
+      </OnceHint>
 
       <Row gutter={16}>
         {/* ── controls ── */}

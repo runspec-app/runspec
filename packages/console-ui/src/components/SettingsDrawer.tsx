@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
-import { EmptyState, StatusTag, withLabel, type StatusTone } from './kit'
+import { EmptyState, OnceHint, StatusTag, withLabel, type StatusTone } from './kit'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo, type OwnMcpClaudePlugin } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -294,17 +294,13 @@ export function SoundsTab() {
       <SettingsColumns>
         <div>
           <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-            Audio cues + desktop alerts so you stay aware while the console is minimized or in the background.
-            Sounds play from the app, so they work even when minimized. The desktop <em>toast</em> needs the
-            optional <Typography.Text code>notifications</Typography.Text> extra to be installed,
-            but the <em>taskbar flash</em> and <em>sounds</em> do not. Each category can use its own{" "}
-            <Typography.Text code>.wav</Typography.Text>/<Typography.Text code>.mp3</Typography.Text> file, or point a{" "}
-            <em>sound pack</em> folder of category-named files at the whole set. Volume applies to synthesized and
-            file cues; Windows system aliases follow the system mixer. Connection cues (host/room up &amp; down) are
-            debounced — a flapping host won't chime more than once per half minute. The <em>waiting</em> cue is
-            a soft repeating ping that keeps going while something needs you (an approval, an unclaimed queue
-            caller) and stops as soon as it's cleared.
+            Sounds and desktop alerts, so you notice approvals and finished runs while the console is in the background.
           </Typography.Paragraph>
+          <OnceHint id="settings.notifications">
+            Each event can play its own .wav/.mp3, or point a sound-pack folder at the whole set. The desktop toast needs
+            the <code>notifications</code> extra; the taskbar flash and sounds don't. A flapping host chimes at most once
+            per half minute, and the waiting ping repeats until whatever needs you is cleared.
+          </OnceHint>
 
           {row('Enable sounds', <Switch checked={enabled} onChange={setEnabled} />)}
           {row('Volume (synthesized + file cues)', (
@@ -617,6 +613,13 @@ export function LlmTab() {
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
       <SettingsColumns>
         <div>
+          {!provider && (
+            <Alert
+              type="info" showIcon style={{ marginBottom: 12 }}
+              message="Pick a provider to turn on the assistant"
+              description="Choose where the assistant's model runs. Until then the Console runs runnables and saved runs, and the chat stays off."
+            />
+          )}
           <Form.Item
             name="provider"
             label="Provider"
@@ -1482,14 +1485,6 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
           )}
         </div>
       </SettingsColumns>
-
-      <Divider />
-
-      <TerminalLook />
-
-      <Divider />
-
-      <PuttySync />
 
       <CopyKeyAllModal
         open={copyAllOpen}
@@ -6844,7 +6839,7 @@ export function VoiceTab() {
 // The Settings sections, grouped so 17 tabs read as five short lists. A tab
 // whose key no group names lands in the last group, so nothing is ever lost.
 export const SETTINGS_GROUPS: { label: string; keys: string[] }[] = [
-  { label: 'Connections', keys: ['ssh', 'jumpHosts', 'localVenvs', 'network', 'repos'] },
+  { label: 'Connections', keys: ['ssh', 'terminal', 'jumpHosts', 'localVenvs', 'network', 'repos'] },
   { label: 'Access & sync', keys: ['credentials', 'configSync', 'memorySync'] },
   { label: 'Assistant', keys: ['llm', 'agentTools', 'mcp', 'mcpServer', 'chatHistory', 'voice', 'selfService'] },
   { label: 'Alerts & mail', keys: ['sounds', 'mailbox'] },
@@ -6928,6 +6923,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
   const items = visibleSettingsTabs([
     { key: 'ssh',       label: 'SSH',        children: <SshTab onKeyChanged={onKeyChanged} connectedHosts={connectedHosts} allRemoteHosts={allRemoteHosts} activeProfile={activeProfile} /> },
     { key: 'llm',       label: 'Model / API',  children: <LlmTab /> },
+    { key: 'terminal',  label: 'Terminal',   children: <div><TerminalLook /><Divider /><PuttySync /></div> },
     { key: 'jumpHosts', label: 'Hosts',  children: <JumpHostsTab onHostsChanged={onHostsChanged} /> },
     { key: 'localVenvs', label: 'Local venvs', children: <LocalVenvsTab /> },
     { key: 'network',   label: 'Network',    children: <NetworkTab /> },

@@ -17,6 +17,7 @@ import { MONO_FONT } from '../ThemeContext'
 import { EmptyState, IconAction, PageHeader, RowActions, StatusTag, type RowAction } from '../components/kit'
 import { RunsIndexModal, type RunsIndexTarget } from './RunsIndexModal'
 import { LogCleanupModal, type LogCleanupTarget } from './LogCleanupModal'
+import { When } from '../when'
 
 // Analytics is a per-host drill off the Logs tab (not a standalone tab): the
 // operator opens a host's disk usage here, then its run analytics in a drawer,
@@ -44,18 +45,7 @@ function humanSize(n: number | undefined): string {
   return u === 0 ? `${size} B` : `${size.toFixed(1)} ${units[u]}`
 }
 
-function relTime(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return '—'
-  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000))
-  if (secs < 90) return `${secs}s ago`
-  const mins = Math.floor(secs / 60)
-  if (mins < 90) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 36) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
-}
+
 
 // ── maintenance modal (prune / compact) ──────────────────────────────────────
 
@@ -485,7 +475,7 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
       title: 'Newest',
       dataIndex: 'newest',
       key: 'newest',
-      render: (ts: string | null) => <Tooltip title={ts || ''}><span>{relTime(ts)}</span></Tooltip>,
+      render: (ts: string | null) => <When t={ts} />,
     },
     {
       title: '',

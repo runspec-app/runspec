@@ -5,6 +5,7 @@
 import type { Host, SavedTransfer, TransferEndpoint, RelaySource } from '../../bridge'
 import { adHocToEndpoint, type AdHocState } from '../AdHocHostFields'
 import { remoteTarget } from '../savedTransfers'
+import { fmtWhen } from '../../when'
 
 export const LOCAL = 'local'
 
@@ -269,14 +270,8 @@ export function humanSize(n: number): string {
   return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`
 }
 
+/** A file's modified time in the console's one date format (when.tsx). */
 export function humanTime(epochSeconds: number, now = Date.now()): string {
   if (!epochSeconds) return ''
-  const d = new Date(epochSeconds * 1000)
-  const today = new Date(now)
-  const sameDay = d.toDateString() === today.toDateString()
-  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  if (sameDay) return `today ${hm}`
-  if (d.getFullYear() === today.getFullYear()) return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${hm}`
-  // An older year: the date is enough.
-  return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })
+  return fmtWhen(epochSeconds * 1000, now)
 }

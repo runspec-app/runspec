@@ -14,6 +14,7 @@ import {
 } from '../bridge'
 import { useIsDark, textColor, textSecondary, MONO_FONT } from '../ThemeContext'
 import { antTone, EmptyState, StatusTag } from '../components/kit'
+import { OnceHint } from '../components/kit'
 
 const { Text, Paragraph, Title } = Typography
 
@@ -206,12 +207,13 @@ export function EvalsView({ active }: EvalsViewProps) {
         <ExperimentOutlined /> Evals
       </Title>
       <Paragraph type="secondary" style={{ maxWidth: 760 }}>
-        Check which runnable the agent <i>would</i> pick — and with which arguments — for a
-        fixed set of prompts, run against this console's real toolset and configured model,
-        <b> without executing anything</b>. The proactive twin of Improve: write a suite of
-        expectations, run it, and catch a regression before it ships. Turn on telemetry to send
-        each case as a trace to your OTLP backend (Phoenix, LangSmith, …).
+        Check which runnable the assistant would pick for a set of prompts, <b>without running anything</b>.
       </Paragraph>
+      <OnceHint id="quality.evals" style={{ maxWidth: 760 }}>
+        Write prompts and the runnable and arguments you expect, then run them against your real runnables and model
+        to catch a change in what the assistant picks before you rely on it. With tracing on in Settings → Telemetry,
+        each prompt is also sent as a trace.
+      </OnceHint>
 
       <Row gutter={16}>
         {/* ── controls ── */}

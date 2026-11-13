@@ -54,3 +54,11 @@ describe('groupSettingsTabs', () => {
     expect(groups[2].items.map(i => i.key)).toEqual(['telemetry', 'brandnew'])
   })
 })
+
+describe('Terminal section', () => {
+  it('sits in Connections next to SSH', () => {
+    const groups = groupSettingsTabs([{ key: 'ssh' }, { key: 'terminal' }, { key: 'jumpHosts' }])
+    expect(groups[0]).toMatchObject({ label: 'Connections' })
+    expect(groups[0].items.map(i => i.key)).toEqual(['ssh', 'terminal', 'jumpHosts'])
+  })
+})
