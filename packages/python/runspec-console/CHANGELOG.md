@@ -9,6 +9,26 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.429.0] — 2026-11-13
+
+### Changed
+
+- **Status colours never follow the brand.** "Running" used the white-label
+  accent, so under a red brand running and failed were two pinks, and a count
+  of running jobs read like an alarm. Running is now a fixed blue (8.8:1 dark,
+  5.8:1 light). "Needs a look" is a clearer orange on the dark theme, so it no
+  longer matches the gold of "waiting for you", and the two carry different
+  icons (pause for waiting, exclamation for needs a look). A test keeps
+  running, failed and needs-a-look apart under red, orange, teal and blue
+  brands.
+- **The approval card says what approving will do.** Beside the policy line it
+  now shows the runnable's one-line description; an **as root** marker when the
+  call runs as root; a **changes the host** marker when its name or subcommand
+  says it removes, stops, restarts, upgrades or otherwise changes something;
+  and, when the target is a group, how many hosts it reaches ("on prod-web
+  (12 hosts)"). A fleet-wide restart as root no longer looks like a ping
+  (`consoleInfo.tsx`: `approvalConsequence`, `ConsoleInfoContext`).
+
 ## [0.428.0] — 2026-11-13
 
 ### Changed

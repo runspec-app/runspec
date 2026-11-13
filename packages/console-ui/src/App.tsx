@@ -100,6 +100,7 @@ import { layoutNavTabs, hostMatches, groupViews, parentOf } from './navGroups'
 import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
 import { PageHeader, pressable, SectionSwitch } from './components/kit'
+import { ConsoleInfoContext } from './consoleInfo'
 
 type ViewKey = 'console' | 'automation' | 'quality' | 'specs' | 'history' | 'analytics' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
 
@@ -536,6 +537,16 @@ export default function App() {
     lastSection.current = { ...lastSection.current, [p]: view }
     try { localStorage.setItem('rs.nav.sections', JSON.stringify(lastSection.current)) } catch { /* storage blocked */ }
   }, [view])
+
+  // What the approval card needs to say what a call will do: each runnable's
+  // description and each group's host count (consoleInfo.tsx).
+  const consoleInfo = useMemo(() => {
+    const desc = new Map<string, string>()
+    for (const r of runnables) if (r.description && !desc.has(r.name)) desc.set(r.name, r.description)
+    const groups = new Map<string, number>()
+    for (const h of hosts) if (h.group) groups.set(h.group, (groups.get(h.group) ?? 0) + 1)
+    return { describe: (n: string) => desc.get(n), groupSize: (g: string) => groups.get(g) ?? 0 }
+  }, [runnables, hosts])
 
   // An AI-only tab can't stay selected once the flag resolves to off.
   useEffect(() => { if (!aiEnabled && AI_ONLY_VIEWS.has(view)) setView('console') }, [aiEnabled, view])
@@ -1766,7 +1777,9 @@ export default function App() {
                   )
                 })()}
                 <div className="rs-view" style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                  <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
+                  <ConsoleInfoContext.Provider value={consoleInfo}>
+                    <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
+                  </ConsoleInfoContext.Provider>
                 </div>
                 {/* Triggers stays mounted (display toggle) so a pending approval's
                     Approve/Deny buttons survive tab switches — unmounting it drops

@@ -12,6 +12,7 @@ import { render, screen, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { OutputPanel, approvalAnnouncement, blockOutcome, type PendingConfirm } from './OutputPanel'
+import { ConsoleInfoContext } from '../consoleInfo'
 import type { InvocationBlock } from './OutputPanel'
 
 // The real `bridge` is a Proxy that lazily waits for window.pywebview (2.5s
@@ -535,5 +536,22 @@ describe('approvals in other chats', () => {
     fireConfirm({ id: 'gone', request_id: 'req-g', tool_name: 'restart-service', tool_input: {}, autonomy: 'confirm' })
     expect(screen.getByTestId('approval-announce').textContent).toBe('')
     expect(screen.queryByTestId('approval-elsewhere')).toBeNull()
+  })
+})
+
+describe('approval consequence line', () => {
+  it('shows what the runnable does, an as-root marker and the group size', () => {
+    const info = { describe: (n: string) => (n === 'restart-service' ? 'Restart a systemd service.' : undefined), groupSize: (g: string) => (g === 'prod-web' ? 12 : 0) }
+    render(<ConsoleInfoContext.Provider value={info}><OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} /></ConsoleInfoContext.Provider>)
+    fireConfirm({
+      id: 'chat1', request_id: 'req-c', tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__restart-service' }, display_name: 'restart-service',
+      display_input: { host: 'prod-web', service: 'nginx' }, runs_as: 'root', autonomy: 'confirm',
+    })
+    expect(screen.getByTestId('confirm-fanout').textContent).toContain('12 hosts')
+    const line = screen.getByTestId('confirm-consequence').textContent ?? ''
+    expect(line).toContain('as root')
+    expect(line).toContain('changes the host')
+    expect(line).toContain('Restart a systemd service.')
   })
 })

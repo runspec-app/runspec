@@ -12,7 +12,7 @@ import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, Synthet
 import { cloneElement, isValidElement, useState } from 'react'
 import { Button, Dropdown, Modal, Segmented, Tooltip, Typography } from 'antd'
 import type { MenuProps } from 'antd'
-import { CloseOutlined, EllipsisOutlined, InfoCircleOutlined } from '@ant-design/icons'
+import { CloseOutlined, EllipsisOutlined, ExclamationCircleOutlined, InfoCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
 
 import {
   dangerColors, statusText, textColor, textMuted, textSecondary, useAccent, useIsDark, withAlpha, MONO_FONT, RADIUS,
@@ -24,13 +24,14 @@ const { Text } = Typography
 
 export type StatusTone = 'ok' | 'running' | 'waiting' | 'attention' | 'failed' | 'info' | 'neutral'
 
-/** The text colour and tint for a status tone. `accent` is the readable accent
- *  (useAccent()): running uses it, and failed steps away from it when the brand
- *  is itself a red. Pure, for tests. */
+/** The text colour and tint for a status tone. Every tone has its own fixed
+ *  hue, independent of the white-label accent: under a red brand "running" in
+ *  the brand colour sat beside "failed" as two pinks. `accent` only moves
+ *  failed off a red brand's hue (dangerColors). Pure, for tests. */
 export function statusTone(tone: StatusTone, isDark: boolean, accent: string): { color: string; bg: string; border: string } {
   const st = statusText(isDark)
   const color = tone === 'ok' ? st.ok
-    : tone === 'running' ? accent
+    : tone === 'running' ? st.running
     : tone === 'waiting' ? st.waiting
     : tone === 'attention' ? st.warn
     : tone === 'failed' ? dangerColors(accent, isDark).text
@@ -52,6 +53,13 @@ export function antTone(color: string | undefined): StatusTone {
     case 'blue': case 'geekblue': case 'cyan': case 'purple': return 'info'
     default: return 'neutral'
   }
+}
+
+// Waiting and attention are both warm hues; an icon tells them apart for
+// anyone who can't (or doesn't) read the colour.
+const TONE_ICON: Partial<Record<StatusTone, ReactNode>> = {
+  waiting: <PauseCircleOutlined aria-hidden style={{ fontSize: 11 }} />,
+  attention: <ExclamationCircleOutlined aria-hidden style={{ fontSize: 11 }} />,
 }
 
 export function StatusTag({ tone, children, tip, icon, mono, style, testId, onClick, ref, ...rest }: {
@@ -92,7 +100,7 @@ export function StatusTag({ tone, children, tip, icon, mono, style, testId, onCl
         ...style,
       }}
     >
-      {icon}{children}
+      {icon ?? TONE_ICON[tone]}{children}
     </span>
   )
   return tip ? <Tooltip title={tip}>{tag}</Tooltip> : tag

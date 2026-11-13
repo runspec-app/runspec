@@ -41,8 +41,11 @@ agent honours it:
 
 - `autonomous` — the agent runs it without asking.
 - `confirm` (the default) — the agent proposes the call; a confirmation card
-  appears with the exact arguments, the host it targets, its autonomy level and
-  the account it runs as. The arguments are read-only; **Edit arguments** opens
+  appears with the exact arguments, the host it targets (and how many hosts,
+  when the target is a group), what the runnable does, its autonomy level and
+  the account it runs as. A call that runs as root is marked **as root**, and
+  one whose name says it removes, stops, restarts or changes something is
+  marked **changes the host**. The arguments are read-only; **Edit arguments** opens
   them, a changed field shows what it was, and the button becomes **Approve
   edited & run**. **Add a reason…** beside Deny opens a box for telling the
   assistant why (Deny on its own denies at once). While it waits, the card, its
