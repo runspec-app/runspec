@@ -802,7 +802,9 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         <span>
           {record.status === 'skipped'
             ? <Tooltip title={`Didn't start — the previous run was still going${record.label ? ` (${record.label})` : ''}`}><Tag>skipped</Tag></Tooltip>
-            : <Tag color={c === 0 ? 'green' : 'red'}>{c === 0 ? 'ok' : `exit ${c}`}</Tag>}
+            : record.status === 'not_started'
+              ? <Tooltip title={`The runnable never started${record.reason ? `: ${record.reason}` : ''}. Recorded by this console, since the host has no record of it.`}><Tag color="red">didn't start</Tag></Tooltip>
+              : <Tag color={c === 0 ? 'green' : 'red'}>{c === 0 ? 'ok' : `exit ${c}`}</Tag>}
           {record.pending && (
             <Tooltip title="Another account's run, still in the venv's logs inbox — the owner's next run (or Sweep inbox under Logs → Runs index) indexes it">
               <Tag color="gold">inbox</Tag>

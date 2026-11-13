@@ -729,6 +729,9 @@ class SchedulesMixin:
                     selected_hosts,
                     runnable,
                 )
+                self._record_not_run(
+                    selected_hosts, runnable, args, operator, trigger, command_path
+                )
                 if schedule_card:
                     self._nothing_ran_card(
                         label,
@@ -758,6 +761,16 @@ class SchedulesMixin:
                 logger.warning(
                     "%s: no candidate host in %r — nothing run", trigger, hosts
                 )
+                self._record_not_run(
+                    list(hosts), runnable, args, operator, trigger, command_path
+                )
+                if schedule_card:
+                    self._nothing_ran_card(
+                        label,
+                        runnable,
+                        ", ".join(hosts),
+                        self._why_not_run(list(hosts), runnable),
+                    )
                 return []
             return self._invoke_fanout(
                 chosen,
@@ -780,6 +793,9 @@ class SchedulesMixin:
                     trigger,
                     group,
                     runnable,
+                )
+                self._record_not_run(
+                    in_group, runnable, args, operator, trigger, command_path
                 )
                 if schedule_card:
                     self._nothing_ran_card(
@@ -869,6 +885,17 @@ class SchedulesMixin:
             return [(host, got)] if got else []
         except Exception as exc:
             logger.exception("%s: run of %s on %s failed", trigger, runnable, host)
+            record = getattr(self, "_record_not_started", None)
+            if callable(record):
+                record(
+                    host=host,
+                    runnable=runnable,
+                    reason=f"failed to start the run: {exc}",
+                    command_path=list(command_path or []),
+                    args=dict(args or {}),
+                    operator=operator or "",
+                    trigger=trigger,
+                )
             if schedule_card:
                 now = time.time()
                 card["column"] = "failed"
@@ -890,6 +917,32 @@ class SchedulesMixin:
             warm(list(hosts or []))
         except Exception:  # noqa: BLE001 — each host is still checked one by one
             logger.debug("on-demand warm-up failed", exc_info=True)
+
+    def _record_not_run(
+        self,
+        hosts: list[str],
+        runnable: str,
+        args: dict[str, Any] | None,
+        operator: str | None,
+        trigger: str,
+        command_path: list[str] | None,
+    ) -> None:
+        """A History row (and log line) per host a fan-out couldn't run on."""
+        record = getattr(self, "_record_not_started", None)
+        if not callable(record):
+            return
+        reason_of = getattr(self, "_host_unreachable_reason", None)
+        for h in hosts:
+            reason = reason_of(h) if callable(reason_of) else ""
+            record(
+                host=h,
+                runnable=runnable,
+                reason=reason or f"'{runnable}' isn't installed there",
+                command_path=list(command_path or []),
+                args=dict(args or {}),
+                operator=operator or "",
+                trigger=trigger,
+            )
 
     def _why_not_run(self, hosts: list[str], runnable: str) -> str:
         """One line per host saying why ``runnable`` didn't run there — it

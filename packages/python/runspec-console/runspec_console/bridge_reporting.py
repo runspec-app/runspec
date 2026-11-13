@@ -19,6 +19,7 @@ from runspec import logs as core_logs
 
 from . import bridge_utils as utils_mod
 from . import hosts as hosts_mod
+from . import not_started as not_started_mod
 
 from .bridge_history_sync import HISTORY_CACHE_DAYS
 from .bridge_const import (
@@ -45,6 +46,25 @@ _HOME_SCOPE = "~/logs"
 # Records Analytics reads per host from the History cache — a local query over a
 # 30-day window, so generous; bounds a pathological host, not normal use.
 _ANALYTICS_CACHE_LIMIT = 100_000
+
+
+def _append_jsonl(
+    lock: Any, name: str, stem: str, max_bytes: int, record: dict[str, Any]
+) -> None:
+    """Append one JSON line to ``~/logs/<name>``, rolling it to ``<stem>.1.log``
+    (one backup) past ``max_bytes``. Raises on failure."""
+    log_dir = Path.home() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / name
+    line = json.dumps(record, default=str) + "\n"
+    with lock:
+        try:
+            if path.exists() and path.stat().st_size > max_bytes:
+                path.replace(path.with_name(f"{stem}.1.log"))
+        except OSError:
+            pass  # a rollover failure must not drop the append
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
 
 
 class ReportingMixin:
@@ -75,23 +95,108 @@ class ReportingMixin:
         disclaimer writers. Best-effort: a logging failure must never break the
         caller (a tool result, a turn, or an acknowledgement)."""
         try:
-            log_dir = Path.home() / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            path = log_dir / self._TOOL_AUDIT_FILE
-            line = json.dumps(record, default=str) + "\n"
-            with self._audit_lock:
-                try:
-                    if (
-                        path.exists()
-                        and path.stat().st_size > self._TOOL_AUDIT_MAX_BYTES
-                    ):
-                        path.replace(path.with_name(f"{self._TOOL_AUDIT_STEM}.1.log"))
-                except OSError:
-                    pass  # a rollover failure must not drop the append
-                with path.open("a", encoding="utf-8") as fh:
-                    fh.write(line)
+            _append_jsonl(
+                self._audit_lock,
+                self._TOOL_AUDIT_FILE,
+                self._TOOL_AUDIT_STEM,
+                self._TOOL_AUDIT_MAX_BYTES,
+                record,
+            )
         except Exception:  # noqa: BLE001 — auditing is best-effort
             logger.warning("could not write tools audit line", exc_info=True)
+
+    # ── runs that never started ──────────────────────────────────────────────
+
+    def _record_not_started(
+        self,
+        *,
+        host: str,
+        runnable: str,
+        reason: str,
+        exit_code: int = -1,
+        group: str = "",
+        command_path: list[str] | None = None,
+        args: dict[str, Any] | None = None,
+        operator: str = "",
+        run_as: str = "",
+        trigger: str = "",
+        agent: bool = False,
+        runbook: str = "",
+        output: Any = (),
+        hide: Any = (),
+    ) -> None:
+        """Record a run the console launched (or meant to) that never reached the
+        runnable — so it shows in History, under ``host``, and in the console
+        log. A runnable that did start writes its own record; this is only for
+        the cases where nothing else would. Best-effort, never raises."""
+        logger.warning(
+            "run didn't start: %s on %s%s — %s",
+            runnable,
+            host or "?",
+            f" ({trigger})" if trigger else "",
+            reason,
+        )
+        try:
+            import uuid
+
+            from . import bridge_secrets
+
+            # Saved secrets never reach the file (same masking as tool output).
+            # ``hide`` = this run's own typed secret values.
+            hidden = [str(v) for v in hide or () if str(v)]
+            masked = []
+            for x in output or ():
+                line = bridge_secrets.mask_known_secrets(self, str(x))
+                for v in hidden:
+                    line = line.replace(v, "****")
+                masked.append(line)
+            record = not_started_mod.build_record(
+                run_id=str(uuid.uuid4()),
+                ts=utils_mod._iso_now(),
+                host=host,
+                runnable=runnable,
+                reason=reason,
+                exit_code=exit_code,
+                group=group,
+                command_path=command_path,
+                args=args,
+                operator=operator or self._current_user(),
+                run_as=run_as,
+                trigger=trigger,
+                agent=agent,
+                runbook=runbook,
+                output=masked,
+            )
+            _append_jsonl(
+                self._audit_lock,
+                not_started_mod.FILE,
+                not_started_mod.STEM,
+                not_started_mod.MAX_BYTES,
+                record,
+            )
+        except Exception:  # noqa: BLE001 — recording is best-effort
+            logger.warning("could not record a run that didn't start", exc_info=True)
+
+    def _not_started_rows(
+        self,
+        since_date: str = "",
+        *,
+        hosts: set[str] | None = None,
+        exclude_hosts: set[str] | None = None,
+        exclude: frozenset[str] = frozenset(),
+    ) -> list[dict[str, Any]]:
+        """History rows for runs that never started (see :meth:`_record_not_started`)."""
+        try:
+            return not_started_mod.read_rows(
+                Path.home() / "logs",
+                since_date=since_date,
+                hosts=hosts,
+                exclude_hosts=exclude_hosts,
+                exclude_runnables=exclude,
+            )
+        except Exception:  # noqa: BLE001 — History must still load
+            logger.warning("could not read runs that didn't start", exc_info=True)
+            return []
 
     def _audit_builtin_tool(
         self,
@@ -251,7 +356,13 @@ class ReportingMixin:
             return []
         since_date = self._since_date(since_days)
         if entry.get("ssh"):
-            return self._get_remote_history(entry, runnable, since_date, exclude)
+            return self._with_not_started(
+                host,
+                self._get_remote_history(entry, runnable, since_date, exclude),
+                since_date,
+                exclude,
+                runnable,
+            )
         paths = utils_mod._paths(entry)
         globs = _log_globs(runnable)
         # Scan every venv's logs dir (tagged with its venv group) AND ~/logs. A
@@ -279,7 +390,28 @@ class ReportingMixin:
         self._prune_history_cache(live)
         if since_date:
             records = [r for r in records if r.get("ts", "")[:10] >= since_date]
-        return records[: self._HISTORY_CAP]
+        return self._with_not_started(
+            host, records[: self._HISTORY_CAP], since_date, exclude, runnable
+        )
+
+    def _with_not_started(
+        self,
+        host: str,
+        records: list[dict[str, Any]],
+        since_date: str,
+        exclude: frozenset[str] = frozenset(),
+        runnable: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """``records`` plus the runs on ``host`` that never started, newest
+        first, still capped at ``_HISTORY_CAP``."""
+        extra = self._not_started_rows(since_date, hosts={host}, exclude=exclude)
+        if runnable:
+            extra = [r for r in extra if r.get("runnable") == runnable]
+        if not extra:
+            return records
+        merged = [*records, *extra]
+        merged.sort(key=lambda r: r.get("ts", ""), reverse=True)
+        return merged[: self._HISTORY_CAP]
 
     # ── bounded newest-first history read (local) ──────────────────────────────
 
@@ -311,6 +443,11 @@ class ReportingMixin:
                     # Analytics reads it through its own path. Only bites the
                     # broad ``*.log`` sweep — a runnable-scoped glob never matches.
                     if f.name.startswith(self._TOOL_AUDIT_STEM):
+                        continue
+                    # Runs that never started are console-side records shown
+                    # under the host each was meant for (_not_started_rows),
+                    # never under this machine.
+                    if f.name.startswith(not_started_mod.STEM):
                         continue
                     try:
                         st = f.lstat()
@@ -465,6 +602,13 @@ class ReportingMixin:
             ) as ex:
                 for chunk in ex.map(_read_one, names):
                     records.extend(chunk)
+        # Runs that never started on a host not read above (disconnected, or
+        # outside the active profile) — the console holds those records itself.
+        records.extend(
+            self._not_started_rows(
+                self._since_date(since_days), exclude_hosts=set(names)
+            )
+        )
         records.sort(key=lambda r: r.get("ts", ""), reverse=True)
         records = [r for r in records if r.get("kind", "runnable") == "runnable"]
         return [self._slim_history_row(r) for r in records[:300]]
@@ -533,17 +677,55 @@ class ReportingMixin:
         try:
             recs = self._slim_history_db(host, since_days, exclude)
             if recs is not None:
-                return recs
+                return self._slim_with_not_started(host, recs, since_days, exclude)
         except Exception:
             logger.exception(
                 "history: DB slim read failed for %s; using log parse", host
             )
+        # get_history already adds this host's runs that never started.
         rows = self.get_history(host, since_days=since_days, exclude=exclude)
-        return [
+        slim = [
             self._slim_history_row(r)
             for r in rows
             if r.get("kind", "runnable") == "runnable"
         ]
+        return self._slim_with_not_started(
+            host, slim, since_days, exclude, own_included=True
+        )
+
+    def _slim_with_not_started(
+        self,
+        host: str,
+        rows: list[dict[str, Any]],
+        since_days: int | None,
+        exclude: frozenset[str],
+        own_included: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Add the runs that never started to one host's slim History rows: that
+        host's own, and — on ``local``, which the tab always reads — those for
+        hosts the tab doesn't read (disconnected, or outside the active
+        profile), so they show up somewhere."""
+        since_date = self._since_date(since_days)
+        extra: list[dict[str, Any]] = []
+        if not own_included:
+            extra += self._not_started_rows(since_date, hosts={host}, exclude=exclude)
+        if host == "local":
+            with self._lock:
+                remotes = list(self._hosts)
+                connected = dict(self._connected_cache)
+            read = {"local"} | {
+                str(h.get("name"))
+                for h in remotes
+                if h.get("name") and connected.get(h.get("name"))
+            }
+            extra += self._not_started_rows(
+                since_date, exclude_hosts=read, exclude=exclude
+            )
+        if not extra:
+            return rows
+        merged = [*rows, *(self._slim_history_row(r) for r in extra)]
+        merged.sort(key=lambda r: r.get("ts", ""), reverse=True)
+        return merged
 
     def _history_db_dir_groups(self, entry: dict[str, Any]) -> list[tuple[Path, str]]:
         """``(logs Path, venv group)`` per venv + the ``~/logs`` home dir — the
@@ -902,6 +1084,13 @@ class ReportingMixin:
         no-run_id log)."""
         if not run_id:
             return {"logLines": []}
+        # A run that never started: the console's own record holds its lines.
+        try:
+            row = not_started_mod.find_row(Path.home() / "logs", run_id)
+        except Exception:  # noqa: BLE001
+            row = None
+        if row is not None:
+            return {"logLines": row["logLines"]}
         name = utils_mod.safe_log_basename(log_file or "")
         if name:
             try:

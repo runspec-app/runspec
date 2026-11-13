@@ -39,6 +39,7 @@ def _stub(
         "_warm_for_fanout",
         "_why_not_run",
         "_nothing_ran_card",
+        "_record_not_run",
     ):
         setattr(ns, name, types.MethodType(getattr(Bridge, name), ns))
     ns._lock = threading.Lock()
