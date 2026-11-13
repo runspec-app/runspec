@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
-import { SessionStrip, partitionSessions, VISIBLE_AUTOMATION } from './SessionStrip'
+import { SessionStrip, chipText, partitionSessions, VISIBLE_AUTOMATION } from './SessionStrip'
 import type { Session, SessionStatus } from '../sessions'
 
 const sess = (over: Partial<Session>): Session => ({
@@ -53,7 +53,9 @@ describe('SessionStrip', () => {
     expect(chip('c1').textContent).toContain('restart nginx')
     expect(chip('t1').dataset.status).toBe('running')
     expect(chip('s1').dataset.status).toBe('waiting')
-    expect(screen.getByLabelText('waiting for input')).toBeTruthy()
+    // Waiting is said in words, and that chip comes first.
+    expect(chip('s1').textContent).toContain('waiting for you')
+    expect(screen.getAllByTestId('session-chip')[0].dataset.sessionId).toBe('s1')
     expect(screen.getByLabelText('unread')).toBeTruthy()
     // An unlabelled chat reads as "New chat"; a running session has no close ×.
     expect(screen.queryAllByLabelText('Close session')).toHaveLength(1)
@@ -144,5 +146,14 @@ describe('SessionStrip overflow', () => {
   it('shows no overflow control when everything fits', () => {
     renderStrip([sess({ id: 'c1' }), ...burst(VISIBLE_AUTOMATION)], {})
     expect(screen.queryByTestId('session-overflow')).toBeNull()
+  })
+})
+
+describe('chipText', () => {
+  it('adds the start time to an automation label that has none, and leaves chats alone', () => {
+    const at = new Date(2026, 10, 13, 9, 5).getTime()
+    expect(chipText(sess({ kind: 'trigger', interactive: false, label: 'Trigger x · new_mail', createdAt: at }))).toBe('Trigger x · new_mail · 09:05')
+    expect(chipText(sess({ kind: 'trigger', interactive: false, label: 'x · 09:05 · subject', createdAt: at }))).toBe('x · 09:05 · subject')
+    expect(chipText(sess({ label: 'restart nginx', createdAt: at }))).toBe('restart nginx')
   })
 })

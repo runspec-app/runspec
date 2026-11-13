@@ -8,7 +8,7 @@
  * on the DOM, headlessly, so this is caught in CI instead of on a Windows box.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { OutputPanel, approvalAnnouncement, blockOutcome, type PendingConfirm } from './OutputPanel'
@@ -214,6 +214,9 @@ describe('OutputPanel autonomy-gate confirm', () => {
       confirm_verb: 'save',
       autonomy: 'confirm',
     })
+    // Args are read-only until the operator chooses to edit them.
+    expect(screen.queryByDisplayValue('Triage 502s')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /edit arguments/i }))
     // Short value → plain input; multi-line value → textarea, carrying every line.
     // (Queried directly: getByDisplayValue normalises whitespace, which is exactly
     // the newlines this test is about.)
@@ -245,7 +248,9 @@ describe('OutputPanel autonomy-gate confirm', () => {
       runs_as: 'svc-ops',
       autonomy: 'confirm',
     })
-    expect(screen.getByTestId('confirm-runs-as').textContent).toBe('Runs as svc-ops')
+    expect(screen.getByTestId('confirm-runs-as').textContent).toBe('· runs as svc-ops')
+    // The autonomy level is on the card, not behind a tooltip.
+    expect(screen.getByTestId('confirm-meta').textContent).toContain('Set to ask first (autonomy confirm)')
   })
 
   it('omits the runs-as line when the call runs as the login account', () => {
@@ -295,10 +300,14 @@ describe('OutputPanel autonomy-gate confirm', () => {
       confirm_verb: 'create',
       autonomy: 'confirm',
     })
+    await userEvent.click(screen.getByRole('button', { name: /edit arguments/i }))
     const filename = screen.getByDisplayValue('note.md')
     await userEvent.clear(filename)
     await userEvent.type(filename, 'edited.md')
-    await userEvent.click(screen.getByRole('button', { name: /approve & create/i }))
+    // The card says it was changed and from what, and the button says so too.
+    expect(screen.getByTestId('confirm-edited').textContent).toBe('edited')
+    expect(screen.getByTestId('edited-filename').textContent).toBe('was note.md')
+    await userEvent.click(screen.getByRole('button', { name: /approve edited & create/i }))
     expect(resolveConfirm).toHaveBeenCalledWith('req-7', true, {
       filename: 'edited.md',
       dest: 'local',
@@ -425,6 +434,7 @@ describe('OutputPanel autonomy-gate confirm', () => {
       display_name: 'drain-node',
       autonomy: 'confirm',
     })
+    await userEvent.click(screen.getByRole('button', { name: /add a reason/i }))
     const box = screen.getByRole('textbox', { name: /reason for denying/i })
     await userEvent.type(box, '  drain web-02 instead  ')
     // The button says the reason goes along.
@@ -442,6 +452,7 @@ describe('OutputPanel autonomy-gate confirm', () => {
       display_name: 'drain-node',
       autonomy: 'confirm',
     })
+    await userEvent.click(screen.getByRole('button', { name: /add a reason/i }))
     await userEvent.type(screen.getByRole('textbox', { name: /reason for denying/i }), '   ')
     await userEvent.click(screen.getByRole('button', { name: /^deny$/i }))
     expect(resolveConfirm).toHaveBeenCalledWith('req-plain', false, undefined)
@@ -457,6 +468,7 @@ describe('OutputPanel autonomy-gate confirm', () => {
       display_name: 'drain-node',
       autonomy: 'confirm',
     })
+    await userEvent.click(screen.getByRole('button', { name: /add a reason/i }))
     const box = screen.getByRole('textbox', { name: /reason for denying/i })
     await userEvent.type(box, 'not now{Shift>}{Enter}{/Shift}check the queue first')
     expect(resolveConfirm).not.toHaveBeenCalled()
@@ -474,6 +486,7 @@ describe('OutputPanel autonomy-gate confirm', () => {
       display_name: 'drain-node',
       autonomy: 'confirm',
     })
+    await userEvent.click(screen.getByRole('button', { name: /add a reason/i }))
     await userEvent.type(screen.getByRole('textbox', { name: /reason for denying/i }), 'meh')
     await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
     expect(resolveConfirm).toHaveBeenCalledWith('req-appr', true, undefined)
@@ -500,5 +513,27 @@ describe('OutputPanel autonomy-gate confirm', () => {
     // Answered: back to the running state.
     fireResolved({ id: 'chat1', request_id: 'req-wait' })
     expect(screen.getByTestId('activity-label').textContent).toBe('Running')
+  })
+})
+
+describe('approvals in other chats', () => {
+  it('shows a bar for an approval whose card is in another chat, and offers to show it', () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} allBlockIds={new Set(['chat1', 'other'])} />)
+    fireConfirm({ id: 'other', request_id: 'req-o', tool_name: 'restart-service', tool_input: { host: 'web-01' }, autonomy: 'confirm' })
+    expect(screen.getByTestId('approval-elsewhere').textContent).toContain('An approval is waiting in another chat')
+    expect(screen.getByTestId('approval-announce').textContent).toBe('Approval needed: restart-service on web-01')
+    const seen: string[] = []
+    const on = (e: Event) => seen.push((e as CustomEvent<{ id: string }>).detail.id)
+    window.addEventListener('runspec:show_block', on)
+    fireEvent.click(screen.getByRole('button', { name: 'Show it' }))
+    window.removeEventListener('runspec:show_block', on)
+    expect(seen).toEqual(['other'])
+  })
+
+  it('does not announce an approval whose card no longer exists anywhere', () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} allBlockIds={new Set(['chat1'])} />)
+    fireConfirm({ id: 'gone', request_id: 'req-g', tool_name: 'restart-service', tool_input: {}, autonomy: 'confirm' })
+    expect(screen.getByTestId('approval-announce').textContent).toBe('')
+    expect(screen.queryByTestId('approval-elsewhere')).toBeNull()
   })
 })

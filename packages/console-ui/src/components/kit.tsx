@@ -267,14 +267,15 @@ export function PageHeader({ title, description, actions, style }: {
 /** The sections of a tab that holds several views (Automation: Schedules /
  *  Triggers / Working hours). A count shows beside a section that has
  *  something running or waiting, so it's visible from the others. */
-export function SectionSwitch({ label, sections, value, onChange }: {
+export function SectionSwitch({ label, sections, value, onChange, style }: {
   label: string
   sections: { key: string; label: string; count?: number; countTone?: StatusTone }[]
   value: string
   onChange: (key: string) => void
+  style?: CSSProperties
 }) {
   return (
-    <div data-testid="section-switch" style={{ marginBottom: 16, flexShrink: 0 }}>
+    <div data-testid="section-switch" style={{ marginBottom: 16, flexShrink: 0, ...style }}>
       <Segmented
         aria-label={`${label} sections`}
         value={value}

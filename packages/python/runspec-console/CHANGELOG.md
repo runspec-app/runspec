@@ -9,6 +9,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.428.0] — 2026-11-13
+
+### Changed
+
+- **The approval card asks you to edit on purpose.** The arguments show
+  read-only; **Edit arguments** opens them. A changed field says what it was
+  ("was note.md"), an **edited** tag appears and the button reads **Approve
+  edited & create** (or run, save…), so a stray keystroke can't quietly change
+  what runs. The autonomy level and the account it runs as are on one visible
+  line ("Set to ask first (autonomy confirm) · runs as svc") instead of behind
+  a tooltip. The reason box opens from **Add a reason…** beside Deny, and Deny
+  on its own still denies at once (the keyboard shortcut is unchanged).
+- **Session chips can be told apart.** A trigger or schedule chip names the
+  run, when it started and what it was about ("vip-outage-triage · 21:38 ·
+  Outage on web01"); several runs of one trigger used to share a name. A chip
+  that's waiting for you says **waiting for you** in words and moves to the
+  front.
+- **An approval can't wait unseen.** One waiting in another chat shows a bar
+  ("An approval is waiting in another chat") with **Show it**, which opens
+  that chat. The screen-reader announcement only speaks for approvals whose
+  card still exists, so a stale one no longer sends you looking for nothing.
+- **Every view has the same top.** Each tab but Console opens with one header:
+  its name and one line on what it's for, then its section switch. Knowledge
+  uses the shared section switch (Tools / Inbox, with the inbox count) instead
+  of its own tab bar; Log files, Improve and Evals no longer draw their own
+  titles. The Telemetry and Tool visibility intros are one line, with the
+  detail once as a tip.
+- The tool row's check, "output cut" and large-result marks use the status
+  colours (the fixed greens and oranges fell under 4.5:1 on the light theme).
+
 ## [0.427.0] — 2026-11-13
 
 ### Changed

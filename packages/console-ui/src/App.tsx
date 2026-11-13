@@ -99,7 +99,7 @@ import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from '.
 import { layoutNavTabs, hostMatches, groupViews, parentOf } from './navGroups'
 import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
-import { pressable, SectionSwitch } from './components/kit'
+import { PageHeader, pressable, SectionSwitch } from './components/kit'
 
 type ViewKey = 'console' | 'automation' | 'quality' | 'specs' | 'history' | 'analytics' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
 
@@ -147,6 +147,25 @@ const MANAGE_PROFILES = '__manage_profiles__'
 const SIDEBAR_WIDTH = 180
 const SIDEBAR_MIN = 150
 const SIDEBAR_MAX = 420
+
+// The one line under each view's title (App renders the header, so every
+// view has the same anatomy: title, one line, then its section switch).
+const VIEW_BLURB: Record<string, string> = {
+  forms: 'Run any runnable on any host from a typed form.',
+  specs: "Each runnable's full interface: arguments, types and autonomy.",
+  history: 'Every run across the fleet, newest first.',
+  analytics: 'Volume, success rate and durations over recent runs.',
+  logs: "Each run's log file, per venv: read them, compress old ones, clean up.",
+  files: 'Browse hosts and copy files between them.',
+  schedules: 'Runs that fire on a timetable.',
+  triggers: 'Runs that react to events, such as a new email.',
+  rota: 'When automation is allowed to run.',
+  knowledge: 'What the team knows about its runnables, hosts and services.',
+  marketplace: 'Install and update runnable packages across your venvs.',
+  improve: 'How well the assistant and your runnables are working.',
+  evals: 'Check which runnable the assistant would pick, without running anything.',
+  dev: 'Internals for debugging the console.',
+}
 
 // Tab badges: a count of things running is not an error, so it is never the
 // brand red (Ant's default). Surface-coloured text on a status fill reads in
@@ -1726,6 +1745,10 @@ export default function App() {
             {/* View area */}
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, padding: '24px 24px 16px', overflow: 'hidden' }}>
+                {view !== 'console' && (() => {
+                  const tab = navTabs.find(t => t.key === currentTab)
+                  return tab ? <PageHeader title={tab.label} description={VIEW_BLURB[view]} style={{ flexShrink: 0 }} /> : null
+                })()}
                 {(() => {
                   const tab = navTabs.find(t => t.key === currentTab)
                   if (!tab || tab.sections.length < 2) return null

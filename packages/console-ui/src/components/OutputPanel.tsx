@@ -925,6 +925,10 @@ interface OutputPanelProps {
   // Toggle whether a card's content is in the agent's context (the header
   // checkbox). id = block id; inContext = the new desired state.
   onToggleContext?: (id: string, inContext: boolean) => void
+  // Every block id in the Console, across all chats. A parked approval whose
+  // card is in another chat gets a "Show it" bar here; one whose card no longer
+  // exists anywhere is not announced. Defaults to the visible blocks.
+  allBlockIds?: ReadonlySet<string>
 }
 
 export interface PendingConfirm {
@@ -1121,7 +1125,7 @@ export function blockOutcome(block: Pick<InvocationBlock, 'stopped' | 'exitCode'
   return { text: 'error', tone: 'failed' }
 }
 
-export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: OutputPanelProps) {
+export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlockIds }: OutputPanelProps) {
   const c = useCardTheme()
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -1242,6 +1246,13 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
     )
   }
 
+  // Approvals worth announcing: ones whose card still exists in some chat (a
+  // stale gate with no card would send a screen reader hunting for nothing).
+  const visibleIds = new Set(blocks.map(b => b.id))
+  const knownIds = allBlockIds ?? visibleIds
+  const livePending = Object.values(pendingConfirms).filter(p => knownIds.has(p.id))
+  const offscreenPending = livePending.filter(p => !visibleIds.has(p.id))
+
   return (
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div
@@ -1267,8 +1278,25 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
       {/* Screen readers hear when a call parks for approval (nothing else on
           the page announces it): "Approval needed: flush-dns on web-01". */}
       <div className="rs-visually-hidden" role="status" aria-live="polite" data-testid="approval-announce">
-        {approvalAnnouncement(Object.values(pendingConfirms))}
+        {approvalAnnouncement(livePending)}
       </div>
+      {/* An approval parked in another chat: say so here and offer to show it,
+          so it can't wait unseen behind a chip. */}
+      {offscreenPending.length > 0 && (
+        <div data-testid="approval-elsewhere" role="note" style={{
+          position: 'absolute', top: 8, left: '50%', transform: 'translateX(-50%)', zIndex: 11,
+          display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px 6px 14px', borderRadius: 14,
+          background: AWAIT_BG, border: `1px solid ${AWAIT_BORDER}`, fontSize: 13,
+        }}>
+          <PauseCircleOutlined style={{ color: 'var(--rs-waiting)' }} />
+          <span style={{ color: 'var(--rs-waiting)', fontWeight: 600 }}>
+            {offscreenPending.length === 1 ? 'An approval is waiting in another chat' : `${offscreenPending.length} approvals are waiting in other chats`}
+          </span>
+          <Button size="small" onClick={() => window.dispatchEvent(new CustomEvent('runspec:show_block', { detail: { id: offscreenPending[0].id } }))}>
+            Show it
+          </Button>
+        </div>
+      )}
 
       {/* Sticky activity indicator — pinned while a turn is in flight so the
           "still working" signal survives long tool runs scrolling the card's own
@@ -1396,7 +1424,16 @@ function ToolCallBlock({
   // operator can say why — or redirect it — in the same click. Cleared when a
   // new gate parks here.
   const [reason, setReason] = useState('')
-  useEffect(() => { setReason('') }, [seedKey])
+  // The args are shown read-only; Edit arguments opens the fields. Editing is
+  // the exception, so a stray keystroke can't change what runs. The reason box
+  // opens from "Add a reason…" beside Deny (Deny itself always denies at once,
+  // so the keyboard Deny shortcut keeps working).
+  const [editing, setEditing] = useState(false)
+  const [reasonOpen, setReasonOpen] = useState(false)
+  useEffect(() => { setReason(''); setEditing(false); setReasonOpen(false) }, [seedKey])
+  const seedText = Object.fromEntries(approveArgs.map(([k, val]) => [k, jsonValue(val)]))
+  const changedKeys = editable && edits ? Object.keys(edits).filter(k => edits[k] !== seedText[k]) : []
+  const edited = changedKeys.length > 0
   const deny = () => {
     const r = reason.trim()
     if (r) onAnswer?.(false, undefined, r)
@@ -1445,7 +1482,7 @@ function ToolCallBlock({
           ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)', fontSize: 14 }} />
           : entry.running
             ? <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} />
-            : <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />}
+            : <CheckCircleOutlined style={{ color: 'var(--rs-ok)', fontSize: 13 }} />}
         {display.via ? (
           <Tooltip title={`Run via ${display.via}`}>
             <Text code style={{ fontSize: 13, flexShrink: 0 }}>{display.name}</Text>
@@ -1498,14 +1535,14 @@ function ToolCallBlock({
         )}
         {!entry.running && entry.truncated && (
           <Tooltip title={`This tool returned ${fmtBytes(entry.truncated.orig_len)} but was cut to ${fmtBytes(entry.truncated.cap)} before the model saw it — the JSON it received is incomplete. Have the runnable return a summary and let the agent request specifics, or raise [llm] tool_output_cap.`}>
-            <Text style={{ color: '#ff4d4f', fontSize: 12, flexShrink: 0, fontWeight: 600 }}>
+            <Text style={{ color: 'var(--rs-danger)', fontSize: 12, flexShrink: 0, fontWeight: 600 }}>
               ⚠ output cut
             </Text>
           </Tooltip>
         )}
         {!entry.running && !entry.truncated && entry.outputChars !== undefined && entry.outputChars > LARGE_OUTPUT_CHARS && (
           <Tooltip title={`Large result (${fmtBytes(entry.outputChars)}). It stays in the conversation context for the rest of the chat — if it's data-heavy, a summary-first runnable keeps the window lean.`}>
-            <Text style={{ color: '#faad14', fontSize: 12, flexShrink: 0, fontFamily: MONO_FONT }}>
+            <Text style={{ color: 'var(--rs-warn)', fontSize: 12, flexShrink: 0, fontFamily: MONO_FONT }}>
               {fmtBytes(entry.outputChars)}
             </Text>
           </Tooltip>
@@ -1540,16 +1577,14 @@ function ToolCallBlock({
             {resolved ? <Text code style={{ fontSize: 12 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text> : 'this'}
             {targetHost && <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{targetHost}</Text></>}
             . It waits for your go-ahead.
-            <Tooltip title={`This tool is set to ask first (autonomy “${awaiting}”), so it never runs without your approval.`}>
-              <InfoCircleOutlined aria-label={`Why: this tool is set to ask first (autonomy ${awaiting})`} style={{ color: textMuted(c.isDark), marginLeft: 6, cursor: 'help' }} />
-            </Tooltip>
           </div>
-          {runsAs && (
-            <div data-testid="confirm-runs-as" style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
-              Runs as <Text code style={{ fontSize: 12 }}>{runsAs}</Text>
-            </div>
-          )}
-          {approveArgs.length > 0 && editable && edits ? (
+          <div data-testid="confirm-meta" style={{ fontSize: 12, color: textMuted(c.isDark), marginBottom: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span>Set to ask first (autonomy <Text code style={{ fontSize: 11 }}>{awaiting}</Text>)</span>
+            {runsAs && (
+              <span data-testid="confirm-runs-as">· runs as <Text code style={{ fontSize: 12 }}>{runsAs}</Text></span>
+            )}
+          </div>
+          {approveArgs.length > 0 && editable && edits && editing ? (
             // Editable confirmations: let the operator tweak each arg before
             // approving. One field per arg (JSON-encoded so a number/bool/string
             // round-trips); the edited values run instead of the agent's proposal.
@@ -1562,8 +1597,9 @@ function ToolCallBlock({
                 // are approving.
                 const val = edits[k] ?? ''
                 const multiline = val.includes('\n') || val.length > 80
+                const changed = changedKeys.includes(k)
                 return (
-                  <div key={k} style={{ display: 'flex', alignItems: multiline ? 'flex-start' : 'center', gap: 8 }}>
+                  <div key={k} style={{ display: 'flex', alignItems: multiline ? 'flex-start' : 'center', gap: 8, flexWrap: 'wrap' }}>
                     <Text code style={{ fontSize: 12, flexShrink: 0, minWidth: 90, marginTop: multiline ? 4 : 0 }}>{k}</Text>
                     {multiline ? (
                       <Input.TextArea
@@ -1580,14 +1616,20 @@ function ToolCallBlock({
                         size="small"
                         value={val}
                         onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}
-                        style={{ fontFamily: MONO_FONT, fontSize: 12 }}
+                        style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 160 }}
                       />
+                    )}
+                    {changed && (
+                      <span data-testid={`edited-${k}`} style={{ flexBasis: '100%', paddingLeft: 98, fontSize: 11, color: textMuted(c.isDark) }}>
+                        was <s style={{ fontFamily: MONO_FONT }}>{seedText[k]}</s>
+                      </span>
                     )}
                   </div>
                 )
               })}
             </div>
           ) : approveArgs.length > 0 ? (
+            <div style={{ margin: '0 0 10px' }}>
             // The header preview ellipsises; show the full args here, wrapped, so
             // the operator can see exactly what they're approving — a many-arg
             // runnable used to push this (and the buttons) off-screen. This is the
@@ -1596,7 +1638,7 @@ function ToolCallBlock({
             // their REAL newlines (not JSON-escaped \n) so the code is readable,
             // and auto-grow to a generous cap before scrolling.
             <pre style={{
-              margin: '0 0 10px', padding: '8px 10px',
+              margin: 0, padding: '8px 10px',
               background: c.codeBg, borderRadius: 10,
               fontFamily: MONO_FONT, fontSize: 12, lineHeight: 1.5, color: c.sub,
               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
@@ -1607,8 +1649,16 @@ function ToolCallBlock({
                 return s.includes('\n') ? `${k} =\n${s}` : `${k} = ${s}`
               }).join('\n')}
             </pre>
+            {editable && edits && (
+              <Button size="small" type="text" icon={<EditOutlined />} onClick={() => setEditing(true)}
+                style={{ marginTop: 4, color: textSecondary(c.isDark) }}>
+                Edit arguments
+              </Button>
+            )}
+            </div>
           ) : null}
-          <Input.TextArea
+          {reasonOpen && <Input.TextArea
+            autoFocus
             size="small"
             data-rs-confirm-reason=""
             aria-label="Reason for denying (optional)"
@@ -1626,21 +1676,27 @@ function ToolCallBlock({
               }
             }}
             style={{ fontSize: 12, marginBottom: 10, borderRadius: 10 }}
-          />
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          />}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <Tooltip title={`Approve (${shortcutHint('approve')})`}>
               {/* One fixed look whatever the brand accent: green go, neutral Deny. */}
               <Button shape="round" icon={<CaretRightOutlined />} onClick={approve} data-rs-confirm="approve"
                 className="rs-approve"
                 style={{ background: go.bg, borderColor: go.bg, color: go.text, ['--rs-approve-hover' as string]: go.hover }}>
-                Approve &amp; {v}
+                {edited ? <>Approve edited &amp; {v}</> : <>Approve &amp; {v}</>}
               </Button>
             </Tooltip>
+            {edited && <StatusTag tone="attention" testId="confirm-edited">edited</StatusTag>}
             <Tooltip title={reason.trim() ? `Deny and send your reason to the assistant (${shortcutHint('deny')})` : `Deny (${shortcutHint('deny')})`}>
               <Button shape="round" onClick={deny} data-rs-confirm="deny">
                 {reason.trim() ? 'Deny with reason' : 'Deny'}
               </Button>
             </Tooltip>
+            {!reasonOpen && (
+              <Button size="small" type="link" onClick={() => setReasonOpen(true)} style={{ padding: 0 }}>
+                Add a reason…
+              </Button>
+            )}
           </div>
         </div>
       )}

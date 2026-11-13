@@ -141,13 +141,7 @@ export function ImproveView({ active }: ImproveViewProps) {
   if (!active) return null
 
   return (
-    <div style={{ padding: 16, overflow: 'auto', height: '100%' }}>
-      <Title level={4} style={{ marginTop: 0 }}>
-        <BulbOutlined /> Improve
-      </Title>
-      <Paragraph type="secondary" style={{ maxWidth: 720 }}>
-        How well the assistant and your runnables are working, from this console's own chats and runs.
-      </Paragraph>
+    <div style={{ overflow: 'auto', height: '100%' }}>
       <OnceHint id="quality.improve" style={{ maxWidth: 720 }}>
         Run an evaluation to see where the assistant struggled (searches that found nothing, arguments it got
         wrong, turns you stopped, errors, calls you denied), or report a problem in your own words. Reports go to

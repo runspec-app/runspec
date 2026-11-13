@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Drawer, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
 import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined, CompressOutlined, ExpandOutlined } from '@ant-design/icons'
 import { bridge, type ChatConversation, type ChatSessionInfo, type ConversationMeta, type InFlightRecord, type Runnable, type TriggerCard } from '../bridge'
@@ -351,6 +351,17 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   // indicator, the pending confirm gates and the composer's Stop/Send are per
   // session by construction.
   const visible = selectedId ? blocks.filter(b => b.sessionId === selectedId) : []
+  const allBlockIds = useMemo(() => new Set(blocks.map(b => b.id)), [blocks])
+  // "Show it" on the approval-elsewhere bar: open the chat that holds that card.
+  useEffect(() => {
+    const onShow = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id
+      const b = blocks.find(x => x.id === id)
+      if (b?.sessionId) select(b.sessionId)
+    }
+    window.addEventListener('runspec:show_block', onShow)
+    return () => window.removeEventListener('runspec:show_block', onShow)
+  }, [blocks, select])
 
   // Build the context preamble from run cards the operator ticked "in context"
   // that haven't been staged yet, marking them staged. Returns '' when none —
@@ -739,7 +750,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
           ] as RowAction[]) : []}
         />
       </div>
-      <OutputPanel blocks={visible} onRerun={handleRerun} onAskLlm={ai ? handleAskLlm : undefined} onToggleContext={ai ? handleToggleContext : undefined} />
+      <OutputPanel blocks={visible} allBlockIds={allBlockIds} onRerun={handleRerun} onAskLlm={ai ? handleAskLlm : undefined} onToggleContext={ai ? handleToggleContext : undefined} />
 
       <Drawer
         title="Conversations"

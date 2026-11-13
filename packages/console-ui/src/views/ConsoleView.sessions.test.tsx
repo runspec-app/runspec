@@ -119,8 +119,9 @@ describe('Console sessions', () => {
     expect(chip('a1').dataset.status).toBe('running')
     // The trigger's turn does not take over the composer.
     expect(active()).toMatchObject({ id: 'chat-1', session: 's1', readOnly: false })
-    // Its block is not in the visible transcript (only its chip carries the label).
-    expect(screen.getAllByText('Trigger nightly · new_mail')).toHaveLength(1)
+    // Its block is not in the visible transcript; its chip names the run and when.
+    expect(screen.queryByText('Trigger nightly · new_mail')).toBeNull()
+    expect(chip('a1').textContent).toMatch(/^nightly · \d\d:\d\d/)
     expect(screen.getByText('hello')).toBeTruthy()
   })
 
@@ -133,8 +134,8 @@ describe('Console sessions', () => {
     await clickChip('a1')
     expect(chip('a1').dataset.selected).toBe('true')
     expect(screen.queryByText('hello')).toBeNull()
-    // Chip + block both show the label now.
-    expect(screen.getAllByText('Trigger nightly · new_mail')).toHaveLength(2)
+    // The block shows its label now (the chip carries the time-stamped name).
+    expect(screen.getAllByText('Trigger nightly · new_mail')).toHaveLength(1)
     expect(active()).toMatchObject({ id: 'a1', session: 'a1', readOnly: true })
     // Automation sessions are selected locally — never handed to the backend.
     expect(selectChatSession).not.toHaveBeenCalled()
@@ -174,7 +175,7 @@ describe('Console sessions', () => {
     })
     await act(async () => { emit('runspec:schedule_card', sched); await settle() })
     expect(chip('sc1')).toBeTruthy()
-    expect(chip('sc1').textContent).toContain('nightly-backup · runnable')
+    expect(chip('sc1').textContent).toMatch(/nightly-backup · \d\d:\d\d/)
     // Nothing else was open, so it is selected and its block shows.
     expect(chip('sc1').dataset.selected).toBe('true')
     expect(screen.getByText('/backup-db on db01')).toBeTruthy()
