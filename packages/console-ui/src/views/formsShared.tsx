@@ -262,6 +262,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     return (
       <Switch
         size="small"
+        aria-label={arg.name}
         checked={!!value}
         onChange={onChange}
       />
@@ -279,6 +280,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     return (
       <Select
         size="small"
+        aria-label={arg.name}
         mode={multi ? 'multiple' : undefined}
         // A single optional choice can be cleared too, so a picked option can be
         // taken back (the run then omits the arg). A required one can't.
@@ -300,6 +302,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     return (
       <Input.Password
         size="small"
+        aria-label={arg.name}
         value={value as string ?? ''}
         onChange={e => onChange(e.target.value)}
         placeholder={binding?.role === 'secret'
@@ -322,6 +325,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <Slider
+            aria-label={arg.name}
             min={min}
             max={max}
             step={step}
@@ -331,6 +335,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
           />
           <InputNumber
             size="small"
+            aria-label={arg.name}
             value={value as number | undefined}
             onChange={onChange}
             step={step}
@@ -345,6 +350,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     return (
       <InputNumber
         size="small"
+        aria-label={arg.name}
         value={value as number | undefined}
         onChange={onChange}
         placeholder={placeholder}
@@ -384,6 +390,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     return (
       <DatePicker
         size="small"
+        aria-label={arg.name}
         value={dt && dt.isValid() ? dt : null}
         showTime={withTime}
         // antd makes a time-bearing picker wait for OK by default; without this
@@ -406,6 +413,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
       <DatePicker
         picker="month"
         size="small"
+        aria-label={arg.name}
         value={m && m.isValid() ? m : null}
         onChange={d => onChange(d ? d.format('YYYY-MM') : undefined)}
         placeholder={placeholder ?? 'Select month…'}
@@ -423,6 +431,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     return (
       <TimePicker
         size="small"
+        aria-label={arg.name}
         value={t && t.isValid() ? t : null}
         // Commit the picked time without an OK click (see the date-time picker).
         needConfirm={false}
@@ -440,6 +449,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
     return (
       <ColorPicker
         size="small"
+        aria-label={arg.name}
         value={hex ?? null}
         onChange={c => onChange(c.toHexString())}
         showText
@@ -453,6 +463,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
   return (
     <Input.TextArea
       size="small"
+      aria-label={arg.name}
       value={value as string ?? ''}
       onChange={e => onChange(e.target.value)}
       onKeyDown={suppressPlainEnter}

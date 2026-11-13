@@ -1,3 +1,4 @@
+import type React from 'react'
 /**
  * SessionStrip — the chip row in the Console toolbar, one chip per live
  * session (interactive chats + trigger / schedule fires). A chip shows its
@@ -112,6 +113,22 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
   }
   const overflowUnread = overflow.some(s => s.unread)
 
+  const onChipKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return
+    const chips = Array.from(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[data-testid="session-chip"]') ?? [])
+    const i = chips.indexOf(e.currentTarget)
+    const go = (j: number) => { e.preventDefault(); chips[(j + chips.length) % chips.length]?.focus() }
+    if (e.key === 'ArrowRight') go(i + 1)
+    else if (e.key === 'ArrowLeft') go(i - 1)
+    else if (e.key === 'Home') go(0)
+    else if (e.key === 'End') go(chips.length - 1)
+    else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      const id = e.currentTarget.dataset.sessionId
+      if (id) onSelect(id)
+    }
+  }
+
   return (
     <div
       role="tablist"
@@ -151,6 +168,10 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
             data-status={status}
             data-selected={selected ? 'true' : 'false'}
             data-unread={s.unread ? 'true' : 'false'}
+            // Roving focus: Tab lands on the selected chip (the first if none is),
+            // arrows move between chips, Enter or Space opens one.
+            tabIndex={selected || (!inline.some(x => x.id === selectedId) && s === inline[0]) ? 0 : -1}
+            onKeyDown={onChipKey}
             onClick={() => onSelect(s.id)}
             title={`${label} — ${STATUS_TIP[status]}`}
             style={{

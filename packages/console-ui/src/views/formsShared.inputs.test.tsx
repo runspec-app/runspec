@@ -81,3 +81,20 @@ describe('ArgInput choice field', () => {
     expect(clearIcon(container)).toBeNull()
   })
 })
+
+describe('ArgInput accessible names', () => {
+  it('names every control after its arg, so a screen reader says which field it is', () => {
+    const cases: ArgDef[] = [
+      { name: 'service', type: 'choice', options: ['nginx', 'redis'], required: true } as ArgDef,
+      { name: 'dry-run', type: 'flag' } as ArgDef,
+      { name: 'count', type: 'int' } as ArgDef,
+      { name: 'token', type: 'password' } as ArgDef,
+      { name: 'note', type: 'str' } as ArgDef,
+    ]
+    for (const arg of cases) {
+      const { container, unmount } = render(<ArgInput arg={arg} host="local" runnable="r" value={undefined} onChange={() => {}} />)
+      expect(container.querySelector(`[aria-label="${arg.name}"]`), arg.name).toBeTruthy()
+      unmount()
+    }
+  })
+})

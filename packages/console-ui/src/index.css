@@ -112,6 +112,7 @@ body {
 /* Console session chips (SessionStrip): accent-neutral hover, no re-render. */
 .rs-session-chip { transition: background var(--rs-motion), border-color var(--rs-motion); }
 .rs-session-chip:hover { background: var(--rs-hover); }
+.rs-session-chip:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 1px; }
 
 /* Sidebar resize handle: invisible until hovered/dragged, then a faint accent
    line shows where the draggable edge is. */
@@ -374,3 +375,20 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
   color: var(--rs-accent);
   border-color: var(--rs-accent);
 }
+
+/* Ant derives link, warning-text and outlined-danger colours from the raw
+   tokens, a shade the readable ones don't cover (links 3.7:1 on the raised
+   surface, warning text 4.0:1, the outlined Stop 4.3:1). Pin them. */
+a.ant-typography:not(.ant-typography-disabled),
+.ant-typography a:not(.ant-typography-disabled) { color: var(--rs-accent); }
+.ant-typography.ant-typography-warning { color: var(--rs-warn); }
+.ant-typography.ant-typography-danger { color: var(--rs-danger); }
+.ant-typography.ant-typography-success { color: var(--rs-ok); }
+.ant-btn-dangerous.ant-btn-variant-outlined:not(:disabled),
+.ant-btn-dangerous.ant-btn-variant-text:not(:disabled),
+.ant-btn-dangerous.ant-btn-variant-link:not(:disabled) {
+  color: var(--rs-danger);
+  border-color: var(--rs-danger);
+}
+.ant-btn-dangerous.ant-btn-variant-text:not(:disabled),
+.ant-btn-dangerous.ant-btn-variant-link:not(:disabled) { border-color: transparent; }

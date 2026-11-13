@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Modal, Tooltip } from 'antd'
 
-import { antTone, EmptyState, IconAction, pressable, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
+import { antTone, EmptyState, IconAction, pressable, withLabel, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
 import { contrastRatio, readableAccent, surfaces, DEFAULT_ACCENT, ThemeContext } from '../ThemeContext'
 import { CopyOutlined, DeleteOutlined } from '@ant-design/icons'
 
@@ -178,5 +178,14 @@ describe('EmptyState, PageToolbar, PageHeader', () => {
     expect(screen.getByRole('heading', { name: 'History' })).toBeTruthy()
     expect(screen.getByText('Every run')).toBeTruthy()
     expect(screen.getByTestId('page-toolbar').textContent).toContain('Refresh')
+  })
+})
+
+describe('withLabel', () => {
+  it('names an unnamed control after its row, and leaves a named one alone', () => {
+    const Ctl = (p: Record<string, unknown>) => <input data-testid="a" aria-label={p['aria-label'] as string} />
+    render(<>{withLabel(<Ctl />, 'Enable sounds')}{withLabel(<input data-testid="b" aria-label="Own" />, 'Row')}</>)
+    expect(screen.getByTestId('a').getAttribute('aria-label')).toBe('Enable sounds')
+    expect(screen.getByTestId('b').getAttribute('aria-label')).toBe('Own')
   })
 })
