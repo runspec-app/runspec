@@ -2014,6 +2014,9 @@ export interface ChatSessionInfo {
   state: 'idle' | 'running' | 'done' | 'closed'
   turn: string         // chat id of the turn in flight ('' when idle)
   turns: number
+  // list_chat_sessions only: the backend's send target, so a reloaded page
+  // reselects the chat the operator was in.
+  current?: boolean
 }
 
 // A parked autonomy-gate confirm — the runspec:tool_confirm event's shape, also

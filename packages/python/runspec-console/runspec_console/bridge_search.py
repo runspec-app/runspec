@@ -433,14 +433,38 @@ class SearchMixin:
                     )
         return None
 
-    def _runnables_for_id(self, rid: str) -> list[dict[str, Any]]:
+    def _cold_host_records(self, host: str) -> list[dict[str, Any]]:
+        """Agent-visible records of a configured host the refresh cycle doesn't
+        cover (outside the active profile / disconnected), looked at on demand.
+        Empty for a host the cycle covers, a group name, or an unknown host —
+        so naming a host outside the profile works like naming one inside it."""
+        host = str(host or "").strip()
+        if not host or self._live_host_records(host):
+            return []
+        try:
+            if self._host_entry(host) is None:
+                return []
+        except Exception:  # noqa: BLE001
+            return []
+        from .bridge_agent_tools import _filter_visible_records
+
+        records, _error = self._discover_on_demand(host)
+        return _filter_visible_records(records, "agent")
+
+    def _runnables_for_id(self, rid: str, host: str = "") -> list[dict[str, Any]]:
         """Every cached runnable whose dedup id is ``rid`` (one per host that has
         it, across every venv it ships in). A legacy group-qualified ``group__name``
         id still resolves — scoped to that venv — and an explicit ``host__name``
         addresses one host directly. Empty when nothing matches. Hidden-from-agent
         runnables are excluded here too, so a hidden tool can't be run/described by
-        id."""
+        id. ``host`` naming a host outside the refresh cycle adds its records
+        (looked at on demand)."""
         runnables = self._visible_runnables("agent")
+        if "__" in rid and not host:
+            host = rid.split("__", 1)[0]
+        cold = getattr(self, "_cold_host_records", None)
+        if callable(cold):
+            runnables = runnables + cold(host)
         matches = [r for r in runnables if rid in self._dedup_tool_aliases(r)]
         if matches:
             return matches
@@ -505,7 +529,14 @@ class SearchMixin:
         and retry from. A single-host runnable defaults the host."""
         if not rid:
             return "Error: 'id' is required (use search_runnables to find it)."
-        matches = self._runnables_for_id(rid)
+        matches = self._runnables_for_id(rid, host)
+        if not matches and host:
+            # The host may be one the console couldn't reach on demand — say so
+            # rather than "unknown runnable".
+            why = getattr(self, "_host_unreachable_reason", None)
+            reason = why(host) if callable(why) else ""
+            if reason:
+                return f"Error: {reason}."
         if not matches:
             # search_runnables returns runbooks alongside runnables, so the most
             # likely wrong id here is a runbook's. Name the right tool instead of
@@ -567,7 +598,23 @@ class SearchMixin:
             return None
         if self._host_entry(host) is not None:
             return None  # host name wins on collision
-        matches = self._runnables_for_id(str(ti.get("id") or ""))
+        rid = str(ti.get("id") or "")
+        matches = list(self._runnables_for_id(rid))
+        # Members outside the refresh cycle (another profile, or disconnected)
+        # have no cached records: look at them now rather than skip them.
+        warm = getattr(self, "_warm_hosts", None)
+        cold = getattr(self, "_cold_host_records", None)
+        if callable(warm) and callable(cold):
+            covered = {r.get("host", "local") for r in matches}
+            others = [m for m in members if m not in covered]
+            if others:
+                warm(others)
+                for m in others:
+                    matches += [
+                        r
+                        for r in cold(m)
+                        if rid in self._dedup_tool_aliases(r) or r.get("name") == rid
+                    ]
         if not matches:
             return None  # let the normal path surface the unknown-id error
         name = matches[0].get("name", "")
@@ -820,6 +867,12 @@ class SearchMixin:
             logger.debug("credential store unavailable for search", exc_info=True)
 
         runnables = self._visible_runnables("agent")
+        # A host outside the refresh cycle (another profile, or disconnected)
+        # is searched by looking at it now, so "what's on host X" works for
+        # every configured host, not only the active profile's.
+        cold = getattr(self, "_cold_host_records", None)
+        if callable(cold):
+            runnables = runnables + cold(host)
         groups: dict[str, dict[str, Any]] = {}
         order: list[tuple[str, str]] = []
         for r in runnables:
@@ -1214,7 +1267,7 @@ class SearchMixin:
         agent can build the call for the command it chose rather than guessing
         and drifting to another one whose args it happens to know."""
         rid = str(ti.get("id") or "")
-        matches = self._runnables_for_id(rid)
+        matches = self._runnables_for_id(rid, str(ti.get("host") or ""))
         if not matches:
             # Same runbook hint as _resolve_id_host: "tell me more about this row"
             # is the natural next move on a runbook returned by search_runnables,

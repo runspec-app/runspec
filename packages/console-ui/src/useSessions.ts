@@ -49,9 +49,12 @@ interface Options {
   onSessionRemoved?: (id: string) => void
   // A run card arrived (live event or cold-start board) — mirror it as a block.
   onCard?: (card: TriggerCard, kind: CardKind) => void
+  // Cold start found these interactive chats already open on the backend (the
+  // page was reloaded) — refill their transcripts from the saved conversations.
+  onRestore?: (chats: ChatSessionInfo[]) => void
 }
 
-export function useSessions({ blocksRef, onSessionRemoved, onCard }: Options): SessionsApi {
+export function useSessions({ blocksRef, onSessionRemoved, onCard, onRestore }: Options): SessionsApi {
   const [sessions, setSessions] = useState<Session[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [pendingConfirmIds, setPendingConfirmIds] = useState<Set<string>>(() => new Set())
@@ -62,6 +65,8 @@ export function useSessions({ blocksRef, onSessionRemoved, onCard }: Options): S
   removedRef.current = onSessionRemoved
   const cardRef = useRef(onCard)
   cardRef.current = onCard
+  const restoreRef = useRef(onRestore)
+  restoreRef.current = onRestore
 
   const setSelected = useCallback((id: string | null) => {
     selectedRef.current = id
@@ -120,6 +125,12 @@ export function useSessions({ blocksRef, onSessionRemoved, onCard }: Options): S
         return n.slice().sort((a, b) => a.createdAt - b.createdAt)
       })
       for (const [c, kind] of cards) cardRef.current?.(c, kind)
+      // A reload, not a fresh start: put the operator back in the chat they
+      // were in and refill the transcripts the page forgot.
+      const current = chatList.find(c => c.current && c.interactive)
+      if (current && listRef.current.some(s => s.id === current.id)) setSelected(current.id)
+      const open = chatList.filter(c => c.interactive && c.turns > 0)
+      if (open.length) restoreRef.current?.(open)
     })()
     return () => { cancelled = true }
   }, [commit])

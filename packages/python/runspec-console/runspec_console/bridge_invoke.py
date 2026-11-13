@@ -166,6 +166,28 @@ class InvokeMixin:
                 ),
                 None,
             )
+        # A host the refresh cycle doesn't cover (outside the active profile, or
+        # disconnected) has nothing cached: look at it now, so the run gets its
+        # real record — the right venv, run_as, secret args — or a clear reason
+        # it can't run, instead of going ahead blind.
+        not_runnable = ""
+        if cached is None and entry is not None and not self._live_host_records(host):
+            records, not_runnable = self._discover_on_demand(host)
+            cached = next(
+                (
+                    r
+                    for r in records
+                    if r.get("name") == runnable
+                    and (group is None or r.get("group") == group)
+                ),
+                None,
+            )
+            if cached is None and not not_runnable:
+                not_runnable = f"'{runnable}' isn't installed on '{host}'" + (
+                    f" (looked in {', '.join(hosts_mod.venv_name(p) for p in entry_paths)})"
+                    if entry_paths
+                    else ""
+                )
         if group is None and cached:
             group = cached.get("group")
         rp = next(
@@ -343,6 +365,10 @@ class InvokeMixin:
 
             if entry is None or not rp:
                 on_line(f"✗  Host '{host}' not found in runspec_hosts.toml", "stderr")
+                on_done(-1, 0)
+                return
+            if not_runnable:
+                on_line(f"✗  Didn't run: {not_runnable}.", "stderr")
                 on_done(-1, 0)
                 return
 

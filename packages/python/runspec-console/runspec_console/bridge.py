@@ -292,6 +292,12 @@ class Bridge(
         # ``[refresh] discovery_interval`` has elapsed — the connectivity probe
         # itself stays on every cycle. Guarded by ``self._lock``.
         self._discovery_stamp: dict[str, tuple[float, int, tuple]] = {}
+        # host → (monotonic ts, records, error) for hosts the refresh cycle
+        # doesn't cover, looked at when a run needs them (see
+        # _discover_on_demand). Kept apart from _runnables_cache so they never
+        # join the sidebar / Forms / agent tool list. Guarded by self._lock.
+        self._on_demand_hosts: dict[str, tuple[float, list[dict[str, Any]], str]] = {}
+        self._on_demand_locks: dict[str, threading.Lock] = {}
         # Serialises overlapping refresh cycles (the 30 s watcher vs. a forced
         # cycle kicked by a host save / profile switch) so two cycles never
         # interleave their cache splices. Acquired inside the cycle, never at

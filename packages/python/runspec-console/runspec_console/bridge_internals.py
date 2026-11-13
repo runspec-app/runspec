@@ -771,15 +771,27 @@ class InternalsMixin:
             discovered = any(
                 r.get("host", "local") == host for r in self._runnables_cache
             )
-        if discovered:
-            return (
-                f"Error: '{name}' is not installed on '{host}' (its runnables "
-                f"were discovered and '{name}' is not among them — it may need "
-                f"installing or upgrading there). Available on: {options}."
-            )
-        # The venv owner / login account were found on the template's host, not
-        # this one: unknown here ⇒ no escalation (core refuses if it needed one).
-        return {**template, "host": host, "venvOwner": None, "loginUser": ""}
+        look = getattr(self, "_discover_on_demand", None)
+        if not discovered and not callable(look):
+            # No way to look at the host (a stripped-down caller): borrow the
+            # warm host's definition; unknown owner ⇒ no escalation.
+            return {**template, "host": host, "venvOwner": None, "loginUser": ""}
+        if not discovered:
+            # A configured host the refresh cycle doesn't cover (outside the
+            # active profile, or disconnected): look at the host itself now, so
+            # the run uses its own record (venv, run_as, args) — not a guess
+            # borrowed from another host.
+            records, error = look(host)
+            if error:
+                return f"Error: {error}."
+            rec = next((r for r in records if r.get("name") == name), None)
+            if rec is not None:
+                return rec
+        return (
+            f"Error: '{name}' is not installed on '{host}' (its runnables "
+            f"were discovered and '{name}' is not among them — it may need "
+            f"installing or upgrading there). Available on: {options}."
+        )
 
     def _active_profile_name(self) -> str:
         """The machine-local active host profile (``""`` = the built-in *All hosts*
@@ -818,14 +830,176 @@ class InternalsMixin:
         """``{group: [host names]}`` over the live host set."""
         return groups_map(self._all_host_entries())
 
+    def _out_of_profile_hosts(self) -> list[str]:
+        """Configured remote hosts outside the active profile (``[]`` when the
+        built-in *All hosts* scope is active)."""
+        try:
+            active = self._active_profile_name()
+            if not active:
+                return []
+            self._reload_hosts()
+            return [
+                str(h.get("name"))
+                for h in self._hosts
+                if h.get("name")
+                and h.get("name") != "local"
+                and not host_in_profile(h, active)
+            ]
+        except Exception:  # noqa: BLE001 — context is best-effort
+            return []
+
     def _host_has_runnable(self, host: str, name: str) -> bool:
-        """Whether ``host`` has a cached runnable named ``name`` (used to skip
-        group members that don't carry the runnable in a fan-out)."""
+        """Whether ``host`` carries a runnable named ``name`` (used to skip group
+        members that don't carry the runnable in a fan-out). A host the refresh
+        cycle doesn't cover (outside the active profile, or disconnected) is
+        looked at on demand rather than counted as not having it."""
+        return any(r.get("name") == name for r in self._host_records(host))
+
+    # ── on-demand discovery ─────────────────────────────────────────────────
+    #
+    # The refresh cycle only discovers the active profile's hosts, but
+    # automation (schedules, saved runs, triggers, the agent naming a host)
+    # reaches every configured host. A host the cycle doesn't cover has no
+    # records, so a run there used to go ahead blind — wrong venv, no run_as,
+    # secrets not split out of argv — or be skipped as "doesn't carry it".
+    # These look at such a host when a run needs it: probe, discover, and keep
+    # the result apart from the live cache (it never joins the sidebar, the
+    # Forms list or the agent's tool list).
+
+    _ON_DEMAND_FAIL_TTL = 30.0
+
+    def _live_host_records(self, host: str) -> list[dict[str, Any]]:
+        """``host``'s records in the refresh cycle's cache (empty = not covered)."""
         with self._lock:
-            return any(
-                r.get("host") == host and r.get("name") == name
-                for r in self._runnables_cache
+            return [
+                r for r in self._runnables_cache if (r.get("host") or "local") == host
+            ]
+
+    def _host_records(self, host: str) -> list[dict[str, Any]]:
+        """``host``'s runnables: the live cache, else an on-demand discovery."""
+        live = self._live_host_records(host)
+        if live:
+            return live
+        records, _error = self._discover_on_demand(host)
+        return records
+
+    def _host_unreachable_reason(self, host: str) -> str:
+        """Why the last on-demand look at ``host`` failed (``""`` if it didn't)."""
+        with self._lock:
+            got = (getattr(self, "_on_demand_hosts", None) or {}).get(host)
+        return got[2] if got else ""
+
+    def _warm_hosts(self, hosts: Iterable[str]) -> None:
+        """Discover, in parallel, every host in ``hosts`` the live cache lacks —
+        so a group fan-out over cold hosts costs one round, not one per host."""
+        cold = [h for h in dict.fromkeys(hosts) if h and not self._live_host_records(h)]
+        if len(cold) <= 1:
+            for h in cold:
+                self._discover_on_demand(h)
+            return
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(
+            max_workers=min(self._fanout_workers(), len(cold)),
+            thread_name_prefix="on-demand-disc",
+        ) as ex:
+            list(ex.map(self._discover_on_demand, cold))
+
+    def _discover_on_demand(self, host: str) -> tuple[list[dict[str, Any]], str]:
+        """``(records, error)`` for a host outside the refresh cycle: connect,
+        discover its runnables, and cache the answer apart from the live cache
+        (a success for ``[refresh] discovery_interval``, a failure for 30 s so a
+        fan-out doesn't retry it per member). ``error`` is a sentence naming the
+        host and why it couldn't be reached — shown on the run card / to the
+        agent instead of an exception."""
+        from .ssh_pool import refresh_settings
+
+        with self._lock:
+            store = getattr(self, "_on_demand_hosts", None)
+            if store is None:
+                store = self._on_demand_hosts = {}
+            locks = getattr(self, "_on_demand_locks", None)
+            if locks is None:
+                locks = self._on_demand_locks = {}
+            host_lock = locks.setdefault(host, threading.Lock())
+        cfg = self.get_config()
+        try:
+            ttl = float(
+                refresh_settings(cfg.get("refresh")).get("discovery_interval", 300)
             )
+        except Exception:  # noqa: BLE001 — a bad setting falls back
+            ttl = 300.0
+        with host_lock:
+            with self._lock:
+                got = store.get(host)
+            now = time.monotonic()
+            if got is not None:
+                stamp, records, error = got
+                if now - stamp < (
+                    self._ON_DEMAND_FAIL_TTL if error else max(ttl, 30.0)
+                ):
+                    return list(records), error
+            entry = self._host_entry(host)
+            if entry is None:
+                return [], f"host '{host}' isn't in runspec_hosts.toml"
+            ssh_cfg: dict[str, Any] = dict(cfg.get("ssh") or {})
+            records: list[dict[str, Any]] = []
+            error = ""
+            try:
+                if entry.get("ssh") and not self._check_connected(
+                    entry, ssh_cfg=ssh_cfg
+                ):
+                    error = self._unreachable_message(host, entry, ssh_cfg)
+                else:
+                    found = self._discover_one(
+                        entry, ssh_cfg=ssh_cfg, assume_connected=True
+                    )
+                    records = self._dedup_host_runnables(found, host)
+                    playbook_repo_mod.decorate_records(
+                        records, playbook_repo_mod.registered_names()
+                    )
+            except Exception as exc:  # noqa: BLE001 — reported, never raised
+                logger.debug("on-demand discovery of %s failed", host, exc_info=True)
+                error = self._unreachable_message(host, entry, ssh_cfg, str(exc))
+            if error:
+                logger.warning("on-demand: %s", error)
+            else:
+                logger.info(
+                    "on-demand: found %d runnable(s) on %s (not in the refresh cycle)",
+                    len(records),
+                    host,
+                )
+            with self._lock:
+                store[host] = (time.monotonic(), records, error)
+            return list(records), error
+
+    def _unreachable_message(
+        self,
+        host: str,
+        entry: dict[str, Any],
+        ssh_cfg: dict[str, Any],
+        detail: str = "",
+    ) -> str:
+        """``couldn't connect to host 'x' (…)`` — naming the active profile when
+        the host is outside it, and the SSH error when there is one."""
+        msg = f"couldn't connect to host '{host}'"
+        active = self._active_profile_name()
+        if active and host != "local" and not host_in_profile(entry, active):
+            msg += f" — it isn't in the active profile '{active}'"
+        if not detail:
+            pool = getattr(self, "_ssh_pool", None)
+            if pool is not None and entry.get("ssh"):
+                try:
+                    detail = pool.last_error(
+                        entry["ssh"],
+                        identity_file=entry.get("identityFile"),
+                        global_ssh_config=ssh_cfg,
+                    )
+                except Exception:  # noqa: BLE001
+                    detail = ""
+        if detail:
+            msg += f": {detail.strip()}"
+        return msg
 
     def _start_refresh_watcher(self) -> None:
         """Run a full refresh cycle, then repeat every ``[refresh] interval`` s."""
@@ -903,20 +1077,27 @@ class InternalsMixin:
             )
 
     def _discover_one(
-        self, h: dict[str, Any], *, ssh_cfg: dict[str, Any] | None = None
+        self,
+        h: dict[str, Any],
+        *,
+        ssh_cfg: dict[str, Any] | None = None,
+        assume_connected: bool = False,
     ) -> list[dict[str, Any]]:
         """One host's runnable discovery (a refresh-cycle worker task). Returns the
         discovered runnables (empty if the host was marked disconnected by the
         probe phase), so the caller can flatten results without a shared lock.
-        ``ssh_cfg`` is the cycle's one-shot read of ``[ssh]``; ``None`` reads it."""
+        ``ssh_cfg`` is the cycle's one-shot read of ``[ssh]``; ``None`` reads it.
+        ``assume_connected`` skips the probe-cache check — the on-demand path
+        (:meth:`_discover_on_demand`) has just probed the host itself."""
         if ssh_cfg is None:
             ssh_cfg = self.get_config().get("ssh")
         ssh = h.get("ssh")
         name = h["name"]
-        with self._lock:
-            connected = self._connected_cache.get(name, ssh is None)
-        if not connected:
-            return []
+        if not assume_connected:
+            with self._lock:
+                connected = self._connected_cache.get(name, ssh is None)
+            if not connected:
+                return []
         jump = utils_mod.host_jump(getattr(self, "_hosts", None), h)
         if jump and self._jump_mode(h, ssh_cfg) == "ssh":
             # System-ssh transport: discover over the jump host's OpenSSH so a
@@ -1097,6 +1278,10 @@ class InternalsMixin:
             # …and gives jump hosts that fell back to system ssh another try
             # at the pooled tunnel (the jump or target may have been fixed).
             self._clear_jump_ssh_pins()
+            # …and forgets what on-demand lookups found (a host edit may have
+            # changed its paths; an unreachable host may be back).
+            with self._lock:
+                self._on_demand_hosts = {}
         threading.Thread(
             target=lambda: self._refresh_cycle(force=force), daemon=True
         ).start()
@@ -2098,6 +2283,10 @@ class InternalsMixin:
             if callable(_mcp_status) and not mcp
             else []
         )
+        out_of_profile = getattr(self, "_out_of_profile_hosts", None)
+        other_hosts = (
+            out_of_profile() if callable(out_of_profile) and has("run_runnable") else []
+        )
         if (
             not rota_on
             and not triggers
@@ -2107,6 +2296,7 @@ class InternalsMixin:
             and not saved_runs
             and not mcp_servers
             and not file_creds
+            and not other_hosts
         ):
             return ""  # nothing to say — keep the cached system prefix
 
@@ -2283,6 +2473,19 @@ class InternalsMixin:
                 )
             if len(host_groups) > 8:
                 lines.append(f"- … and {len(host_groups) - 8} more")
+
+        if other_hosts:
+            active = self._active_profile_name()
+            shown = ", ".join(other_hosts[:12])
+            more = f", +{len(other_hosts) - 12} more" if len(other_hosts) > 12 else ""
+            lines.append("")
+            lines.append(
+                f"Host profile '{active}' is active, so the tool list covers its "
+                f"hosts only. Other configured hosts ({len(other_hosts)}): "
+                f"{shown}{more}. Name one as `host` in search_runnables / "
+                "run_runnable and the console connects to it on demand — a "
+                "runnable missing from a search is not missing from those hosts."
+            )
 
         if mailbox:
             lines.append("")
