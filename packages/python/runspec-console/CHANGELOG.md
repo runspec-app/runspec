@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.424.0] — 2026-11-13
+
+### Fixed
+
+- **Seed `[llm]` changes reach existing installs without undoing the
+  operator's provider.** With 0.420.0 a seed had to preserve all of
+  `config.toml:llm` to keep the operator's provider, so later `[llm]` changes
+  (a new Copilot model list, a new adapter URL) only reached fresh installs.
+  Now preserve just `config.toml:llm.provider`: when the operator runs a
+  different provider from the seed's, the seed's `[llm]` is re-shaped the way
+  the Settings dropdown does on a switch (its own provider's keys parked under
+  `saved_providers.<its provider>`, its `saved_providers.<operator's provider>`
+  brought up to the top level) before it is merged. Every provider's settings
+  keep updating, each in its own place. Git Config Sync pulls do the same.
+
 ## [0.423.0] — 2026-11-13
 
 ### Fixed

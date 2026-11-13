@@ -153,23 +153,41 @@ The system prompt, tool mode, `effort`, `max_tokens` and the other console-wide
 settings are shared by every provider.
 
 **From a config seed.** A seed that ships `[llm]` re-applies it on every package
-upgrade, which undoes a provider the operator picked. Preserve it in the seed:
+upgrade, which undoes a provider the operator picked. Preserve the provider
+choice in the seed, and ship each provider's settings where the Settings
+dropdown keeps them:
 
 ```toml
 # config_seed/config.toml
 [config_sync]
-preserve = ["config.toml:llm"]
+preserve = ["config.toml:llm.provider"]
 
 [llm]
-provider = "mycorp"
+provider = "mycorp"          # the default for a fresh install
+model = "corp-large"
+
+[llm.saved_providers.copilot]
+cli_path = "%APPDATA%\\npm\\copilot.cmd"
+models = ["gpt-5", "claude-sonnet-4.5"]
 ```
 
-For the seed, a preserved key the machine doesn't have yet is filled from the
-seed, so a fresh install still gets the seed's `[llm]`; after that the
-operator's `[llm]` (including `saved_providers`) is kept on upgrades. Preserve
-narrower paths (`config.toml:llm.provider`, `config.toml:llm.model`, …) to keep
-re-applying the rest. A git Config Sync pull doesn't fill: there a preserved key
-stays unset until the operator sets it.
+- **Fresh install:** the machine has no provider yet, so it takes the seed's.
+- **Upgrade:** the operator's provider stays, and the seed's settings still
+  arrive under the provider they belong to. If the operator runs Copilot, the
+  seed's `saved_providers.copilot` settings update the live Copilot settings
+  and the seed's `mycorp` settings update the parked
+  `saved_providers.mycorp`, so a new model list or URL reaches everyone without
+  mixing one provider's keys into another's. Console-wide keys (`effort`,
+  `system`, `tool_mode`, …) stay at the top level.
+- **Keeping the operator's own edits:** anything the seed ships for a provider
+  is re-applied on upgrade. Add more paths, such as `config.toml:llm.model`, to
+  keep the operator's model. Preserving all of `config.toml:llm` keeps
+  everything the operator has, but then no later `[llm]` change from the seed
+  reaches an existing install.
+
+A git Config Sync pull moves provider settings the same way, but it doesn't
+fill: a preserved key the machine doesn't have stays unset until the operator
+sets it.
 
 ### `effort` — how hard the model thinks {#llm-effort}
 

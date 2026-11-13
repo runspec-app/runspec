@@ -245,8 +245,14 @@ entries and `preserve` paths survive). The escape hatches are identical:
   and the `[config_sync].last_*` triplet (§7). For the seed (not a git pull) a
   preserved key that is unset locally is **filled** from the seed rather than
   dropped (`fill_missing`, console 0.420.0), so a seed can ship `[llm]` and
-  `preserve = ["config.toml:llm"]`: a fresh install gets it, an upgrade keeps
-  the operator's choice.
+  `preserve = ["config.toml:llm.provider"]`: a fresh install gets the seed's
+  provider, an upgrade keeps the operator's. When `llm.provider` is preserved
+  and the operator runs a different provider, the incoming `[llm]` is re-homed
+  first (`configmerge.rehome_llm`, console 0.424.0): its top-level provider keys
+  are parked under `saved_providers.<its provider>` and its
+  `saved_providers.<operator's provider>` comes up to the top level, as the
+  Settings dropdown does on a switch. Seed updates to any provider's settings
+  then reach existing installs.
 * **In the air-gapped/DR case there is no git layer at all**, so the seed is
   simply the only baseline and the "re-assert over a git/local edit" tension
   doesn't arise.
