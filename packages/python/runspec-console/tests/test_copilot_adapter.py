@@ -547,3 +547,119 @@ def test_fresh_prompt_renders_other_providers_tool_turns():
     assert "Tool result (t1):\npong" in prompt
     assert prompt.endswith("Carry on from where the conversation above stopped.")
     assert cp._fresh_prompt([{"role": "user", "content": "just this"}]) == "just this"
+
+
+# ── cli_path: variables and npm installs ──────────────────────────────────────
+
+
+def test_expand_path_handles_windows_and_posix_variables(tmp_path):
+    env = {"AppData": "C:/Users/jo/AppData/Roaming", "HOME_DIR": "/home/jo"}
+    assert (
+        cp.expand_path("%APPDATA%/npm/copilot.cmd", env)
+        == "C:/Users/jo/AppData/Roaming/npm/copilot.cmd"
+    )
+    assert cp.expand_path("$HOME_DIR/bin/copilot", env) == "/home/jo/bin/copilot"
+    assert cp.expand_path("${HOME_DIR}/x", env) == "/home/jo/x"
+    # An unknown variable is left alone rather than blanked.
+    assert cp.expand_path("%NOPE%/copilot", env) == "%NOPE%/copilot"
+    assert cp.expand_path("  ", env) == ""
+
+
+def _npm_prefix(tmp_path):
+    prefix = tmp_path / "npm"
+    package = prefix / "node_modules" / "@github" / "copilot"
+    package.mkdir(parents=True)
+    (package / "package.json").write_text('{"bin": {"copilot": "npm-loader.js"}}')
+    (package / "npm-loader.js").write_text("// loader\n")
+    (prefix / "copilot.cmd").write_text("@echo off\n")
+    (prefix / "copilot").write_text("#!/bin/sh\n")
+    return prefix, package / "npm-loader.js"
+
+
+def test_resolve_cli_path_turns_an_npm_install_into_its_js_entry(tmp_path):
+    prefix, entry = _npm_prefix(tmp_path)
+    env = {"APPDATA": str(tmp_path)}
+    for raw in (
+        "%APPDATA%/npm/copilot.cmd",
+        "%APPDATA%/npm/copilot",
+        "%APPDATA%/npm",
+        str(prefix / "node_modules" / "@github" / "copilot"),
+    ):
+        assert cp.resolve_cli_path(raw, env) == str(entry), raw
+
+
+def test_resolve_cli_path_leaves_other_paths_as_they_are(tmp_path):
+    native = tmp_path / "copilot"
+    native.write_text("binary")
+    assert cp.resolve_cli_path(str(native), {}) == str(native)
+    assert cp.resolve_cli_path("/opt/copilot/index.js", {}) == "/opt/copilot/index.js"
+    assert cp.resolve_cli_path("", {}) == ""
+
+
+def test_adapter_starts_the_resolved_runtime(tmp_path, monkeypatch):
+    _prefix, entry = _npm_prefix(tmp_path)
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    sdk, state = make_sdk(echo_brain)
+    adapter = adapter_for(sdk, cli_path="%APPDATA%/npm/copilot.cmd")
+    assert adapter._cli_path == str(entry)
+    adapter.status()
+    assert state["clients"][-1].kwargs["connection"].path == str(entry)
+
+
+# ── the console's [http] proxy reaches the runtime ──────────────────────────
+
+
+def _with_proxy(monkeypatch, settings):
+    from runspec_console import netproxy
+
+    monkeypatch.setattr(netproxy, "_current", settings)
+
+
+def test_runtime_gets_the_console_manual_proxy(monkeypatch):
+    from runspec_console import netproxy
+
+    _with_proxy(
+        monkeypatch,
+        netproxy.ProxySettings(proxy="http://proxy.corp:8080", no_proxy=("intra",)),
+    )
+    monkeypatch.setenv("KEEP_ME", "1")
+    sdk, state = make_sdk(echo_brain)
+    adapter_for(sdk).status()
+    env = state["clients"][-1].kwargs["env"]
+    assert env["HTTPS_PROXY"] == "http://proxy.corp:8080"
+    assert env["http_proxy"] == "http://proxy.corp:8080"
+    assert "intra" in env["NO_PROXY"]
+    assert env["KEEP_ME"] == "1"  # the rest of the environment is inherited
+
+
+def test_runtime_direct_removes_inherited_proxy(monkeypatch):
+    from runspec_console import netproxy
+
+    _with_proxy(monkeypatch, netproxy.ProxySettings(proxy=netproxy.DIRECT))
+    monkeypatch.setenv("HTTPS_PROXY", "http://machine:3128")
+    sdk, state = make_sdk(echo_brain)
+    adapter_for(sdk).status()
+    env = state["clients"][-1].kwargs["env"]
+    assert "HTTPS_PROXY" not in env and "https_proxy" not in env
+    assert "PATH" in env or "Path" in env
+
+
+def test_runtime_system_proxy_inherits(monkeypatch):
+    from runspec_console import netproxy
+
+    _with_proxy(monkeypatch, netproxy.ProxySettings())
+    sdk, state = make_sdk(echo_brain)
+    adapter_for(sdk).status()
+    assert "env" not in state["clients"][-1].kwargs
+
+
+def test_changing_the_proxy_starts_a_new_runtime(monkeypatch):
+    from runspec_console import netproxy
+
+    sdk, state = make_sdk(echo_brain)
+    adapter = adapter_for(sdk)
+    _with_proxy(monkeypatch, netproxy.ProxySettings(proxy="http://a:1"))
+    first = adapter._runtime()
+    assert adapter._runtime() is first
+    _with_proxy(monkeypatch, netproxy.ProxySettings(proxy="http://b:2"))
+    assert adapter._runtime() is not first

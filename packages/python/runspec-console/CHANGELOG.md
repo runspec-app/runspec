@@ -9,7 +9,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.420.0] — 2026-11-13
+## [0.421.0] — 2026-11-13
 
 ### Fixed
 
@@ -43,6 +43,29 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   ("Approval needed: flush-dns on web-01", plus how many more are waiting);
   each editable argument on the approval card is labelled with its name; the
   page has `main` and `nav` landmarks.
+
+## [0.420.0] — 2026-11-13
+
+### Fixed
+
+- **A seed can ship `[llm]` without overriding the operator's choice.** A
+  package seed re-applies `[llm]` on every upgrade, so a provider picked in
+  Settings went back to the seed's. Preserving it didn't help: a preserved key
+  the machine didn't have yet was deleted, so a fresh install got no `[llm]` at
+  all. For the seed (not a git Config Sync pull) a preserved key that is unset
+  locally is now filled from the seed, then kept local: ship `[llm]` with
+  `preserve = ["config.toml:llm"]` in the seed's `[config_sync]`.
+- **`[llm] cli_path` expands variables and finds npm installs.** `%APPDATA%`,
+  `$HOME` and `~` are expanded on each machine, so one value can ship in a
+  config seed. An npm install of the Copilot CLI can be named by its folder
+  (`%APPDATA%\npm`) or its `copilot.cmd` shim; the console starts the
+  package's own script with `node` instead.
+- **The Copilot runtime uses the console's `[http]` proxy.** It is a child
+  process and only saw the machine's environment, so a proxy set in
+  Settings → Network didn't reach it. A proxy URL (with its credential and
+  `no_proxy`) is now passed as `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`, the
+  way MCP stdio servers get it; `direct` removes inherited proxy variables;
+  the default still inherits. A proxy change starts a new runtime.
 
 ## [0.419.0] — 2026-11-13
 

@@ -261,3 +261,37 @@ def test_render_diff_is_line_per_field_and_valid_toml():
         "triggers": {"my trig": {"run": "r"}},
     }
     assert tomllib.loads(_render_toml("config.toml", nested)) == nested
+
+
+def test_preserve_unset_locally_is_dropped_by_default():
+    # A git pull can't inject a preserved key the operator hasn't set.
+    out = cm.merge_mapping({}, {"llm": {"provider": "x"}}, [["llm"]])
+    assert "llm" not in out
+
+
+def test_preserve_unset_locally_is_filled_with_fill_missing():
+    # The package seed fills it once, then keeps the local value.
+    out = cm.merge_mapping({}, {"llm": {"provider": "x"}}, [["llm"]], fill_missing=True)
+    assert out == {"llm": {"provider": "x"}}
+    kept = cm.merge_mapping(
+        {"llm": {"provider": "mine"}},
+        {"llm": {"provider": "x", "model": "m"}},
+        [["llm"]],
+        fill_missing=True,
+    )
+    assert kept == {"llm": {"provider": "mine"}}
+
+
+def test_fill_missing_reaches_collection_entries():
+    local = [{"name": "web1"}]
+    incoming = [{"name": "web1", "room_user": "seeded"}]
+    assert cm.merge_collection(local, incoming, "name", [["*", "room_user"]]) == [
+        {"name": "web1"}
+    ]
+    assert cm.merged_native(
+        "runspec_hosts.toml",
+        {"host": local},
+        {"host": incoming},
+        [["*", "room_user"]],
+        fill_missing=True,
+    ) == {"host": [{"name": "web1", "room_user": "seeded"}]}

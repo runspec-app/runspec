@@ -26,7 +26,10 @@ the earlier conversation as a transcript.
 Sign-in: the user's own ``copilot login`` (default), or a GitHub token
 (``[llm] api_key``, or ``[llm] api_key_command`` such as ``gh auth token``).
 The runtime (~180 MB) is downloaded by the SDK on first use; ``[llm] cli_path``
-points at a copy instead (air-gapped machines).
+points at a copy instead (air-gapped machines). ``cli_path`` may use ``%VAR%``,
+``$VAR`` and ``~`` (so one seeded value works on every machine), and may name
+an npm install of the Copilot CLI (the ``copilot.cmd`` shim or the npm folder):
+see :func:`resolve_cli_path`.
 """
 
 from __future__ import annotations
@@ -36,11 +39,14 @@ import functools
 import hashlib
 import json
 import logging
+import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Mapping
 
 from .base import (
     ChatResponse,
@@ -702,7 +708,7 @@ class CopilotAdapter(ModelAdapter):
         self.system = system or DEFAULT_SYSTEM
         self._token = (api_key or "").strip()
         self._token_command = (api_key_command or "").strip()
-        self._cli_path = (cli_path or "").strip()
+        self._cli_path = resolve_cli_path(cli_path or "")
         level = (effort or "").strip().lower()
         self._effort = "" if level in ("", "off", "none") else level
         self._model_limits = model_limits or {}
@@ -714,11 +720,19 @@ class CopilotAdapter(ModelAdapter):
     # -- runtime --------------------------------------------------------------
 
     def _runtime(self) -> _Runtime:
+        env = runtime_env()
+        proxy_key = tuple(sorted(env.items())) if env is not None else None
         key = (id(self._sdk), self._cli_path, self._token, self._token_command)
-        return _runtime_for(key, self._build_runtime)
+        return _runtime_for((*key, proxy_key), lambda: self._build_runtime(env))
 
-    def _build_runtime(self) -> _Runtime:
+    def _build_runtime(self, env: dict[str, str] | None = None) -> _Runtime:
         kwargs: dict[str, Any] = {}
+        if env is not None:
+            # The Copilot runtime is a child process: give it the console's
+            # [http] proxy the way MCP stdio servers get it.
+            # A blank value (``direct``) removes an inherited variable.
+            merged = {**os.environ, **env}
+            kwargs["env"] = {k: v for k, v in merged.items() if env.get(k) != ""}
         token = self._token
         if not token and self._token_command:
             token = run_api_key_command(self._token_command)
@@ -833,6 +847,100 @@ class CopilotAdapter(ModelAdapter):
                 caps.max_output_tokens = getattr(limits, "max_output_tokens", None)
             break
         return caps
+
+
+_PROXY_VARS = (
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+)
+
+
+def runtime_env() -> dict[str, str] | None:
+    """Proxy variables for the Copilot runtime from the console's ``[http]``
+    setting: ``None`` = inherit (system proxy), blanks for ``direct`` (the
+    variables are removed), the ``*_PROXY`` set for a manual proxy."""
+    from .. import netproxy
+
+    settings = netproxy.current()
+    if settings.mode == "manual":
+        return netproxy.env_vars(settings)
+    if settings.mode == "direct":
+        return {name: "" for name in _PROXY_VARS}
+    return None
+
+
+_WIN_VAR = re.compile(r"%([^%/\\]+)%")
+_POSIX_VAR = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+# Where `npm install -g @github/copilot` puts the package, relative to the
+# folder holding the `copilot` / `copilot.cmd` shims.
+_NPM_PACKAGE = Path("node_modules", "@github", "copilot")
+
+
+def expand_path(raw: str, env: Mapping[str, str] | None = None) -> str:
+    """``raw`` with ``%VAR%`` (any case, as on Windows), ``$VAR`` / ``${VAR}``
+    and a leading ``~`` expanded. An unknown variable is left as written."""
+    values = os.environ if env is None else env
+    upper = {k.upper(): v for k, v in values.items()}
+
+    def _win(m: re.Match[str]) -> str:
+        return upper.get(m.group(1).upper(), m.group(0))
+
+    def _posix(m: re.Match[str]) -> str:
+        name = m.group(1) or m.group(2)
+        return values.get(name, upper.get(name.upper(), m.group(0)))
+
+    text = _POSIX_VAR.sub(_posix, _WIN_VAR.sub(_win, (raw or "").strip()))
+    return os.path.expanduser(text)
+
+
+def _npm_entry(package: Path) -> str:
+    """The script an npm package's ``bin`` names for ``copilot`` ("" if none)."""
+    try:
+        meta = json.loads((package / "package.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - not an npm package folder
+        return ""
+    binary = meta.get("bin")
+    if isinstance(binary, dict):
+        binary = binary.get("copilot") or next(iter(binary.values()), "")
+    if not isinstance(binary, str) or not binary:
+        return ""
+    entry = package / binary
+    return str(entry) if entry.is_file() else ""
+
+
+def resolve_cli_path(raw: str, env: Mapping[str, str] | None = None) -> str:
+    """The Copilot runtime to start, from an ``[llm] cli_path`` value.
+
+    Expands variables (:func:`expand_path`). An npm install is turned into its
+    JavaScript entry, which the SDK starts with ``node``: the npm folder
+    (``%APPDATA%\\npm``), the package folder, or the ``copilot`` /
+    ``copilot.cmd`` / ``copilot.ps1`` shim in that folder. Anything else (a
+    native ``copilot`` binary, a ``.js`` file) is returned expanded but as is."""
+    path = expand_path(raw, env)
+    if not path:
+        return ""
+    target = Path(path)
+    packages: list[Path] = []
+    if target.is_dir():
+        packages = [target / _NPM_PACKAGE, target]
+    elif target.name.lower() in (
+        "copilot",
+        "copilot.cmd",
+        "copilot.ps1",
+        "copilot.bat",
+    ):
+        packages = [target.parent / _NPM_PACKAGE]
+    for package in packages:
+        entry = _npm_entry(package)
+        if entry:
+            return entry
+    return path
 
 
 def _default_workdir() -> str:

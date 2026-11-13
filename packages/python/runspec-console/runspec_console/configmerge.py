@@ -81,13 +81,21 @@ def deep_overlay(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
 
 
 def merge_mapping(
-    local: dict[str, Any], incoming: dict[str, Any], preserve: list[list[str]]
+    local: dict[str, Any],
+    incoming: dict[str, Any],
+    preserve: list[list[str]],
+    *,
+    fill_missing: bool = False,
 ) -> dict[str, Any]:
     """Deep-overlay ``incoming`` onto ``local``, then restore each preserve path
-    to its local value (so the repo can't set a protected key)."""
+    to its local value (so the repo can't set a protected key).
+
+    With ``fill_missing`` a preserve path that is unset locally takes the
+    incoming value instead of being removed: the package seed uses this, since
+    it is the baseline a fresh install starts from (see :func:`_restore_path`)."""
     result = deep_overlay(local, incoming)
     for segs in preserve:
-        _restore_path(result, local, segs)
+        _restore_path(result, local, segs, fill_missing=fill_missing)
     return result
 
 
@@ -96,6 +104,8 @@ def merge_collection(
     incoming: list[dict[str, Any]],
     key: str,
     preserve: list[list[str]],
+    *,
+    fill_missing: bool = False,
 ) -> list[dict[str, Any]]:
     """Merge two lists of entries by ``entry[key]``.
 
@@ -123,7 +133,9 @@ def merge_collection(
             for segs in preserve:
                 head, *rest = segs
                 if rest and (head == "*" or head == sk):
-                    _restore_path(new_entry, local_entry, rest)
+                    _restore_path(
+                        new_entry, local_entry, rest, fill_missing=fill_missing
+                    )
         merged[sk] = new_entry
     return list(merged.values())
 
@@ -188,6 +200,8 @@ def merged_native(
     local: dict[str, Any],
     incoming: dict[str, Any],
     preserve: list[list[str]],
+    *,
+    fill_missing: bool = False,
 ) -> dict[str, Any]:
     """The table file ``name`` will hold after a pull, in its native shape.
 
@@ -196,7 +210,8 @@ def merged_native(
     top-level keys deep-overlay); the triggers file merges its named
     ``[triggers.*]`` tables by name and never takes the repo's ``[rota]`` (the
     rota is per-person and lives in its own file); mapping files
-    (``config.toml``) deep-overlay. Pure."""
+    (``config.toml``) deep-overlay. ``fill_missing`` is passed to the merge
+    (a preserve path unset locally takes the incoming value). Pure."""
     coll = COLLECTION_FILES.get(name)
     if coll is not None:
         key_name, id_key = coll
@@ -208,6 +223,7 @@ def merged_native(
             _entries(incoming.get(key_name)),
             id_key,
             preserve,
+            fill_missing=fill_missing,
         )
         return out
     if name == TRIGGERS_FILE:
@@ -216,13 +232,14 @@ def merged_native(
             _named_tables(incoming.get("triggers")),
             "name",
             preserve,
+            fill_missing=fill_missing,
         )
         triggers: dict[str, Any] = {}
         for trig in merged:
             body = dict(trig)
             triggers[str(body.pop("name"))] = body
         return {"triggers": triggers}
-    return merge_mapping(local, incoming, preserve)
+    return merge_mapping(local, incoming, preserve, fill_missing=fill_missing)
 
 
 def _entries(raw: Any) -> list[dict[str, Any]]:
@@ -517,14 +534,24 @@ def _get_path(node: Any, segs: list[str]) -> Any:
 
 
 def _restore_path(
-    target: dict[str, Any], source: dict[str, Any], segs: list[str]
+    target: dict[str, Any],
+    source: dict[str, Any],
+    segs: list[str],
+    *,
+    fill_missing: bool = False,
 ) -> None:
     """Force ``target`` at ``segs`` to match ``source``: set it to source's value,
     or delete it when source has none (so a preserved-but-locally-unset key can't
-    be injected from the repo)."""
+    be injected from the repo).
+
+    With ``fill_missing`` a locally-unset key keeps the incoming value instead:
+    the key is filled once, then kept local. The package seed works this way, so
+    a seed can ship ``[llm]`` and preserve it: a fresh install gets the seed's
+    ``[llm]`` and later upgrades leave the operator's alone."""
     value = _get_path(source, segs)
     if value is _MISSING:
-        _delete_path(target, segs)
+        if not fill_missing:
+            _delete_path(target, segs)
     else:
         _set_path(target, segs, value)
 
