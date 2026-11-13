@@ -148,26 +148,26 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
           onChange={(v) => setSinceDays(v as number)}
         />
         <Select
-          mode="multiple" allowClear placeholder={activeScope.length ? `scope: ${activeScope.join(', ')}` : 'All groups'}
+          mode="multiple" allowClear aria-label="Filter by group" placeholder={activeScope.length ? `scope: ${activeScope.join(', ')}` : 'All groups'}
           style={{ minWidth: 160 }} value={groupFilter} onChange={setGroupFilter}
           options={dims.groups.map(g => ({ label: g, value: g }))}
           maxTagCount="responsive"
         />
         <Select
-          allowClear placeholder="All runnables"
+          allowClear aria-label="Filter by runnable" placeholder="All runnables"
           style={{ minWidth: 170 }} value={runnableFilter} onChange={setRunnableFilter}
           options={dims.runnables.map(r => ({ label: r, value: r }))}
           showSearch
         />
         <Select
-          mode="multiple" allowClear placeholder="All operators"
+          mode="multiple" allowClear aria-label="Filter by operator" placeholder="All operators"
           style={{ minWidth: 170 }} value={operatorFilter} onChange={setOperatorFilter}
           options={dims.operators.map(o => ({ label: o, value: o }))}
           maxTagCount="responsive"
         />
         {(dims.runbooks?.length ?? 0) > 0 && (
           <Select
-            mode="multiple" allowClear placeholder="All runbooks"
+            mode="multiple" allowClear aria-label="Filter by runbook" placeholder="All runbooks"
             style={{ minWidth: 170 }} value={runbookFilter} onChange={setRunbookFilter}
             options={dims.runbooks.map(s => ({ label: `$${s}`, value: s }))}
             maxTagCount="responsive"

@@ -545,7 +545,7 @@ function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: 
                 aria-label={`Run as on ${s.target.host} ${s.target.venv}`}
                 style={{ ...mono, width: 120 }}
                 onChange={e => setField(s.target.id, { run_as: e.target.value })} />
-              <Select size="small" value={choice[s.target.id]?.become_method ?? 'sudo'} disabled={!choice[s.target.id]?.run_as}
+              <Select size="small" aria-label={`How to switch user on ${s.target.host}`} value={choice[s.target.id]?.become_method ?? 'sudo'} disabled={!choice[s.target.id]?.run_as}
                 options={[{ value: 'sudo', label: 'sudo' }, { value: 'su', label: 'su' }]} style={{ width: 72 }}
                 onChange={v => setField(s.target.id, { become_method: v })} />
             </Space.Compact>
@@ -591,7 +591,7 @@ function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: 
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', fontSize: 13 }}>
               <span>
                 <span style={{ color: textSecondary(isDark), marginRight: 6 }}>Version</span>
-                <Select size="small" value={version} style={{ width: 160 }}
+                <Select size="small" aria-label="Version" value={version} style={{ width: 160 }}
                   options={[{ value: '', label: `latest (${entry.version})` }, ...(entry.versions || []).filter(v => v !== entry.version).map(v => ({ value: v, label: v }))]}
                   onChange={v => setVersion(v)} />
               </span>
@@ -1078,7 +1078,7 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
         <Tooltip title="Matches name, summary and keywords. host:<name> or group:<name> limits the install state, counts and Installed / Updates to those hosts' venvs (part of a name is enough).">
           <Input prefix={<SearchOutlined />} placeholder="Search packages, or host:<name>…" value={search} onChange={e => setSearch(e.target.value)} allowClear style={{ maxWidth: 320 }} />
         </Tooltip>
-        <Select value={repo} onChange={setRepo} style={{ minWidth: 160 }}
+        <Select aria-label="Package index" value={repo} onChange={setRepo} style={{ minWidth: 160 }}
           options={[{ value: '', label: 'All repos' }, ...(catalog?.repos ?? []).map(r => ({ value: r.id, label: `${r.name} (${r.count})` }))]} />
         <Segmented value={scope} onChange={v => setScope(v as ScopeFilter)}
           options={[{ value: 'all', label: 'All' }, { value: 'installed', label: 'Installed' }, { value: 'updates', label: updates ? `Updates (${updates})` : 'Updates' }, { value: 'available', label: 'Not installed' }]} />

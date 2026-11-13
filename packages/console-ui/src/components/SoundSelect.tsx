@@ -52,6 +52,7 @@ export function SoundSelect({ value, onChange, disabled, size = 'middle', width 
         showSearch
         optionFilterProp="label"
         placeholder="No sound"
+        aria-label="Sound"
         disabled={disabled}
         value={value || undefined}
         onChange={v => onChange?.(v ?? '')}

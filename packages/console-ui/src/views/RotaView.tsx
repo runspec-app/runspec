@@ -96,7 +96,7 @@ function BreakControl({ rota, breakUntil, onChanged }: { rota: Rota; breakUntil:
         onChange={v => { if (v !== 'custom') setMinutes(Number(v)) }}
         options={[{ label: '15m', value: 15 }, { label: '30m', value: 30 }, { label: '60m', value: 60 }, { label: 'Custom', value: 'custom' }]}
       />
-      <InputNumber size="small" min={1} max={1440} value={minutes} onChange={v => setMinutes(Number(v) || 1)} style={{ width: 64 }} />
+      <InputNumber aria-label="Break length (minutes)" size="small" min={1} max={1440} value={minutes} onChange={v => setMinutes(Number(v) || 1)} style={{ width: 64 }} />
       <span style={{ color: dim, fontSize: 13 }}>min</span>
       <Button size="small" type="primary" icon={<CoffeeOutlined />} disabled={!rota.enabled} onClick={take} loading={busy}>
         Take a break
@@ -161,7 +161,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
   return (
     <div style={{ color: textColor(isDark) }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-        <Switch size="small" checked={enabled} onChange={setEnabled} />
+        <Switch size="small" checked={enabled} onChange={setEnabled} aria-label="Only run triggers and schedules during working hours" />
         <span>Only run triggers and schedules during working hours</span>
         <span style={{ color: dim, fontSize: 13 }}>
           {enabled ? '(outside these, events are ignored)' : '(off — automation runs anytime)'}
@@ -192,6 +192,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
           <span style={{ width: 90 }}>Source</span>
           <Segmented
             size="small"
+            aria-label="Working hours source"
             value={source}
             onChange={v => setSource(String(v))}
             options={[
@@ -206,12 +207,12 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span>On shift when a calendar event's subject contains</span>
               <Input
-                size="small" value={marker} onChange={e => setMarker(e.target.value)}
+                size="small" value={marker} onChange={e => setMarker(e.target.value)} aria-label="Calendar subject marker"
                 style={{ width: 120, fontFamily: MONO_FONT }} placeholder="shift"
               />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <Switch size="small" checked={hold} onChange={setHold} />
+              <Switch size="small" checked={hold} onChange={setHold} aria-label="Hold while I'm in a meeting or out of office" />
               <span>Hold while I'm in a meeting / OOO</span>
             </div>
             <div style={{ color: dim, fontSize: 13 }}>
@@ -223,19 +224,22 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
         {DAYS.map(([k, label]) => (
           <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
             <span style={{ width: 90 }}>{label}</span>
-            <Switch size="small" checked={!!days[k].on} onChange={v => setDay(k, { on: v })} />
-            <input
-              type="time" value={days[k].start} disabled={!days[k].on}
-              onChange={e => setDay(k, { start: e.target.value })}
-              style={{ fontFamily: MONO_FONT }}
-            />
-            <span style={{ color: dim }}>to</span>
-            <input
-              type="time" value={days[k].end} disabled={!days[k].on}
-              onChange={e => setDay(k, { end: e.target.value })}
-              style={{ fontFamily: MONO_FONT }}
-            />
-            {!days[k].on && <span style={{ color: dim, fontSize: 13 }}>not working</span>}
+            <Switch size="small" checked={!!days[k].on} onChange={v => setDay(k, { on: v })} aria-label={`Work on ${label}`} />
+            {days[k].on ? (
+              <>
+                <input
+                  type="time" value={days[k].start} aria-label={`${label} start`}
+                  onChange={e => setDay(k, { start: e.target.value })}
+                  style={{ fontFamily: MONO_FONT }}
+                />
+                <span style={{ color: dim }}>to</span>
+                <input
+                  type="time" value={days[k].end} aria-label={`${label} end`}
+                  onChange={e => setDay(k, { end: e.target.value })}
+                  style={{ fontFamily: MONO_FONT }}
+                />
+              </>
+            ) : <span style={{ color: dim, fontSize: 13 }}>not working</span>}
           </div>
         ))}
       </div>

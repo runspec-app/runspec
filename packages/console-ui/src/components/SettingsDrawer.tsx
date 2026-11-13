@@ -351,6 +351,7 @@ export function SoundsTab() {
             <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
               <Input
                 size="small"
+                aria-label={`Name of sound ${s.id}`}
                 value={s.label}
                 onChange={e => setNamed(prev => prev.map(x => (x.id === s.id ? { ...x, label: e.target.value } : x)))}
                 onBlur={e => renameNamedSound(s.id, e.target.value.trim() || s.id)}
@@ -398,6 +399,7 @@ export function SoundsTab() {
             <Space size={4}>
               <Select
                 size="small"
+                aria-label={`Sound for ${c.label ?? c.key}`}
                 disabled={!enabled}
                 value={choices[c.key] ?? c.def}
                 onChange={v => handleChoice(c.key, v)}
@@ -2386,6 +2388,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
           {profiles.length > 0 && (
             <Select
               size="small"
+              aria-label="Filter hosts by profile"
               value={profileFilter}
               onChange={setProfileFilter}
               style={{ minWidth: 160 }}

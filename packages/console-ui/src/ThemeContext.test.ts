@@ -12,6 +12,7 @@ import {
   surfaces, RADIUS, UI_FONT, MONO_FONT, FONT_SIZE, withAlpha, type Surfaces,
   textSecondary, textMuted, textFaint, textColor, DEFAULT_ACCENT,
   statusText, dangerColors, approveColors, hueSat,
+  inkColors,
 } from './ThemeContext'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -226,6 +227,17 @@ describe('readableAccent()', () => {
   it('passes through what it cannot parse', () => {
     expect(readableAccent('teal', true)).toBe('teal')
   })
+})
+
+describe('ink primary buttons', () => {
+  for (const isDark of [true, false]) {
+    it(`text reads on every state, and the fill stands out from every surface (${isDark ? 'dark' : 'light'})`, () => {
+      const ink = inkColors(isDark)
+      for (const fill of [ink.bg, ink.hover, ink.active]) expect(contrastRatio(ink.text, fill)).toBeGreaterThanOrEqual(4.5)
+      const sf = surfaces(isDark)
+      for (const base of [sf.sunken, sf.base, sf.raised, sf.overlay]) expect(contrastRatio(ink.bg, base)).toBeGreaterThanOrEqual(3)
+    })
+  }
 })
 
 describe('status, danger and approve colours', () => {

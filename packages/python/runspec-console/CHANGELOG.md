@@ -9,6 +9,36 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.426.0] — 2026-11-13
+
+### Fixed
+
+- **Keyboard focus is visible on every control.** Ant's buttons, switches,
+  selects, segmented controls and dialog close buttons drew their focus ring
+  in a dark shade of the raw brand colour (1.15:1 on the dark theme, 2.7:1 on
+  light), so a keyboard user lost track of focus beside our own controls. They
+  now use the readable accent at 2px (6.7:1 dark, 5.6:1 light).
+- **Controls named on the section pages.** Working hours (the on/off switch,
+  each day's switch and start/end times, the calendar marker, the hold and
+  break-length fields), Notifications (each event's sound picker, your named
+  sounds, the waiting-ping interval), the Schedules filters and sort, the
+  Charts filters, each trigger's enable switch, the Hosts profile filter, the
+  Marketplace version / package index / switch-user pickers, and the sound
+  picker used in trigger and schedule editors.
+- **A day off shows no times** in Working hours, just "not working" (the times
+  stayed visible and did nothing).
+- Log files' button to the charts says **Charts**, matching the section.
+
+### Changed
+
+- **Primary buttons are ink, not the brand colour.** Run, Save, Install and
+  the other primary buttons use a neutral ink fill (light on the dark theme,
+  near-black on light, text 13:1 and 16:1) instead of the white-label accent.
+  Under a red brand every routine action looked destructive, and sat beside a
+  second, lighter red. The brand keeps the sidebar title, the selected tab's
+  bar, links and focus; danger keeps its own hue; Approve stays green
+  (`inkColors` in `ThemeContext`).
+
 ## [0.425.0] — 2026-11-13
 
 ### Changed

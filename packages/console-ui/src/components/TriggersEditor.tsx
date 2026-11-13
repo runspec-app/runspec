@@ -903,7 +903,7 @@ export function TriggersEditor({
                 {String(t.source ?? '')}:{String(t.event ?? '')}
               </Text>
               <StatusTag tone="neutral">{String(t.mode ?? 'agent')}</StatusTag>
-              <Switch size="small" checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)} />
+              <Switch size="small" aria-label={`Enable trigger ${String(t.name)}`} checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)} />
               {t.source === 'paste' && (
                 <Tooltip title="Run with pasted text — paste a block of text as this trigger’s input">
                   <Button aria-label={`Run ${String(t.name)} with pasted text`} type="text" size="small" icon={<SnippetsOutlined />} onClick={() => setPasteName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
