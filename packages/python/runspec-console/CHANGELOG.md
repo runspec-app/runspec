@@ -39,6 +39,20 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   `PageHeader`, `OnceHint` (a tip shown until dismissed) and `EmptyState`.
   Console and History use them now; the other tabs follow.
 
+## [0.416.2] — 2026-11-13
+
+### Fixed
+
+- **Log cleanup works on a local Windows venv.** Setting a venv's log cleanup
+  policy (Logs → **Log cleanup…**) or pressing **Apply now** on the machine the
+  console runs on failed on Windows with "the logs inbox is POSIX-only": the
+  console tried to reach the venv owner through `sudo`. A Windows venv has one
+  account, so the console now runs the venv's own `runspec logs retention`
+  directly. runspec already applies the policy on Windows, once a day at the
+  end of a run, so no scheduler is needed. The logs-inbox actions (share,
+  sweep) still refuse on Windows, which has no inbox. See
+  `docs/log-cleanup.md` → "On Windows".
+
 ## [0.416.1] — 2026-11-13
 
 ### Fixed
