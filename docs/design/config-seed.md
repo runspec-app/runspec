@@ -242,7 +242,11 @@ entries and `preserve` paths survive). The escape hatches are identical:
 * **Local-only entries survive** — a host the seed never shipped is never touched.
 * **`preserve` pins machine-local keys** — `configmerge.DEFAULT_PRESERVE`
   (`mailbox.folder`, every host's `room_user`) plus the seed's own preserve list
-  and the `[config_sync].last_*` triplet (§7).
+  and the `[config_sync].last_*` triplet (§7). For the seed (not a git pull) a
+  preserved key that is unset locally is **filled** from the seed rather than
+  dropped (`fill_missing`, console 0.420.0), so a seed can ship `[llm]` and
+  `preserve = ["config.toml:llm"]`: a fresh install gets it, an upgrade keeps
+  the operator's choice.
 * **In the air-gapped/DR case there is no git layer at all**, so the seed is
   simply the only baseline and the "re-assert over a git/local edit" tension
   doesn't arise.

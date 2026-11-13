@@ -379,3 +379,59 @@ def test_seed_status_error_clears_after_a_clean_apply(monkeypatch, tmp_path):
     )
     b.seed_apply()
     assert b.seed_status()["error"] == ""
+
+
+def test_seed_preserved_llm_fills_a_fresh_install_then_stays_local(
+    monkeypatch, tmp_path
+):
+    # The seed ships [llm] and preserves it. A fresh install (no local [llm])
+    # must still get the seed's [llm]; after that the operator's own choice
+    # (here: switched to Copilot, company adapter parked) survives an upgrade.
+    seed_cfg = (
+        b'[config_sync]\npreserve = ["config.toml:llm"]\n'
+        b'[llm]\nprovider = "mycorp"\nmodel = "corp-large"\n'
+    )
+    _wire(
+        monkeypatch, tmp_path, {"config.toml": [seed_cfg]}, {"mycorp-console": "1.0.0"}
+    )
+    b = _SeedBridge()
+    assert b.seed_apply()["applied"] is True
+    assert cfg.read_config()["llm"] == {"provider": "mycorp", "model": "corp-large"}
+
+    local = cfg.read_config()
+    local["llm"] = {
+        "provider": "copilot",
+        "model": "gpt-5",
+        "saved_providers": {"mycorp": {"model": "corp-large"}},
+    }
+    cfg.write_config(local)
+
+    _wire(
+        monkeypatch, tmp_path, {"config.toml": [seed_cfg]}, {"mycorp-console": "1.1.0"}
+    )
+    assert b.seed_apply()["applied"] is True
+    llm = cfg.read_config()["llm"]
+    assert llm["provider"] == "copilot"
+    assert llm["model"] == "gpt-5"
+    assert llm["saved_providers"] == {"mycorp": {"model": "corp-large"}}
+
+
+def test_seed_preserved_key_unset_locally_takes_the_seed_value(monkeypatch, tmp_path):
+    # A preserve on one key: unset locally -> filled from the seed; other seed
+    # keys still re-assert as before.
+    _wire(
+        monkeypatch,
+        tmp_path,
+        {
+            "config.toml": [
+                b'[config_sync]\npreserve = ["config.toml:llm.provider"]\n'
+                b'[llm]\nprovider = "mycorp"\nmodel = "corp-large"\n'
+            ]
+        },
+        {"mycorp-console": "1.0.0"},
+    )
+    cfg.write_config({"llm": {"model": "mine"}})
+    _SeedBridge().seed_apply()
+    llm = cfg.read_config()["llm"]
+    assert llm["provider"] == "mycorp"  # unset locally -> seed fills it
+    assert llm["model"] == "corp-large"  # not preserved -> re-asserted

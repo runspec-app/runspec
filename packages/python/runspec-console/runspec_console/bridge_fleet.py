@@ -1460,6 +1460,7 @@ class FleetMixin:
         preserve: dict[str, list[list[str]]],
         backups_keep: int,
         post_merge: Callable[[], None] | None = None,
+        fill_missing: bool = False,
     ) -> dict[str, Any]:
         """Validate, merge, and hot-reload a set of already-fetched config files.
 
@@ -1477,7 +1478,8 @@ class FleetMixin:
         to ``backups_keep``. ``post_merge`` — caller-specific stamping that must
         land before the reload — runs after the loop; then the running app
         hot-reloads (hosts / filters / credentials / SSH / triggers) so no
-        restart is needed.
+        restart is needed. ``fill_missing`` (the package seed) lets a preserve
+        path that is unset locally take the incoming value instead of dropping it.
 
         Returns ``{ok: True, written, skipped, backups, pruned}`` or, on a
         validation failure, ``{ok: False, error}`` (nothing written)."""
@@ -1533,7 +1535,9 @@ class FleetMixin:
             if name in mergeable:
                 parsed_layers = [tomllib.loads(d.decode("utf-8")) for d in datas]
                 effective = configmerge.fold_layers(name, parsed_layers)
-                self._merge_synced_file(name, effective, preserve.get(name, []))
+                self._merge_synced_file(
+                    name, effective, preserve.get(name, []), fill_missing=fill_missing
+                )
             else:
                 # An unrecognised file (a future addition) — top layer verbatim.
                 self._atomic_write_bytes(dest, datas[-1])
@@ -1656,6 +1660,9 @@ class FleetMixin:
             preserve=preserve,
             backups_keep=backups_keep_value(read_sync()),
             post_merge=_stamp,
+            # The seed is the baseline: a preserved key the operator hasn't set
+            # yet (a fresh install) takes the seed's value, then stays local.
+            fill_missing=True,
         )
         if not applied.get("ok"):
             return applied
@@ -1805,7 +1812,12 @@ class FleetMixin:
         os.replace(tmp, dest)
 
     def _merge_synced_file(
-        self, name: str, parsed: dict[str, Any], preserve: list[list[str]]
+        self,
+        name: str,
+        parsed: dict[str, Any],
+        preserve: list[list[str]],
+        *,
+        fill_missing: bool = False,
     ) -> None:
         """Merge one pulled file's effective table into local config, non-destructively.
 
@@ -1818,7 +1830,9 @@ class FleetMixin:
         from . import configmerge
 
         local = self._local_merge_table(name)
-        after = configmerge.merged_native(name, local, parsed, preserve)
+        after = configmerge.merged_native(
+            name, local, parsed, preserve, fill_missing=fill_missing
+        )
         self._write_merged_table(name, after)
 
     def _local_merge_table(self, name: str) -> dict[str, Any]:
