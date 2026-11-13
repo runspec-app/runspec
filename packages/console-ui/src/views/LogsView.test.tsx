@@ -4,7 +4,7 @@
  * failed prune/compact inside the modal rather than only as a toast.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 import { LogsView } from './LogsView'
 
@@ -53,6 +53,13 @@ beforeEach(() => {
   venvOwner.mockReset().mockResolvedValue({ ok: true, owner: '', self: 'operator' })
 })
 
+// Venv actions past the main two live behind "More actions".
+async function openVenvAction(group: string, label: string) {
+  fireEvent.click(within(screen.getByTestId(`venv-actions-${group}`)).getByRole('button', { name: 'More actions' }))
+  const items = await screen.findAllByText(label)
+  fireEvent.click(items[items.length - 1])
+}
+
 describe('LogsView', () => {
   it('renders a per-venv entry and the separate ~/logs home entry', async () => {
     render(<LogsView {...PROPS} />)
@@ -78,8 +85,8 @@ describe('LogsView', () => {
     render(<LogsView {...PROPS} />)
     await screen.findByText('ops-tools')
 
-    // Open the prune modal for the first venv entry (both entries have a "Prune…").
-    fireEvent.click(screen.getAllByRole('button', { name: /Prune…/ })[0])
+    // Open the prune modal for the venv entry (Prune… is behind More actions).
+    await openVenvAction('ops-tools', 'Prune…')
     expect(await screen.findByText('Prune logs')).toBeTruthy()
 
     // Set a policy so Preview enables, then run the dry-run.
@@ -95,12 +102,13 @@ describe('LogsView', () => {
     render(<LogsView {...PROPS} />)
     await screen.findByText('ops-tools')
 
-    // The button is on the venv entry only — never the per-user ~/logs home entry
+    // The action is on the venv entry only — never the per-user ~/logs home entry
     // (which is always writable by its owner, so there's nothing to share).
-    const buttons = screen.getAllByRole('button', { name: /Make shared/ })
-    expect(buttons).toHaveLength(1)
+    fireEvent.click(within(screen.getByTestId('venv-actions-~/logs')).getByRole('button', { name: 'More actions' }))
+    expect(await screen.findByText('Prune…')).toBeTruthy()
+    expect(screen.queryByText('Make shared…')).toBeNull()
 
-    fireEvent.click(buttons[0])
+    await openVenvAction('ops-tools', 'Make shared…')
     expect(await screen.findByText('Make logs shared')).toBeTruthy()
 
     // Optional Unix group, then apply → shares this venv (no "Run as" here — the
@@ -119,7 +127,7 @@ describe('LogsView', () => {
     render(<LogsView {...PROPS} />)
     await screen.findByText('ops-tools')
 
-    fireEvent.click(screen.getAllByRole('button', { name: /Make shared/ })[0])
+    await openVenvAction('ops-tools', 'Make shared…')
     await screen.findByText('Make logs shared')
     await waitFor(() =>
       expect((screen.getByPlaceholderText('(yourself)') as HTMLInputElement).value).toBe('svc'),
@@ -137,7 +145,7 @@ describe('LogsView', () => {
     })
     render(<LogsView {...PROPS} />)
     await screen.findByText('ops-tools')
-    fireEvent.click(screen.getAllByRole('button', { name: /Make shared/ })[0])
+    await openVenvAction('ops-tools', 'Make shared…')
     await screen.findByText('Make logs shared')
     fireEvent.click(screen.getByRole('button', { name: /^Make shared$/ }))
     // The share applied, but the warning is shown and the modal stays open so the

@@ -21,10 +21,12 @@ import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, 
 import { HostScheduleModal, timeoutText, type HostScheduleEditing } from './HostScheduleModal'
 import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary, withAlpha } from '../ThemeContext'
 import {
-  DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, PACKAGE_POLICY, STATE_COLOR, claimStale, daemonNeedsAttention, daemonSummary, filterRows, noteBatches, noteText, noteVerbs, noteable, packageOverridden, settingText, settingsForm, shortDuration, supportsPackages, venvSettingsChanges,
+  DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, PACKAGE_POLICY, STATE_TONE, claimStale, daemonNeedsAttention, daemonSummary, filterRows, noteBatches, noteText, noteVerbs, noteable, packageOverridden, settingText, settingsForm, shortDuration, supportsPackages, venvSettingsChanges,
   type Collected, type VenvSettingsForm, type NoteVerb, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
 } from './allSchedules'
-import { RUN_COLOR, ScheduleDetail, relTime } from './sharedSchedules'
+import { RUN_TONE, ScheduleDetail, relTime } from './sharedSchedules'
+import { EmptyState, IconAction, StatusTag, type StatusTone } from '../components/kit'
+import { describeCron } from '../cronText'
 
 const { Text } = Typography
 
@@ -67,9 +69,6 @@ function writeFilters(f: RowFilters) {
 
 const SOURCE_LABEL: Record<RowSource, string> = {
   console: 'console', cron: 'host cron', daemon: 'host daemon', unknown: 'host',
-}
-const SOURCE_COLOR: Record<RowSource, string> = {
-  console: 'cyan', cron: 'geekblue', daemon: 'purple', unknown: 'default',
 }
 
 const ALL_STATES: RowState[] = [
@@ -138,6 +137,23 @@ function NoteModal({ verb, rows, onClose, onDone }: {
   )
 }
 
+/** A schedule's timing: the plain reading when there is one, with the raw
+ *  expression beside it in mono for anyone who wants the exact value. */
+export function WhenCell({ when }: { when: string }) {
+  // A host schedule's "when" may carry its time zone: "15 * * * * (Europe/London)".
+  const m = when.match(/^(.*?)\s*\(([^()]+)\)\s*$/)
+  const expr = m ? m[1] : when
+  const tz = m ? m[2] : ''
+  const plain = describeCron(expr)
+  if (!plain) return <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{when}</span>
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column' }}>
+      <span style={{ fontSize: 13 }}>{plain}{tz && <span style={{ color: 'var(--rs-text-muted)' }}> · {tz}</span>}</span>
+      <span style={{ fontFamily: MONO_FONT, fontSize: 12, color: 'var(--rs-text-muted)' }}>{when}</span>
+    </span>
+  )
+}
+
 const KEEPER_LABEL: Record<string, string> = {
   'systemd-user': 'systemd --user', systemd: 'systemd (system)', supervisor: 'supervisord', cron: 'cron watchdog',
 }
@@ -151,7 +167,7 @@ function DaemonStrip({ d, editable, busy, onRestart, onSettings }: {
 }) {
   const isDark = useIsDark()
   const st = d.daemon?.state ?? 'stopped'
-  const color = st === 'running' ? 'green' : st === 'stale' ? 'orange' : 'red'
+  const tone: StatusTone = st === 'running' ? 'ok' : st === 'stale' ? 'attention' : 'failed'
   const dm = d.daemon
   const bits: string[] = []
   if (dm && st !== 'stopped') {
@@ -172,11 +188,9 @@ function DaemonStrip({ d, editable, busy, onRestart, onSettings }: {
       display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '6px 10px',
       border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, background: 'var(--rs-surface-raised)',
     }}>
-      <Tag color={color} style={{ margin: 0 }}>scheduler {st}</Tag>
+      <StatusTag tone={tone}>scheduler {st}</StatusTag>
       {dm?.restart_needed && running && (
-        <Tooltip title="The daemon still runs the runspec-scheduler it started with; the venv has a different one installed now. Restart it to run the new code.">
-          <Tag color="gold" style={{ margin: 0 }}>restart needed</Tag>
-        </Tooltip>
+        <StatusTag tone="attention" tip="The daemon still runs the runspec-scheduler it started with; the venv has a different one installed now. Restart it to run the new code.">restart needed</StatusTag>
       )}
       <span style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark) }}>{d.host} / {d.venv}</span>
       {d.owner && <span style={{ color: textMuted(isDark), fontSize: 12 }}>as {d.owner}</span>}
@@ -440,9 +454,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
       width: 150,
       render: (_: unknown, r) => (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-          <Tooltip title={r.stateTip}>
-            <Tag color={STATE_COLOR[r.state]} style={{ margin: 0 }}>{r.state}</Tag>
-          </Tooltip>
+          <StatusTag tone={STATE_TONE[r.state]} tip={r.stateTip}>{r.state}</StatusTag>
           {r.attention?.note && (r.state === 'being handled' || r.state === 'dealt with') && (
             <Tooltip title={noteText(r.attention.note)}>
               <span style={{ fontSize: 12, color: claimStale(r.attention.note) ? token.colorWarning : secondary, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -450,7 +462,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
               </span>
             </Tooltip>
           )}
-          {scope === 'all' && <Tag bordered={false} color={SOURCE_COLOR[r.source]} style={{ margin: 0, fontSize: 11 }}>{SOURCE_LABEL[r.source]}</Tag>}
+          {scope === 'all' && <span style={{ fontSize: 12, color: muted }}>{SOURCE_LABEL[r.source]}</span>}
         </div>
       ),
     },
@@ -490,7 +502,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
         </div>
       ),
     },
-    { title: 'When', key: 'when', render: (_: unknown, r) => <span style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{r.when}</span> },
+    { title: 'When', key: 'when', render: (_: unknown, r) => <WhenCell when={r.when} /> },
     {
       title: 'Next fire',
       key: 'next',
@@ -507,15 +519,13 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
         const label = (l.status === 'failed' || l.status === 'crashed') && l.exitCode != null ? `exit ${l.exitCode}` : l.status
         return (
           <Space size={4}>
-            <Tag color={RUN_COLOR[l.status] ?? 'default'} style={{ margin: 0 }}>{label}</Tag>
+            <StatusTag tone={RUN_TONE[l.status] ?? 'neutral'}>{label}</StatusTag>
             <Tooltip title={`${new Date(l.ts).toLocaleString()}${l.durationMs != null ? ` · ${(l.durationMs / 1000).toFixed(1)}s` : ''}`}>
               <span style={{ color: secondary, fontSize: 13 }}>{relTime(l.ts)}</span>
             </Tooltip>
             {onOpenHistory && r.historySearch && (
-              <Tooltip title={`Open in History (search “${r.historySearch}”)`}>
-                <Button type="text" size="small" icon={<HistoryOutlined />} aria-label="Open in History"
-                  onClick={() => onOpenHistory(r.historySearch)} />
-              </Tooltip>
+              <IconAction label="Open in History" tip={`Open in History (search “${r.historySearch}”)`} icon={<HistoryOutlined />}
+                onClick={() => onOpenHistory(r.historySearch)} />
             )}
           </Space>
         )
@@ -730,13 +740,19 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
                   </Dropdown>
                 )
             )}
-            {editable && (
-              <Tooltip title={scopeVenvs.length ? 'Add a schedule to a venv’s runspec-scheduler' : 'No venv with runspec-scheduler on the connected hosts'}>
-                <Button size="small" type="primary" icon={<PlusOutlined />} disabled={!scopeVenvs.length}
-                  onClick={() => { setEditing(null); setEditorOpen(true) }}>
-                  New host schedule
-                </Button>
-              </Tooltip>
+            {editable && (scopeVenvs.length
+              ? (
+                <Tooltip title="Add a schedule to a venv’s runspec-scheduler">
+                  <Button size="small" type="primary" icon={<PlusOutlined />}
+                    onClick={() => { setEditing(null); setEditorOpen(true) }}>
+                    New host schedule
+                  </Button>
+                </Tooltip>
+              )
+              // Say what's missing instead of a disabled button with no way on.
+              : <span data-testid="no-scheduler" style={{ fontSize: 12, color: muted }}>
+                  To schedule on a host, install runspec-scheduler in one of its venvs (Marketplace).
+                </span>
             )}
           </Space>
         )}
@@ -794,7 +810,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           scroll={{ x: 'max-content' }}
           rowClassName={r => (r.enabled ? '' : 'rs-schedule-disabled')}
           onRow={r => (r.problem ? { style: { background: withAlpha(token.colorWarning, isDark ? 0.07 : 0.08) } } : {})}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} /> }}
+          locale={{ emptyText: <EmptyState message={emptyText} /> }}
           expandable={{ expandedRowRender: expanded, rowExpandable: r => r.kind !== 'schedule' || !!r.shared || !!r.argsText }}
           rowSelection={editable && rows.some(noteable) ? {
             selectedRowKeys: selected,

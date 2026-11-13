@@ -8,6 +8,7 @@
  * Older schedulers (< 0.5.0) report no `backend` and no `daemon`: they are cron.
  */
 import type { PackageSchedulePolicy, RunCard, RunNote, Schedule, ScheduleAttention, SchedulerSettings, SharedSchedule, SharedSchedulesPackages, SharedSchedulesVenv } from '../bridge'
+import type { StatusTone } from '../components/kit'
 import { hostPasses, parseSearch } from '../searchTokens'
 
 /** The four option cards across the top of the Schedules tab. */
@@ -112,23 +113,24 @@ export interface Collected {
   rootOwned: string[]
 }
 
-export const STATE_COLOR: Record<RowState, string> = {
-  'ok': 'green',
-  'running': 'blue',
-  'disabled': 'default',
-  'last run failed': 'red',
-  'not installed': 'orange',
-  'not installable': 'orange',
-  'stale line': 'orange',
-  'scheduler stopped': 'red',
-  'scheduler stale': 'orange',
-  "can't read": 'red',
-  'unknown': 'default',
-  'legacy line': 'gold',
-  'being handled': 'purple',
-  'dealt with': 'cyan',
-  'offered': 'geekblue',
-  'needs daemon': 'orange',
+/** Each row state in the shared status vocabulary (components/kit StatusTag). */
+export const STATE_TONE: Record<RowState, StatusTone> = {
+  'ok': 'ok',
+  'running': 'running',
+  'disabled': 'neutral',
+  'last run failed': 'failed',
+  'not installed': 'attention',
+  'not installable': 'attention',
+  'stale line': 'attention',
+  'scheduler stopped': 'failed',
+  'scheduler stale': 'attention',
+  "can't read": 'failed',
+  'unknown': 'neutral',
+  'legacy line': 'attention',
+  'being handled': 'waiting',
+  'dealt with': 'info',
+  'offered': 'info',
+  'needs daemon': 'attention',
 }
 
 /** A claim with no newer note for this long shows as stale: the failure counts

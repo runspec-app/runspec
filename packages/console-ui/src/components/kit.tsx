@@ -128,18 +128,19 @@ function runAction(a: RowAction) {
 /** One visible primary action, quiet secondaries beside it, and everything else
  *  (destructive actions above all) behind a "More actions" menu, so the action a
  *  row is for is never the same weight as the one that deletes it. */
-export function RowActions({ primary, secondary = [], more = [], style }: {
+export function RowActions({ primary, secondary = [], more = [], style, testId = 'row-actions' }: {
   primary?: RowAction
   secondary?: RowAction[]
   more?: RowAction[]
   style?: CSSProperties
+  testId?: string
 }) {
   const items: MenuProps['items'] = more.map(a => ({
     key: a.key, label: a.label, icon: a.icon, danger: a.danger, disabled: a.disabled,
   }))
   const wrap = (a: RowAction, node: ReactNode) => (a.tip ? <Tooltip key={a.key} title={a.tip}>{node}</Tooltip> : node)
   return (
-    <div data-testid="row-actions" style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', ...style }}>
+    <div data-testid={testId} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', ...style }}>
       {primary && wrap(primary,
         <Button key={primary.key} size="small" icon={primary.icon} disabled={primary.disabled} danger={primary.danger}
           onClick={() => runAction(primary)}>

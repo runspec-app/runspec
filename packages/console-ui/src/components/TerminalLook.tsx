@@ -154,7 +154,7 @@ export function TerminalLook() {
         </div>
         <div>
           {label('Blink')}
-          <Switch size="small" checked={look.cursor_blink ?? false} onChange={v => set({ cursor_blink: v })} />
+          <Switch aria-label="Cursor blink" size="small" checked={look.cursor_blink ?? false} onChange={v => set({ cursor_blink: v })} />
         </div>
         <div style={{ width: 110 }}>
           {label('Scrollback lines')}

@@ -61,6 +61,7 @@ export function SoundSelect({ value, onChange, disabled, size = 'middle', width 
       />
       <Tooltip title="Preview this sound">
         <Button
+          aria-label="Preview this sound"
           size={size === 'large' ? 'middle' : size}
           type="text"
           icon={<SoundOutlined />}
