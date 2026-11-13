@@ -146,7 +146,7 @@ export function RunInbox({
               {renderDrawerExtra?.(card)}
 
               {error && (
-                <div style={{ color: COLUMN_COLOR.failed, marginBottom: 16, whiteSpace: 'pre-wrap' }}>{error}</div>
+                <div style={{ color: 'var(--rs-danger)', marginBottom: 16, whiteSpace: 'pre-wrap' }}>{error}</div>
               )}
 
               {(hasTranscript || body) && (

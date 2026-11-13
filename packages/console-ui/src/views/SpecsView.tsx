@@ -6,6 +6,7 @@ import { runnableHidden } from '../toolVisibility'
 import { CopyButton } from '../components/runShared'
 import { bridge } from '../bridge'
 import type { Runnable, ArgDef, ToolVisibility, DenylistHostStatus, DenylistRule } from '../bridge'
+import { antTone, EmptyState, StatusTag } from '../components/kit'
 
 const { Text } = Typography
 
@@ -130,7 +131,7 @@ function autonomyColor(v: string | undefined): string {
 }
 function AutonomyTag({ level }: { level: string | undefined }) {
   const v = level || 'confirm'
-  return <Tag color={autonomyColor(v)} style={{ fontSize: 11, margin: 0 }}>{v}</Tag>
+  return <StatusTag tone={antTone(autonomyColor(v))}>{v}</StatusTag>
 }
 
 function FieldRow({ name, value, isDefault }: { name: string; value: React.ReactNode; isDefault?: boolean }) {
@@ -162,11 +163,11 @@ function ArgRow({ arg }: { arg: ArgDef }) {
         <Tag style={{ fontSize: 11, margin: 0 }}>{typeLabel}</Tag>
         {arg.ui && arg.ui !== 'directory' && <Tag style={{ fontSize: 11, margin: 0 }}>ui: {arg.ui}</Tag>}
         {arg.type === 'password'
-          ? <Tag color={arg.required ? 'orange' : 'default'} style={{ fontSize: 11, margin: 0 }}>{arg.required ? 'required secret' : 'secret'}</Tag>
+          ? <StatusTag tone={arg.required ? 'info' : 'neutral'}>{arg.required ? 'required secret' : 'secret'}</StatusTag>
           : arg.required
-            ? <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>required</Tag>
+            ? <StatusTag tone="info">required</StatusTag>
             : isVarRef(arg.default)
-              ? <Text style={{ fontSize: 11, color: '#fa8c16', fontFamily: MONO_FONT }}>{String(arg.default)}</Text>
+              ? <Text style={{ fontSize: 11, color: 'var(--rs-warn)', fontFamily: MONO_FONT }}>{String(arg.default)}</Text>
               : arg.default !== undefined
                 ? <Text type="secondary" style={{ fontSize: 11 }}>default: {String(arg.default)}</Text>
                 : <Text type="secondary" style={{ fontSize: 11 }}>optional</Text>}
@@ -174,7 +175,7 @@ function ArgRow({ arg }: { arg: ArgDef }) {
         {typeof arg.position === 'number' && <Tag style={{ fontSize: 11, margin: 0 }}>pos {arg.position}</Tag>}
         {arg.multiple && <Tag style={{ fontSize: 11, margin: 0 }}>multiple</Tag>}
         {arg.autonomy && <AutonomyTag level={arg.autonomy} />}
-        {arg.deprecated && <Tag color="red" style={{ fontSize: 11, margin: 0 }}>deprecated</Tag>}
+        {arg.deprecated && <StatusTag tone="attention">deprecated</StatusTag>}
       </div>
       {(() => {
         if (arg.options) push(<span key="opt">options: [{arg.options.join(' | ')}]</span>)
@@ -192,7 +193,7 @@ function ArgRow({ arg }: { arg: ArgDef }) {
       })()}
       {arg.description && <Text type="secondary" style={{ fontSize: 13, paddingLeft: 2 }}>{arg.description}</Text>}
       {arg.deprecated && typeof arg.deprecated === 'string' && (
-        <Text style={{ fontSize: 12, color: '#ff7875', paddingLeft: 2 }}>deprecated: {arg.deprecated}</Text>
+        <Text style={{ fontSize: 12, color: 'var(--rs-danger)', paddingLeft: 2 }}>deprecated: {arg.deprecated}</Text>
       )}
       {arg.meta && (
         <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT, paddingLeft: 2 }}>meta: {JSON.stringify(arg.meta)}</Text>
@@ -235,13 +236,13 @@ function DenylistSection({ runnable }: { runnable: Runnable }) {
           </Button>
         )}
       </div>
-      {error && <Text style={{ fontSize: 12, color: '#ff7875' }}>{error}</Text>}
+      {error && <Text style={{ fontSize: 12, color: 'var(--rs-danger)' }}>{error}</Text>}
       {match.checked && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {blocked ? <Tag color="red" style={{ fontSize: 11, margin: 0 }}>blocked</Tag>
-              : warned ? <Tag color="gold" style={{ fontSize: 11, margin: 0 }}>warn</Tag>
-              : <Tag color="green" style={{ fontSize: 11, margin: 0 }}>allowed</Tag>}
+            {blocked ? <StatusTag tone="failed">blocked</StatusTag>
+              : warned ? <StatusTag tone="attention">warn</StatusTag>
+              : <StatusTag tone="ok">allowed</StatusTag>}
             <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>
               mode: {match.mode || 'off'}{match.disabled ? ' · all disabled' : ''}
             </Text>
@@ -325,7 +326,7 @@ function SpecInspector({ runnable, vis, onOpenForm }: {
           )}
           {visibility === 'all' && (
             <Tooltip title="Hidden everywhere ([tool_visibility] hidden_from_all) — agent, Forms and catalogs">
-              <Tag icon={<EyeInvisibleOutlined />} color="volcano" style={{ fontSize: 11, margin: 0 }}>hidden</Tag>
+              <StatusTag tone="neutral" icon={<EyeInvisibleOutlined />}>hidden</StatusTag>
             </Tooltip>
           )}
           {isInternal && (
@@ -333,7 +334,7 @@ function SpecInspector({ runnable, vis, onOpenForm }: {
               <Tag style={{ fontSize: 11, margin: 0 }}>internal</Tag>
             </Tooltip>
           )}
-          {runnable.requireCommand && <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>command required</Tag>}
+          {runnable.requireCommand && <StatusTag tone="info">command required</StatusTag>}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
             {onOpenForm && (
               <Tooltip title="Open this runnable in the Forms run dialog">
@@ -352,15 +353,15 @@ function SpecInspector({ runnable, vis, onOpenForm }: {
         <FieldRow name="autonomy" isDefault={autonomyField.isDefault} value={<AutonomyTag level={String(autonomyField.value)} />} />
         {reason && <FieldRow name="autonomy-reason" value={<Text style={{ fontSize: 13, fontStyle: 'italic' }}>{reason}</Text>} />}
         {outputField && <FieldRow name="output" isDefault={outputField.isDefault} value={<Tag style={{ fontSize: 12, margin: 0 }}>{String(outputField.value)}</Tag>} />}
-        {serveField && <FieldRow name="serve" isDefault={serveField.isDefault} value={<Tag color={serveField.value ? 'green' : 'default'} style={{ fontSize: 12, margin: 0 }}>{String(serveField.value)}</Tag>} />}
-        {discoverableField && <FieldRow name="discoverable" isDefault={discoverableField.isDefault} value={<Tag color={discoverableField.value ? 'default' : 'volcano'} style={{ fontSize: 12, margin: 0 }}>{String(discoverableField.value)}</Tag>} />}
+        {serveField && <FieldRow name="serve" isDefault={serveField.isDefault} value={<StatusTag tone={serveField.value ? 'ok' : 'neutral'}>{String(serveField.value)}</StatusTag>} />}
+        {discoverableField && <FieldRow name="discoverable" isDefault={discoverableField.isDefault} value={<StatusTag tone="neutral">{String(discoverableField.value)}</StatusTag>} />}
       </div>
 
       {/* Remote execution */}
       {(runAs || becomeFlags || envFile) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <SectionLabel label="Remote execution" />
-          {runAs && <FieldRow name="run_as" value={<Tag color="orange" style={{ fontSize: 12, margin: 0 }}>{runAs}</Tag>} />}
+          {runAs && <FieldRow name="run_as" value={<StatusTag tone="info" mono>{runAs}</StatusTag>} />}
           {runAs && becomeMethod && <FieldRow name="become_method" isDefault={becomeMethod.isDefault} value={<Tag style={{ fontSize: 12, margin: 0 }}>{String(becomeMethod.value)}</Tag>} />}
           {becomeFlags && <FieldRow name="become_flags" value={<Text code style={{ fontSize: 12 }}>{becomeFlags}</Text>} />}
           {envFile && <FieldRow name="runspec_env" value={<Text code style={{ fontSize: 12 }}>{envFile}</Text>} />}
@@ -372,10 +373,10 @@ function SpecInspector({ runnable, vis, onOpenForm }: {
         <SectionLabel label="Visibility & control" />
         <FieldRow name="agent" value={
           visibility === 'visible'
-            ? <Tag color="green" style={{ fontSize: 12, margin: 0 }}>visible</Tag>
+            ? <StatusTag tone="ok">visible</StatusTag>
             : visibility === 'agent'
               ? <Tag style={{ fontSize: 12, margin: 0 }}>hidden from agent</Tag>
-              : <Tag color="volcano" style={{ fontSize: 12, margin: 0 }}>hidden everywhere</Tag>
+              : <StatusTag tone="attention">hidden everywhere</StatusTag>
         } />
         <DenylistSection runnable={runnable} />
       </div>
@@ -435,7 +436,7 @@ function SpecInspector({ runnable, vis, onOpenForm }: {
                 <Text code style={{ fontSize: 13 }}>{sub.name}</Text>
                 <AutonomyTag level={sub.autonomy} />
                 {sub.requireCommand && Object.keys(sub.commands ?? {}).length > 0 && (
-                  <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>command required</Tag>
+                  <StatusTag tone="info">command required</StatusTag>
                 )}
                 {sub.description && <Text type="secondary" style={{ fontSize: 13 }}>{sub.description}</Text>}
               </div>
@@ -473,7 +474,7 @@ function SpecInspector({ runnable, vis, onOpenForm }: {
               margin: 0, padding: '10px 12px', fontFamily: MONO_FONT, fontSize: 12,
               whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 460, overflow: 'auto',
               background: 'var(--rs-surface-sunken)', borderRadius: RADIUS.sm,
-              color: isDark ? '#ccc' : '#333',
+              color: textSecondary(isDark),
             }}>{prettyJson(fullSpec)}</pre>
           ),
         }]}
@@ -632,17 +633,12 @@ export function SpecsView({ runnables, selectedHost, activeScope, onScopeToggle,
                       <span style={{ fontFamily: MONO_FONT, fontSize: 14, color: textColor(isDark), flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <span style={{ color: textMuted(isDark), fontSize: 13 }}>{r.group}/</span>{r.name}
                       </span>
-                      {(r.autonomy === 'autonomous') && <Tag color="green" style={{ fontSize: 11, margin: 0, lineHeight: '16px' }}>auto</Tag>}
+                      {(r.autonomy === 'autonomous') && <StatusTag tone="ok">auto</StatusTag>}
                       {v !== 'visible' && <Tooltip title={v === 'all' ? 'hidden everywhere' : 'hidden from agent'}><EyeInvisibleOutlined style={{ fontSize: 12, color: textFaint(isDark) }} /></Tooltip>}
                       {internal && <Tooltip title="internal helper (discoverable = false)"><LockOutlined style={{ fontSize: 12, color: textFaint(isDark) }} /></Tooltip>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                      <Tag
-                        color={activeScope.includes(r.group) ? 'geekblue' : 'blue'}
-                        onClick={e => { e.stopPropagation(); onScopeToggle(r.group) }}
-                        style={{ cursor: 'pointer', fontSize: 11, margin: 0, lineHeight: '16px' }}
-                        title={activeScope.includes(r.group) ? 'Remove group from scope' : 'Add group to scope'}
-                      >{r.group}</Tag>
+                      <StatusTag tone={activeScope.includes(r.group) ? 'running' : 'info'} tip={activeScope.includes(r.group) ? 'Remove group from scope' : 'Add group to scope'} onClick={e => { e.stopPropagation(); onScopeToggle(r.group) }}>{r.group}</StatusTag>
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         {(r.args ?? []).length} arg{(r.args ?? []).length !== 1 ? 's' : ''}
                         {r.commands ? ` · ${Object.keys(r.commands).length} sub` : ''}
@@ -674,10 +670,7 @@ export function SpecsView({ runnables, selectedHost, activeScope, onScopeToggle,
           <SpecInspector runnable={selected} vis={vis} onOpenForm={onOpenForm} />
         ) : (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={<Text type="secondary" style={{ fontSize: 14 }}>Select a runnable to inspect its full spec</Text>}
-            />
+            <EmptyState message="Pick a runnable on the left to see its full spec." />
           </div>
         )}
       </div>

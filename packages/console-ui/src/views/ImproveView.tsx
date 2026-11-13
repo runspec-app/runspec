@@ -10,6 +10,7 @@ import type { ColumnType } from 'antd/es/table'
 import {
   bridge, type ImproveReport, type ImproveReportMeta, type ImproveIncident,
 } from '../bridge'
+import { antTone, EmptyState, StatusTag } from '../components/kit'
 
 const { Text, Paragraph, Title } = Typography
 
@@ -202,10 +203,10 @@ export function ImproveView({ active }: ImproveViewProps) {
             size="small"
             title="Saved reports"
             style={{ marginTop: 12 }}
-            extra={<Button size="small" icon={<ReloadOutlined />} onClick={refreshList} />}
+            extra={<Tooltip title="Reload reports"><Button aria-label="Reload reports" size="small" icon={<ReloadOutlined />} onClick={refreshList} /></Tooltip>}
           >
             {reports.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No reports yet" />
+              <EmptyState message="No reports yet." />
             ) : (
               <div style={{ maxHeight: 260, overflow: 'auto' }}>
                 {reports.map((r) => (
@@ -220,12 +221,13 @@ export function ImproveView({ active }: ImproveViewProps) {
                     }}
                   >
                     <Space size={4}>
-                      <Tag color={r.kind === 'problem_report' ? 'volcano' : 'blue'}>
+                      <StatusTag tone={r.kind === 'problem_report' ? 'attention' : 'neutral'}>
                         {r.kind === 'problem_report' ? 'problem' : 'eval'}
-                      </Tag>
-                      {r.has_synthesis && <Tag color="green">rec</Tag>}
+                      </StatusTag>
+                      {r.has_synthesis && <StatusTag tone="ok">rec</StatusTag>}
                       <Text style={{ fontSize: 13 }}>{r.ts?.slice(0, 16).replace('T', ' ')}</Text>
                       <Button
+                        aria-label="Delete this report"
                         size="small"
                         type="text"
                         icon={<DeleteOutlined />}
@@ -255,7 +257,7 @@ export function ImproveView({ active }: ImproveViewProps) {
             <Card><Spin /> Analysing…</Card>
           ) : !report ? (
             <Card>
-              <Empty description="Run an evaluation or file a problem report to see the analysis." />
+              <EmptyState message="Run an evaluation or file a problem report to see the analysis." />
             </Card>
           ) : (
             <ReportPanel
@@ -295,7 +297,7 @@ function ReportPanel({
       width: 140,
       render: (c: string) => {
         const meta = CAT_META[c] || { color: 'default', label: c }
-        return <Tag color={meta.color}>{meta.label}</Tag>
+        return <StatusTag tone={antTone(meta.color)}>{meta.label}</StatusTag>
       },
       filters: Object.entries(CAT_META).map(([k, v]) => ({ text: v.label, value: k })),
       onFilter: (v, r) => r.category === v,
@@ -321,9 +323,9 @@ function ReportPanel({
         style={{ marginBottom: 12 }}
         title={
           <Space>
-            <Tag color={report.kind === 'problem_report' ? 'volcano' : 'blue'}>
+            <StatusTag tone={report.kind === 'problem_report' ? 'attention' : 'neutral'}>
               {report.kind === 'problem_report' ? 'Problem report' : 'Evaluation'}
-            </Tag>
+            </StatusTag>
             <Text type="secondary">
               {report.product_name} · last {report.window_days}d · {m.turns ?? 0} turn(s)
             </Text>
@@ -414,7 +416,7 @@ function ReportPanel({
           {recs.map((r, i) => (
             <div key={i} style={{ marginBottom: 8 }}>
               <Space size={4} wrap>
-                <Tag color="cyan">{r.category}</Tag>
+                <StatusTag tone="info">{r.category}</StatusTag>
                 <Text strong>{r.target}</Text>
                 <Tag>{r.confidence}</Tag>
               </Space>

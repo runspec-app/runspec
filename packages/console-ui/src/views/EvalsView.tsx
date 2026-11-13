@@ -13,6 +13,7 @@ import {
   type EvalFixtureMeta, type EvalToolInvocation,
 } from '../bridge'
 import { useIsDark, textColor, textSecondary, MONO_FONT } from '../ThemeContext'
+import { antTone, EmptyState, StatusTag } from '../components/kit'
 
 const { Text, Paragraph, Title } = Typography
 
@@ -223,12 +224,13 @@ export function EvalsView({ active }: EvalsViewProps) {
               <Space>
                 <Tooltip title="New fixture">
                   <Button
+                    aria-label="New fixture"
                     size="small"
                     icon={<PlusOutlined />}
                     onClick={() => { setFixtureId(''); setFixtureText(STARTER_FIXTURE) }}
                   />
                 </Tooltip>
-                <Button size="small" icon={<ReloadOutlined />} onClick={refresh} />
+                <Tooltip title="Reload fixtures"><Button aria-label="Reload fixtures" size="small" icon={<ReloadOutlined />} onClick={refresh} /></Tooltip>
               </Space>
             }
           >
@@ -331,10 +333,10 @@ export function EvalsView({ active }: EvalsViewProps) {
             size="small"
             title="Saved reports"
             style={{ marginTop: 12 }}
-            extra={<Button size="small" icon={<ReloadOutlined />} onClick={refresh} />}
+            extra={<Tooltip title="Reload runs"><Button aria-label="Reload runs" size="small" icon={<ReloadOutlined />} onClick={refresh} /></Tooltip>}
           >
             {reports.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No runs yet" />
+              <EmptyState message="No runs yet." />
             ) : (
               <div style={{ maxHeight: 220, overflow: 'auto' }}>
                 {reports.map(r => (
@@ -349,13 +351,14 @@ export function EvalsView({ active }: EvalsViewProps) {
                     }}
                   >
                     <Space size={6}>
-                      <Tag color={r.summary.failed === 0 ? 'green' : 'red'}>
+                      <StatusTag tone={r.summary.failed === 0 ? 'ok' : 'failed'}>
                         {r.summary.passed}/{r.summary.total}
-                      </Tag>
+                      </StatusTag>
                       <Text style={{ fontSize: 13 }}>
                         {r.generated_at?.slice(0, 16).replace('T', ' ')}
                       </Text>
                       <Button
+                        aria-label="Delete this run"
                         size="small"
                         type="text"
                         icon={<DeleteOutlined />}
@@ -375,7 +378,7 @@ export function EvalsView({ active }: EvalsViewProps) {
             <Card><Spin /> Running evals against the live agent…</Card>
           ) : !report ? (
             <Card>
-              <Empty description="Run a fixture to see which tool the agent picks for each prompt." />
+              <EmptyState message="Run a fixture to see which tool the agent picks for each prompt." />
             </Card>
           ) : (
             <EvalReportPanel report={report} />
@@ -411,7 +414,7 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
         const meta = evalCatMeta(c)
         return (
           <Space size={4}>
-            <Tag color={r.passed ? 'green' : meta.color}>{r.passed ? 'pass' : meta.label}</Tag>
+            <StatusTag tone={antTone(r.passed ? 'green' : meta.color)}>{r.passed ? 'pass' : meta.label}</StatusTag>
             {multiSample && !r.passed && (
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {r.pass_count}/{r.samples}
@@ -461,7 +464,7 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
           width: 110,
           render: (a: string) =>
             a
-              ? <Tag color={a === 'manual' ? 'red' : a === 'confirm' ? 'gold' : 'green'}>{a}</Tag>
+              ? <StatusTag tone={antTone(a === 'manual' ? 'red' : a === 'confirm' ? 'gold' : 'green')}>{a}</StatusTag>
               : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>,
         } as ColumnType<EvalCaseResult>]
       : []),
@@ -479,9 +482,9 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
         style={{ marginBottom: 12 }}
         title={
           <Space wrap>
-            <Tag color={s.failed === 0 ? 'green' : 'red'}>
+            <StatusTag tone={s.failed === 0 ? 'ok' : 'failed'}>
               {Math.round(s.pass_rate * 100)}%
-            </Tag>
+            </StatusTag>
             <Text type="secondary">
               {report.model || report.provider} · tool_mode {report.tool_mode}
               {multiSample ? ` · ${report.samples} samples/case` : ''}
@@ -499,7 +502,7 @@ function EvalReportPanel({ report }: { report: EvalReport }) {
           <Space wrap style={{ marginTop: 12 }}>
             {Object.entries(s.by_category).map(([cat, n]) => {
               const meta = evalCatMeta(cat)
-              return <Tag key={cat} color={meta.color}>{meta.label}: {n}</Tag>
+              return <StatusTag tone={antTone(meta.color)} key={cat}>{meta.label}: {n}</StatusTag>
             })}
           </Space>
         )}

@@ -9,6 +9,7 @@ import {
   filterBuckets, computeKpis, runsOverTime, successRateOverTime,
   durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown,
 } from './analytics'
+import { EmptyState, StatusTag } from '../components/kit'
 
 const { Text } = Typography
 
@@ -110,7 +111,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
   if (loading && !data) {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>
   }
-  if (!data) return <Empty description="No analytics data" />
+  if (!data) return <EmptyState message="No run data for this host yet." />
 
   const dims = data.dimensions
   const cardStyle = { background: 'var(--rs-surface-raised)', borderColor: 'var(--rs-border)' }
@@ -128,11 +129,11 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
     { title: 'Exception', dataIndex: 'exception', key: 'exception',
       render: (e: string) => <Text style={{ fontSize: 13 }}>{e}</Text> },
     { title: 'Runnable', dataIndex: 'runnable', key: 'runnable',
-      render: (r: string) => <Tag color="blue" style={{ cursor: 'pointer' }} onClick={() => setRunnableFilter(r)}>{r}</Tag> },
+      render: (r: string) => <StatusTag tone="info" mono tip="Show only this runnable" onClick={() => setRunnableFilter(r)}>{r}</StatusTag> },
     { title: 'Host', dataIndex: 'host', key: 'host', render: (h: string) => <Tag>{h}</Tag> },
     { title: 'Count', dataIndex: 'count', key: 'count', align: 'right',
       sorter: (a, b) => a.count - b.count, defaultSortOrder: 'descend',
-      render: (c: number) => <Tag color="red">{c}</Tag> },
+      render: (c: number) => <StatusTag tone="failed">{c}</StatusTag> },
     { title: 'Last seen', dataIndex: 'lastTs', key: 'lastTs',
       render: (t: string) => <Text type="secondary" style={{ fontSize: 13 }}>{new Date(t).toLocaleString()}</Text> },
   ]
@@ -220,7 +221,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={16}>
           <Card size="small" title="Runs over time" style={cardStyle}>
-            {kpis.total === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
+            {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
               <Area
                 data={runsSeries} xField="date" yField="value" colorField="status"
                 stack height={chartHeight} theme={plotTheme} legend={{ color: { position: 'top' } }}
@@ -232,7 +233,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         </Col>
         <Col xs={24} lg={8}>
           <Card size="small" title="Success rate %" style={cardStyle}>
-            {kpis.total === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
+            {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
               <Line
                 data={rateSeries.filter(d => d.rate !== null)} xField="date" yField="rate"
                 height={chartHeight} theme={plotTheme} shapeField="smooth"
@@ -248,7 +249,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
           <Card size="small" title="Top runnables" extra={<Text type="secondary" style={{ fontSize: 12 }}>click to drill</Text>} style={cardStyle}>
-            {topRuns.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
+            {topRuns.length === 0 ? <EmptyState message="No runs in this range." /> : (
               <Column
                 data={topRuns} xField="runnable" yField="runs"
                 height={chartHeight} theme={plotTheme} onReady={drillToRunnable}
@@ -259,7 +260,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         </Col>
         <Col xs={24} lg={12}>
           <Card size="small" title="Duration p50 / p95 (ms)" style={cardStyle}>
-            {kpis.total === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
+            {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
               <Line
                 data={durationSeries} xField="date" yField="value" colorField="metric"
                 height={chartHeight} theme={plotTheme} shapeField="smooth"
@@ -275,7 +276,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
           <Card size="small" title="Runs by operator" style={cardStyle}>
-            {operators.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
+            {operators.length === 0 ? <EmptyState message="No runs in this range." /> : (
               <Pie
                 data={operators} angleField="value" colorField="type"
                 height={chartHeight} theme={plotTheme} innerRadius={0.5}
@@ -287,7 +288,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         </Col>
         <Col xs={24} lg={12}>
           <Card size="small" title="User vs agent" style={cardStyle}>
-            {kpis.total === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
+            {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
               <Pie
                 data={initiated} angleField="value" colorField="type"
                 height={chartHeight} theme={plotTheme} innerRadius={0.5}

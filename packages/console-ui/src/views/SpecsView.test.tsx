@@ -112,7 +112,7 @@ describe('SpecsView render', () => {
     await waitFor(() => expect(screen.getAllByText('backup').length).toBeGreaterThan(0))
     expect(screen.getAllByText('deploy').length).toBeGreaterThan(0)
     // empty state until a selection is made
-    expect(screen.getByText(/Select a runnable to inspect/i)).toBeTruthy()
+    expect(screen.getByText(/Pick a runnable on the left/i)).toBeTruthy()
 
     // click the backup row → inspector renders its sections
     await userEvent.click(screen.getAllByText('backup')[0])

@@ -8,7 +8,7 @@
 //   OnceHint     a tip shown until the operator dismisses it, then never again
 //   EmptyState   one line saying why it's empty, plus at most one action
 
-import type { CSSProperties, MouseEvent, ReactNode } from 'react'
+import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, SyntheticEvent } from 'react'
 import { useState } from 'react'
 import { Button, Dropdown, Modal, Tooltip, Typography } from 'antd'
 import type { MenuProps } from 'antd'
@@ -41,7 +41,20 @@ export function statusTone(tone: StatusTone, isDark: boolean, accent: string): {
   return { color, bg: 'transparent', border: withAlpha(color, 0.5) }
 }
 
-export function StatusTag({ tone, children, tip, icon, mono, style, testId }: {
+/** The tone for one of Ant's preset tag colours, for code that still computes
+ *  `{ color, text }` (green → ok, processing → running, orange → attention, …). */
+export function antTone(color: string | undefined): StatusTone {
+  switch (color) {
+    case 'green': case 'success': case 'lime': return 'ok'
+    case 'processing': return 'running'
+    case 'orange': case 'gold': case 'warning': case 'yellow': return 'attention'
+    case 'red': case 'error': case 'volcano': case 'magenta': return 'failed'
+    case 'blue': case 'geekblue': case 'cyan': case 'purple': return 'info'
+    default: return 'neutral'
+  }
+}
+
+export function StatusTag({ tone, children, tip, icon, mono, style, testId, onClick, ref, ...rest }: {
   tone: StatusTone
   children: ReactNode
   tip?: ReactNode
@@ -49,21 +62,33 @@ export function StatusTag({ tone, children, tip, icon, mono, style, testId }: {
   mono?: boolean
   style?: CSSProperties
   testId?: string
-}) {
+  // A clickable tag (a filter shortcut, "open the running job") is a button to
+  // the keyboard and screen readers too.
+  onClick?: (e: SyntheticEvent) => void
+  ref?: Ref<HTMLSpanElement>
+} & Omit<HTMLAttributes<HTMLSpanElement>, 'onClick' | 'style' | 'children'>) {
   const isDark = useIsDark()
   const accent = useAccent()
   const c = statusTone(tone, isDark, accent)
   const tag = (
+    // Extra props and the ref pass through, so an outer <Tooltip> or Popover
+    // can attach to the tag the way it would to an Ant <Tag>.
     <span
+      {...rest}
+      ref={ref}
       data-testid={testId}
       data-tone={tone}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={onClick ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(e) } } : undefined}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
         fontSize: 12, lineHeight: '18px', padding: '0 6px', borderRadius: 4,
         color: c.color, background: c.bg, border: `1px solid ${c.border}`,
         fontWeight: tone === 'waiting' || tone === 'failed' ? 600 : 500,
         fontFamily: mono ? MONO_FONT : 'inherit',
-        cursor: tip ? 'default' : undefined,
+        cursor: onClick ? 'pointer' : tip ? 'default' : undefined,
         ...style,
       }}
     >

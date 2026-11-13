@@ -371,7 +371,9 @@ describe('MarketplaceView', () => {
     render(<MarketplaceView hosts={HOSTS} />)
     await screen.findByText('update available')
     const user = userEvent.setup()
-    await act(async () => { await user.click(screen.getAllByRole('button', { name: /Uninstall…/ })[0]) })
+    // Uninstall lives behind the card's More actions menu.
+    await act(async () => { await user.click(screen.getAllByRole('button', { name: 'More actions' })[0]) })
+    await act(async () => { await user.click(await screen.findByText('Uninstall…')) })
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getAllByRole('checkbox')).toHaveLength(1)
     await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Uninstall runspec-linux on 1 venv/ })) })
