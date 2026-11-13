@@ -262,17 +262,23 @@ function actor(): [string, number | null] {
   }
 }
 
-function redactValue(v: unknown, key = ''): unknown {
+function redactValue(v: unknown, key = '', seen: object[] = []): unknown {
   if (key && SENSITIVE_KEY_RE.test(key)) return '[REDACTED]';
   if (v === null || v === undefined) return null;
-  if (Array.isArray(v)) return v.map((x) => redactValue(x));
+  if (typeof v === 'object') {
+    if (seen.includes(v)) return '<circular>';
+    seen = [...seen, v];
+  }
+  if (v instanceof Set) return [...v].map((x) => redactValue(x, '', seen));
+  if (v instanceof Map) v = Object.fromEntries([...v].map(([k, x]) => [String(k), x]));
+  if (Array.isArray(v)) return v.map((x) => redactValue(x, '', seen));
   if (typeof v === 'string') return redact(v);
   if (typeof v === 'number' || typeof v === 'boolean') return v;
   if (typeof v === 'bigint') return v;
   if (v instanceof Date) return v.toISOString();
   if (typeof v === 'object') {
     const out: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = redactValue(x, k);
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = redactValue(x, k, seen);
     return out;
   }
   return redact(String(v));

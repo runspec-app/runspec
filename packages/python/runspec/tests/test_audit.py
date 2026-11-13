@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 import sys
@@ -168,6 +169,15 @@ class TestAudit:
         rec = runspec.audit("deploy.start", target={"host": "web-1", "token": "abc"}, detail={"note": "password=hunter2"})
         assert rec["target"]["token"] == "[REDACTED]"
         assert "hunter2" not in rec["detail"]["note"]
+
+    def test_detail_values_json_cannot_hold(self, tmp_path):
+        class Stage(enum.Enum):
+            DONE = "done"
+
+        rec = runspec.audit("deploy.finish", "ok", target={"path": Path("/srv/app")}, detail={"stage": Stage.DONE, Stage.DONE: 1})
+        assert rec["target"]["path"] == str(Path("/srv/app"))
+        assert rec["detail"] == {"stage": "done", "done": 1}
+        assert auditlog.verify(_ledger(tmp_path))["ok"]
 
     def test_bad_event_name_raises(self):
         with pytest.raises(ValueError):

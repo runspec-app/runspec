@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 import logging.handlers
@@ -548,6 +549,34 @@ class TestExtraFields:
         log_path = tmp_path / "logs" / "myscript.log"
         record = json.loads(log_path.read_text().strip())
         assert record["extra"]["items"] == 99
+
+    def test_extra_values_json_cannot_hold_are_still_logged(self, tmp_path, capsys):
+        # An SDK logging every event with extra={"event_type": <Enum>} used to
+        # lose each record ("Object of type … is not JSON serializable").
+        class EventType(enum.Enum):
+            SESSION_IDLE = "session.idle"
+
+        configure_logging(_cfg(), runnable_name="myscript")
+        logging.getLogger("test").info(
+            "event",
+            extra={"event_type": EventType.SESSION_IDLE, "path": Path("/tmp/x"), "tags": {"a"}, "by_type": {EventType.SESSION_IDLE: 1}},
+        )
+        err = capsys.readouterr().err
+        assert "Logging error" not in err
+        record = json.loads((tmp_path / "logs" / "myscript.log").read_text().strip())
+        assert record["message"] == "event"
+        assert record["extra"]["event_type"] == "session.idle"
+        assert record["extra"]["path"] == str(Path("/tmp/x"))
+        assert record["extra"]["tags"] == ["a"]
+        assert record["extra"]["by_type"] == {"session.idle": 1}
+
+    def test_enum_extra_shown_by_value_on_console(self, capsys):
+        class EventType(enum.Enum):
+            SESSION_IDLE = "session.idle"
+
+        configure_logging(_cfg(), runnable_name="myscript")
+        logging.getLogger("test").info("event", extra={"event_type": EventType.SESSION_IDLE})
+        assert "event_type=session.idle" in capsys.readouterr().out
 
 
 # ── TestRunSpecPrefix ─────────────────────────────────────────────────────────
