@@ -43,6 +43,7 @@ html, body, #root {
   --rs-scroll-thumb-hover: #5f6b74;
   /* Muted-text hierarchy — keep in sync with ThemeContext.tsx (App.tsx
      re-stamps these on theme change; the values here cover first paint). */
+  --rs-text: #e8ebef;
   --rs-text-secondary: #c3ccd2;
   --rs-text-muted: #a9b3ba;
   --rs-text-faint: #8a959d;
@@ -66,6 +67,7 @@ html, body, #root {
   --rs-motion: 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 html[data-theme='light'] {
+  --rs-text: #1b2126;
   --rs-hover: rgba(20, 30, 40, 0.05);
   --rs-scroll-thumb: #adb4ba;
   --rs-scroll-thumb-hover: #969ea5;
@@ -85,6 +87,11 @@ html[data-theme='light'] {
 }
 
 body {
+  /* Themed text and surface on the page itself, so anything that renders
+     outside a styled container (a portal, a stray text node) is readable in
+     both themes instead of the browser's black on white. */
+  color: var(--rs-text);
+  background: var(--rs-surface-base);
   /* Inter renders best with these; harmless on the fallback stack. */
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;

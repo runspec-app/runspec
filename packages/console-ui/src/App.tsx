@@ -1000,6 +1000,7 @@ export default function App() {
     document.documentElement.style.setProperty('--rs-warn', statusText(isDark).warn)
     // Mirror the muted-text tokens as CSS vars for call sites without isDark
     // in scope (inline `var(--rs-text-*)` styles) — same source of truth.
+    document.documentElement.style.setProperty('--rs-text', textColor(isDark))
     document.documentElement.style.setProperty('--rs-text-secondary', textSecondary(isDark))
     document.documentElement.style.setProperty('--rs-text-muted', textMuted(isDark))
     document.documentElement.style.setProperty('--rs-text-faint', textFaint(isDark))

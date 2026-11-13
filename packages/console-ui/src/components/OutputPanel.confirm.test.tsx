@@ -539,6 +539,22 @@ describe('approvals in other chats', () => {
   })
 })
 
+describe('approval card text', () => {
+  it('shows no stray code comment, read-only or while editing', async () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('create_document')]} />)
+    fireConfirm({
+      id: 'chat1', request_id: 'req-txt', tool_name: 'create_document',
+      tool_input: { filename: 'note.md', dest: 'local' }, display_name: 'create_document',
+      display_input: { filename: 'note.md', dest: 'local' }, confirm_verb: 'create', autonomy: 'confirm',
+    })
+    const card = () => document.querySelector('[data-rs-confirm-gate]')!.textContent ?? ''
+    expect(card()).toContain('note.md')
+    expect(card()).not.toMatch(/\/\/|\/\*/)
+    await userEvent.click(screen.getByRole('button', { name: /edit arguments/i }))
+    expect(card()).not.toMatch(/\/\/|\/\*/)
+  })
+})
+
 describe('approval consequence line', () => {
   it('shows what the runnable does, an as-root marker and the group size', () => {
     const info = { describe: (n: string) => (n === 'restart-service' ? 'Restart a systemd service.' : undefined), groupSize: (g: string) => (g === 'prod-web' ? 12 : 0) }
