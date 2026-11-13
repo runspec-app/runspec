@@ -295,3 +295,62 @@ def test_fill_missing_reaches_collection_entries():
         [["*", "room_user"]],
         fill_missing=True,
     ) == {"host": [{"name": "web1", "room_user": "seeded"}]}
+
+
+# ── [llm] provider settings follow the operator's provider ──────────────────
+
+
+def _seed_llm():
+    return {
+        "llm": {
+            "provider": "mycorp",
+            "model": "corp-large",
+            "base_url": "u2",
+            "effort": "low",
+            "saved_providers": {"copilot": {"models": ["a", "b"]}},
+        }
+    }
+
+
+def test_rehome_llm_moves_settings_to_the_local_provider():
+    local = {"llm": {"provider": "copilot", "models": ["a"]}}
+    out = cm.rehome_llm(local, _seed_llm(), [["llm", "provider"]])
+    assert out["llm"] == {
+        "provider": "copilot",
+        "models": ["a", "b"],
+        "effort": "low",  # console-wide keys stay at the top level
+        "saved_providers": {"mycorp": {"model": "corp-large", "base_url": "u2"}},
+    }
+
+
+def test_rehome_llm_only_when_the_provider_is_preserved_and_differs():
+    seed = _seed_llm()
+    local = {"llm": {"provider": "copilot"}}
+    assert cm.rehome_llm(local, seed, []) is seed  # provider not preserved
+    assert cm.rehome_llm(local, seed, [["llm"]]) is seed  # whole table preserved
+    same = {"llm": {"provider": "mycorp"}}
+    assert cm.rehome_llm(same, seed, [["llm", "provider"]]) is seed
+    fresh: dict = {}
+    assert cm.rehome_llm(fresh, seed, [["llm", "provider"]]) is seed
+
+
+def test_rehome_llm_runs_in_the_config_merge():
+    local = {"llm": {"provider": "copilot", "model": "gpt-5"}}
+    merged = cm.merged_native("config.toml", local, _seed_llm(), [["llm", "provider"]])
+    assert merged["llm"]["provider"] == "copilot"
+    assert merged["llm"]["model"] == "gpt-5"
+    assert "base_url" not in merged["llm"]
+
+
+def test_llm_shared_keys_match_the_settings_ui():
+    import re
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[3]
+        / "console-ui/src/components/llmProviders.ts"
+    ).read_text(encoding="utf-8")
+    block = re.search(r"const SHARED_KEYS = new Set\(\[(.*?)\]\)", src, re.S)
+    assert block, "SHARED_KEYS not found in llmProviders.ts"
+    names = set(re.findall(r"'([a-z_]+)'", block.group(1)))
+    assert names | {cm.LLM_SAVED_PROVIDERS} == set(cm.LLM_SHARED_KEYS)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runspec-console"
-version = "0.424.0"
+version = "0.425.0"
 requires-python = ">=3.11"
 description = "Desktop console for runspec runnables: run, schedule and monitor them locally and across an SSH fleet, with an optional AI agent"
 readme = "README.md"

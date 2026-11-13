@@ -45,7 +45,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from . import logging_setup
+from . import jsonsafe, logging_setup
 
 __all__ = ["AuditError", "audit", "verify", "read_ledger", "ledger_path", "LEDGER_NAME", "GENESIS"]
 
@@ -240,14 +240,23 @@ def _redact(obj: Any, key: str = "") -> Any:
     if key and logging_setup._SENSITIVE_KEYS.match(key):
         return "[REDACTED]"
     if isinstance(obj, Mapping):
-        return {str(k): _redact(v, str(k)) for k, v in obj.items()}
+        return {_key_text(k): _redact(v, _key_text(k)) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_redact(v) for v in obj]
     if isinstance(obj, str):
         return logging_setup._redact_value("", obj)
     if obj is None or isinstance(obj, (bool, int, float)):
         return obj
-    return logging_setup._redact_value("", str(obj))
+    # An enum → its value, a path/datetime → text, a set → a list (jsonsafe).
+    value = jsonsafe.default(obj)
+    if isinstance(value, str):
+        return logging_setup._redact_value("", value)
+    return _redact(value)
+
+
+def _key_text(key: Any) -> str:
+    value = jsonsafe.default(key) if not isinstance(key, str) else key
+    return value if isinstance(value, str) else str(value)
 
 
 def _build_record(event: str, outcome: str, target: Mapping[str, Any] | None, detail: Mapping[str, Any] | None, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -272,7 +281,7 @@ def _build_record(event: str, outcome: str, target: Mapping[str, Any] | None, de
         "detail": _redact(dict(detail or {})),
     }
     # Normalise through JSON once so the hash is computed over exactly what's stored.
-    out: dict[str, Any] = json.loads(json.dumps(rec, default=str))
+    out: dict[str, Any] = json.loads(jsonsafe.dumps(rec))
     return out
 
 

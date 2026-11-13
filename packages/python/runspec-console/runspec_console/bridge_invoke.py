@@ -1092,6 +1092,7 @@ class InvokeMixin:
         usage: dict[str, int],
         model: str,
         reply_thinking: dict[str, Any] | None = None,
+        billing: dict[str, float] | None = None,
     ) -> None:
         """Append a completed chat exchange to the session's saved conversation
         (its id — an interactive session *is* its conversation).
@@ -1104,7 +1105,7 @@ class InvokeMixin:
                 return
             from . import conversations as conv
 
-            turn = {
+            turn: dict[str, Any] = {
                 "user": user,
                 "assistant": assistant,
                 "tools": tools,
@@ -1116,6 +1117,9 @@ class InvokeMixin:
             # their own on each tools[] entry). Display-only: never replayed.
             if reply_thinking:
                 turn["reply_thinking"] = reply_thinking
+            # Provider-billed units (Copilot AI credits / premium requests).
+            if billing:
+                turn["billing"] = {k: round(float(v), 6) for k, v in billing.items()}
             directory = config_mod.conversations_dir()
             provider = str(self.get_config().get("llm", {}).get("provider", ""))
             with self._conv_store_lock:

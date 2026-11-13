@@ -185,6 +185,8 @@ Tests patch `runspec.terminal.stdout_is_terminal`. See the add-runnable skill �
 `[config.logging]` (0.10.0+): `logger = logging.getLogger(__name__)` just works.
 Extra fields (0.11.0): `logger.info('msg', extra={'user_id': '42'})` — standard stdlib
 `extra=` API; fields appear nested under `"extra"` in JSON, appended as `{key=value}` on console.
+Values JSON can't hold (enum → `.value`, Path, datetime, set, bad keys, loops) go through
+`runspec/jsonsafe.py` (0.84.1) — never plain `json.dumps` on log/audit values.
 Console routing (0.12.0): INFO → stdout (plain message, reads like `print()`);
 WARNING+ → stderr with level prefix. Same in CLI and agent mode — in agent
 mode `runspec serve` captures stdout as the MCP tool response, so `logger.info`

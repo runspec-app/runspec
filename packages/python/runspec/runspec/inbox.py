@@ -36,6 +36,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO, Any
 
+from . import jsonsafe
+
 INBOX = "inbox"
 NO_INBOX_MARKER = ".no-inbox"
 SWEEP_LOCK = ".sweep.lock"
@@ -307,7 +309,7 @@ class InboxRun:
 
     def write_record(self, record: dict[str, Any]) -> None:
         with contextlib.suppress(Exception):
-            self.stream.write(json.dumps(record, default=str) + "\n")
+            self.stream.write(jsonsafe.dumps(record) + "\n")
             self.stream.flush()
 
     def handler(self) -> HeldFileHandler:

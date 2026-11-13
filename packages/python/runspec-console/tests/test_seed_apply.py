@@ -435,3 +435,50 @@ def test_seed_preserved_key_unset_locally_takes_the_seed_value(monkeypatch, tmp_
     llm = cfg.read_config()["llm"]
     assert llm["provider"] == "mycorp"  # unset locally -> seed fills it
     assert llm["model"] == "corp-large"  # not preserved -> re-asserted
+
+
+def test_seed_llm_updates_follow_the_operators_provider(monkeypatch, tmp_path):
+    # Preserve only llm.provider: the operator's provider choice holds, and the
+    # seed's provider settings keep updating - each under the provider it
+    # belongs to - on fresh *and* existing installs.
+    def seed(version: str, url: str, models: str) -> dict:
+        body = (
+            b'[config_sync]\npreserve = ["config.toml:llm.provider"]\n'
+            b'[llm]\nprovider = "mycorp"\nmodel = "corp-large"\n'
+            + f'base_url = "{url}"\n'.encode()
+            + b"[llm.saved_providers.copilot]\n"
+            + b'cli_path = "%APPDATA%\\\\npm\\\\copilot.cmd"\n'
+            + f"models = {models}\n".encode()
+        )
+        _wire(
+            monkeypatch, tmp_path, {"config.toml": [body]}, {"mycorp-console": version}
+        )
+
+    seed("1.0.0", "https://llm.corp/v1", '["gpt-5"]')
+    b = _SeedBridge()
+    b.seed_apply()
+    llm = cfg.read_config()["llm"]
+    assert llm["provider"] == "mycorp"  # fresh install: the seed's provider
+    assert llm["saved_providers"]["copilot"]["models"] == ["gpt-5"]
+
+    # The operator switches to Copilot in Settings (the dropdown parks mycorp).
+    local = cfg.read_config()
+    local["llm"] = {
+        "provider": "copilot",
+        "model": "gpt-5",
+        "cli_path": "%APPDATA%\\npm\\copilot.cmd",
+        "models": ["gpt-5"],
+        "saved_providers": {
+            "mycorp": {"model": "corp-large", "base_url": "https://llm.corp/v1"}
+        },
+    }
+    cfg.write_config(local)
+
+    seed("1.1.0", "https://llm.corp/v2", '["gpt-5", "claude-x"]')
+    b.seed_apply()
+    llm = cfg.read_config()["llm"]
+    assert llm["provider"] == "copilot"  # the operator's choice holds
+    assert llm["models"] == ["gpt-5", "claude-x"]  # new Copilot model list arrives
+    assert "base_url" not in llm  # mycorp's settings don't leak into Copilot's
+    assert llm["saved_providers"]["mycorp"]["base_url"] == "https://llm.corp/v2"
+    assert "copilot" not in llm["saved_providers"]
