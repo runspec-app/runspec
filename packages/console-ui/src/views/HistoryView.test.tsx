@@ -6,7 +6,7 @@
  * run's log lines on demand when its row is expanded.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { HistoryView, accountNote, agoLabel, hiddenSummary, integrityBadge, parseHistorySearch, syncNote } from './HistoryView'
@@ -316,6 +316,18 @@ describe('HistoryView', () => {
     render(<HistoryView {...PROPS} />)
     await screen.findByText('backup')
     expect(screen.queryAllByText('Label')).toHaveLength(0)
+  })
+
+  it('opens a run from the keyboard: Enter on its row expands it', async () => {
+    getHistorySlim.mockResolvedValue([rec({ logFile: 'backup.x.run-1.log' })])
+    getRunDetail.mockResolvedValue({ logLines: [{ ts: '2026-06-03T14:22:05+00:00', level: 'INFO', message: 'keyboard line' }] })
+    render(<HistoryView {...PROPS} onRerun={() => {}} />)
+    const cell = await screen.findByText('backup')
+    const row = cell.closest('tr')!
+    expect(row.getAttribute('tabindex')).toBe('0')
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => { fireEvent.keyDown(row, { key: 'Enter' }) })
+    expect(await screen.findByText('keyboard line')).toBeTruthy()
   })
 
   it('fetches and shows the run log lines on demand when a row is expanded', async () => {

@@ -281,8 +281,10 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
 }
 
 /* Schedules tab — dim a disabled (paused) schedule row so it reads as inactive. */
+/* A paused schedule reads quieter through the muted text token, not opacity:
+   fading a row to 55% took its text (and its status tags) under 3:1. */
 .rs-schedule-disabled td {
-  opacity: 0.55;
+  color: var(--rs-text-muted);
 }
 .rs-schedule-disabled td:first-child,
 .rs-schedule-disabled td:last-child {
@@ -338,3 +340,18 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
 .rs-scope-card { transition: background var(--rs-motion), border-color var(--rs-motion); }
 .rs-scope-card[aria-checked='false']:hover { background: var(--rs-hover) !important; border-color: var(--rs-accent) !important; }
 .rs-scope-card:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 2px; }
+
+/* Rows and cards made pressable (kit.pressable) show where keyboard focus is. */
+.rs-host-row:focus-visible,
+.rs-group-header:focus-visible,
+[role='button'][tabindex='0']:focus-visible {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: -2px;
+}
+
+/* A ghost primary button paints its text and border in the raw brand colour;
+   a deep brand on a dark surface fell to 1.4:1. Use the readable accent. */
+.ant-btn-primary.ant-btn-background-ghost:not(:disabled) {
+  color: var(--rs-accent);
+  border-color: var(--rs-accent);
+}

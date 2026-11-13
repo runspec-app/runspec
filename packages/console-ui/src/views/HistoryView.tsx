@@ -1,3 +1,4 @@
+import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Table, Tag, Typography, Tooltip, message, Input, Drawer, Spin, Alert, Segmented, Switch } from 'antd'
 import { RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined, PlayCircleOutlined } from '@ant-design/icons'
@@ -818,7 +819,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   return (
     <div>
       <OnceHint id="history.rows">
-        Click a run to see its arguments and log, and to rerun it. In the search, <span style={{ fontFamily: MONO_FONT }}>-name</span> leaves a runnable out.
+        Open a run (its arrow, or Enter on the row) to see its arguments and log, and to rerun it. In the search, <span style={{ fontFamily: MONO_FONT }}>-name</span> leaves a runnable out.
       </OnceHint>
       <PageToolbar>
         <Input
@@ -932,6 +933,22 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         }}
         pagination={{ pageSize: 50, showSizeChanger: true }}
         onChange={(_, filters) => setColFilters(filters)}
+        // Each run row is a keyboard stop: Enter or Space opens and closes it,
+        // the same as its arrow.
+        onRow={(record) => {
+          const key = rowKeyOf(record)
+          const open = expandedKeys.includes(key)
+          return {
+            tabIndex: 0,
+            'aria-expanded': open,
+            onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+              if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+              e.preventDefault()
+              if (open) setExpandedKeys(keys => keys.filter(k => k !== key))
+              else { fetchDetail(record); setExpandedKeys(keys => [...keys, key]) }
+            },
+          } as React.HTMLAttributes<HTMLElement>
+        }}
         expandable={{
           expandedRowRender: (record) => {
             const key = rowKeyOf(record)

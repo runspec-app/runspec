@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { OutputPanel } from './OutputPanel'
+import { OutputPanel, approvalAnnouncement, type PendingConfirm } from './OutputPanel'
 import type { InvocationBlock } from './OutputPanel'
 
 // The real `bridge` is a Proxy that lazily waits for window.pywebview (2.5s
@@ -78,6 +78,27 @@ function fireResolved(detail: Record<string, unknown>) {
 describe('OutputPanel autonomy-gate confirm', () => {
   beforeEach(() => {
     resolveConfirm.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('tells screen readers a call is waiting, naming the tool and host, and labels each editable arg', () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    expect(screen.getByTestId('approval-announce').textContent).toBe('')
+    fireConfirm({
+      id: 'chat1', request_id: 'req-a11y', tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__drain-node' }, display_name: 'drain-node',
+      display_input: { host: 'web-01', node: 'n1' }, autonomy: 'confirm',
+    })
+    const live = screen.getByTestId('approval-announce')
+    expect(live.getAttribute('aria-live')).toBe('polite')
+    expect(live.textContent).toBe('Approval needed: drain-node on web-01')
+  })
+
+  it('approvalAnnouncement names the newest call and counts the rest', () => {
+    const pc = (name: string, since: number, host?: string): PendingConfirm => ({
+      request_id: name, id: name, tool_name: name, tool_input: host ? { host } : {}, since,
+    } as PendingConfirm)
+    expect(approvalAnnouncement([])).toBe('')
+    expect(approvalAnnouncement([pc('a', 1), pc('b', 5, 'db-1')])).toBe('Approval needed: b on db-1 (1 more waiting)')
   })
 
   it('renders Approve/Deny when the confirm matches the running tool segment', () => {

@@ -12,6 +12,7 @@ import {
   ApiOutlined, DownOutlined, RightOutlined, VerticalAlignBottomOutlined,
   TableOutlined, CodeOutlined, PauseCircleOutlined, StopOutlined, EllipsisOutlined, BulbOutlined,
 } from '@ant-design/icons'
+import { pressable } from './kit'
 
 const { Text } = Typography
 
@@ -1061,6 +1062,17 @@ function ActivityIndicator({ block, pending, onClick }: { block: InvocationBlock
   )
 }
 
+/** What the approval live region says: the newest parked call, by name and
+ *  host, plus how many more are waiting. Empty when none are. Pure, for tests. */
+export function approvalAnnouncement(pending: PendingConfirm[]): string {
+  if (pending.length === 0) return ''
+  const latest = [...pending].sort((a, b) => (b.since ?? 0) - (a.since ?? 0))[0]
+  const name = (latest.display_name || latest.tool_name).replace(/^[^_]+__/, '')
+  const host = confirmHost(latest.display_input, latest.tool_input)
+  const more = pending.length > 1 ? ` (${pending.length - 1} more waiting)` : ''
+  return `Approval needed: ${name}${host ? ` on ${host}` : ''}${more}`
+}
+
 export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: OutputPanelProps) {
   const c = useCardTheme()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -1202,6 +1214,12 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext }: Outp
             />
           ))}
         </div>
+      </div>
+
+      {/* Screen readers hear when a call parks for approval (nothing else on
+          the page announces it): "Approval needed: flush-dns on web-01". */}
+      <div className="rs-visually-hidden" role="status" aria-live="polite" data-testid="approval-announce">
+        {approvalAnnouncement(Object.values(pendingConfirms))}
       </div>
 
       {/* Sticky activity indicator — pinned while a turn is in flight so the
@@ -1373,7 +1391,7 @@ function ToolCallBlock({
           cursor: canExpand ? 'pointer' : 'default',
           userSelect: 'none',
         }}
-        onClick={() => canExpand && setExpanded(x => !x)}
+        {...(canExpand ? pressable(() => setExpanded(x => !x), { expanded }) : {})}
       >
         {awaiting
           ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)', fontSize: 14 }} />
@@ -1451,21 +1469,17 @@ function ToolCallBlock({
         )}
         {!awaiting && !entry.running && (
           <Tooltip title="Copy this tool call and its output">
-            <CopyOutlined
+            <Button type="text" size="small" aria-label="Copy this tool call and its output" icon={<CopyOutlined style={{ fontSize: 13 }} />}
               onClick={(e) => { e.stopPropagation(); copyToClipboard(transcriptToText([{ kind: 'tool', entry }])) }}
-              style={{ color: c.dim, cursor: 'pointer', fontSize: 13, flexShrink: 0, marginLeft: 4 }}
-              onMouseEnter={ev => (ev.currentTarget.style.color = c.text)}
-              onMouseLeave={ev => (ev.currentTarget.style.color = c.dim)}
+              style={{ color: c.dim, flexShrink: 0, marginLeft: 2, height: 22, width: 22, minWidth: 22 }}
             />
           </Tooltip>
         )}
         {rerun && (
           <Tooltip title="Edit in a form & rerun — opens the run dialog pre-filled with these values">
-            <EditOutlined
+            <Button type="text" size="small" aria-label="Edit in a form and rerun" icon={<EditOutlined style={{ fontSize: 13 }} />}
               onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('runspec:edit_in_form', { detail: rerun })) }}
-              style={{ color: c.dim, cursor: 'pointer', fontSize: 13, flexShrink: 0, marginLeft: 4 }}
-              onMouseEnter={ev => (ev.currentTarget.style.color = c.text)}
-              onMouseLeave={ev => (ev.currentTarget.style.color = c.dim)}
+              style={{ color: c.dim, flexShrink: 0, marginLeft: 2, height: 22, width: 22, minWidth: 22 }}
             />
           </Tooltip>
         )}
@@ -1505,6 +1519,7 @@ function ToolCallBlock({
                     <Text code style={{ fontSize: 12, flexShrink: 0, minWidth: 90, marginTop: multiline ? 4 : 0 }}>{k}</Text>
                     {multiline ? (
                       <Input.TextArea
+                        aria-label={k}
                         size="small"
                         value={val}
                         autoSize={{ minRows: 2, maxRows: 20 }}
@@ -1513,6 +1528,7 @@ function ToolCallBlock({
                       />
                     ) : (
                       <Input
+                        aria-label={k}
                         size="small"
                         value={val}
                         onChange={e => setEdits(prev => ({ ...(prev ?? {}), [k]: e.target.value }))}

@@ -15,7 +15,7 @@ import type { MenuProps } from 'antd'
 import { CloseOutlined, EllipsisOutlined, InfoCircleOutlined } from '@ant-design/icons'
 
 import {
-  dangerColors, statusText, textMuted, textSecondary, useAccent, useIsDark, withAlpha, MONO_FONT, RADIUS,
+  dangerColors, statusText, textColor, textMuted, textSecondary, useAccent, useIsDark, withAlpha, MONO_FONT, RADIUS,
 } from '../ThemeContext'
 
 const { Text } = Typography
@@ -96,6 +96,27 @@ export function StatusTag({ tone, children, tip, icon, mono, style, testId, onCl
     </span>
   )
   return tip ? <Tooltip title={tip}>{tag}</Tooltip> : tag
+}
+
+// ── pressable ────────────────────────────────────────────────────────────────
+
+/** Props that make a clickable row or card (a <div> laid out like one) a
+ *  button to the keyboard and screen readers: focusable, Enter/Space activate.
+ *  Spread onto the element: `<div {...pressable(() => open(x))}>`. */
+export function pressable(onActivate: () => void, opts: { label?: string; expanded?: boolean; current?: boolean } = {}) {
+  return {
+    role: 'button' as const,
+    tabIndex: 0,
+    'aria-label': opts.label,
+    'aria-expanded': opts.expanded,
+    'aria-current': opts.current ? ('true' as const) : undefined,
+    onClick: onActivate,
+    onKeyDown: (e: { key: string; target: EventTarget; currentTarget: EventTarget; preventDefault: () => void }) => {
+      // Only the element itself: Enter in a nested input or button keeps its own meaning.
+      if (e.target !== e.currentTarget) return
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate() }
+    },
+  }
 }
 
 // ── IconAction ───────────────────────────────────────────────────────────────
@@ -220,7 +241,7 @@ export function PageHeader({ title, description, actions, style }: {
   return (
     <div data-testid="page-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12, ...style }}>
       <div style={{ minWidth: 0, flex: 1 }}>
-        <h2 style={{ margin: 0, fontSize: 18, lineHeight: '26px', fontWeight: 600, color: 'inherit' }}>{title}</h2>
+        <h2 style={{ margin: 0, fontSize: 18, lineHeight: '26px', fontWeight: 600, color: textColor(isDark) }}>{title}</h2>
         {description && <div style={{ marginTop: 2, fontSize: 13, color: textSecondary(isDark) }}>{description}</div>}
       </div>
       {actions && <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>{actions}</div>}
