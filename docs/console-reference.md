@@ -76,7 +76,7 @@ Set in **Settings → Model / API**.
 | `tool_index` | Search mode only: fold the always-on one-line-per-runnable catalogue menu into the prompt (default **true**). `false` ⇒ the agent discovers purely via `search_runnables` |
 | `tool_index_limit` | Search mode only: max runnables listed in the catalogue menu (default **300**; `0` = no limit). Beyond it the agent still finds runnables via `search_runnables`; the console logs the overflow and the context gauge shows *N beyond menu*. To *reduce* the surface instead, hide runnables via `[tool_visibility] hidden_from_agent` |
 | `tool_output_cap` | Truncation cap for tool results returned to the model |
-| `cli_path` | **`copilot` provider only.** A Copilot CLI runtime to use instead of the one the SDK downloads on first use (machines that can't reach GitHub releases) |
+| `cli_path` | **`copilot` provider only.** A Copilot CLI runtime to use instead of the one the SDK downloads on first use (machines that can't reach GitHub releases). `%VAR%`, `$VAR` and `~` are expanded, so one seeded value works on every machine; an npm install can be named by its folder or its `copilot.cmd` shim (see [below](#llm-copilot)) |
 | `saved_providers` | Written by Settings: the settings of providers you switched away from, one table per provider (see [below](#llm-saved-providers)). The console never reads it at run time |
 
 Bedrock adds the standard AWS credential chain (`aws_region`,
@@ -106,7 +106,17 @@ pip install "runspec-console[copilot]"
   multiplier). Tool steps inside the turn don't add requests.
 - **The runtime.** The SDK runs the Copilot CLI runtime (about 180 MB), which it
   downloads from GitHub on first use. On a machine that can't, install the
-  Copilot CLI another way and point `cli_path` at it.
+  Copilot CLI another way and point `cli_path` at it. For an npm install
+  (`npm install -g @github/copilot`) on Windows use
+  `cli_path = "%APPDATA%\\npm\\copilot.cmd"` (or just `%APPDATA%\\npm`): the
+  console starts the package's own script with `node`, not the `.cmd` shim.
+  Variables are expanded on each machine, so the same value can ship in a
+  config seed.
+- **Proxy.** The runtime goes through the console's [`[http]`](#http) proxy:
+  a proxy URL (with its credential and `no_proxy`) is passed to it as
+  `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`, `direct` clears any inherited
+  proxy variables, and the default leaves the machine's own. Changing the
+  proxy starts a new runtime on the next chat turn.
 - **What Copilot can do.** Only what the console offers: each Copilot session
   gets the console's tools and system prompt, and none of Copilot's own shell,
   file or web tools, repo instructions, skills or memory. When Copilot asks for
@@ -141,6 +151,25 @@ model           = "corp-large"
 
 The system prompt, tool mode, `effort`, `max_tokens` and the other console-wide
 settings are shared by every provider.
+
+**From a config seed.** A seed that ships `[llm]` re-applies it on every package
+upgrade, which undoes a provider the operator picked. Preserve it in the seed:
+
+```toml
+# config_seed/config.toml
+[config_sync]
+preserve = ["config.toml:llm"]
+
+[llm]
+provider = "mycorp"
+```
+
+For the seed, a preserved key the machine doesn't have yet is filled from the
+seed, so a fresh install still gets the seed's `[llm]`; after that the
+operator's `[llm]` (including `saved_providers`) is kept on upgrades. Preserve
+narrower paths (`config.toml:llm.provider`, `config.toml:llm.model`, …) to keep
+re-applying the rest. A git Config Sync pull doesn't fill: there a preserved key
+stays unset until the operator sets it.
 
 ### `effort` — how hard the model thinks {#llm-effort}
 
@@ -420,7 +449,8 @@ Settings for the agent's read-only `fetch_url` web-page tool (see
 The HTTP proxy the console uses for its own web requests: the agent's
 `fetch_url`, Marketplace index reads, the Phoenix eval export, the sandbox's
 WASI download, MCP servers over http/sse (unless the server sets its own
-`proxy`), the model API (Anthropic, Bedrock, LangServe) and OTLP telemetry
+`proxy`), the model API (Anthropic, Bedrock, LangServe), the GitHub Copilot
+runtime (as `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`) and OTLP telemetry
 export. SSH uses `[ssh] proxy`; Config Sync has its own. Edit it in
 **Settings → Network**, which can also test a URL before you save.
 

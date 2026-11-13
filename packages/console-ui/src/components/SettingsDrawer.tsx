@@ -784,9 +784,9 @@ export function LlmTab() {
                         <Form.Item
                           name="cli_path"
                           label="Copilot runtime path"
-                          help="Optional. Use this Copilot CLI runtime instead of downloading one (for machines that can't reach GitHub releases). Blank = download on first use."
+                          help="Optional. Use this Copilot CLI instead of downloading one. %APPDATA%, $HOME and ~ are expanded, and an npm install works (its folder or copilot.cmd). Blank = download on first use."
                         >
-                          <Input placeholder="path to copilot.exe or copilot" style={{ fontFamily: MONO_FONT }} />
+                          <Input placeholder="%APPDATA%\npm\copilot.cmd" style={{ fontFamily: MONO_FONT }} />
                         </Form.Item>
                       )}
 
