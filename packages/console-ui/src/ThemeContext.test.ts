@@ -11,6 +11,7 @@ import {
   readableAccent, contrastRatio,
   surfaces, RADIUS, UI_FONT, MONO_FONT, FONT_SIZE, withAlpha, type Surfaces,
   textSecondary, textMuted, textFaint, textColor, DEFAULT_ACCENT,
+  statusText, dangerColors, approveColors, hueSat,
 } from './ThemeContext'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -224,5 +225,34 @@ describe('readableAccent()', () => {
   })
   it('passes through what it cannot parse', () => {
     expect(readableAccent('teal', true)).toBe('teal')
+  })
+})
+
+describe('status, danger and approve colours', () => {
+  const levels = ['sunken', 'base', 'raised', 'overlay'] as const
+  for (const isDark of [true, false]) {
+    const theme = isDark ? 'dark' : 'light'
+    it(`status text reads at 4.5:1 on every ${theme} surface`, () => {
+      for (const [k, c] of Object.entries(statusText(isDark)))
+        for (const lvl of levels) expect(contrastRatio(c, surfaces(isDark)[lvl]), `${k} ${c} on ${lvl}`).toBeGreaterThanOrEqual(4.5)
+    })
+    for (const accent of [undefined, '#0b7a6e', '#9b031a', '#e11d48']) {
+      it(`danger for ${accent ?? 'no brand'} reads on every ${theme} surface and on its fill`, () => {
+        const d = dangerColors(accent, isDark)
+        for (const lvl of levels) expect(contrastRatio(d.text, surfaces(isDark)[lvl])).toBeGreaterThanOrEqual(4.5)
+        expect(contrastRatio(d.onFill, d.text)).toBeGreaterThanOrEqual(4.5)
+      })
+    }
+    it(`Approve text reads on its ${theme} fill`, () => {
+      const a = approveColors(isDark)
+      expect(contrastRatio(a.text, a.bg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(a.text, a.hover)).toBeGreaterThanOrEqual(4.5)
+    })
+  }
+  it('moves danger off red when the brand is red, and only then', () => {
+    expect(dangerColors(undefined, true).text).toBe(dangerColors('#0b7a6e', true).text)
+    expect(dangerColors('#9b031a', true).text).not.toBe(dangerColors(undefined, true).text)
+    expect(dangerColors('#9b031a', false).text).not.toBe(dangerColors(undefined, false).text)
+    expect(hueSat(dangerColors('#9b031a', true).text).hue).toBeGreaterThan(300)
   })
 })

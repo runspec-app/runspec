@@ -1,7 +1,7 @@
 import { Collapse } from 'antd'
 import { BellOutlined } from '@ant-design/icons'
 import { type TriggerEvent } from '../bridge'
-import { useIsDark, textMuted, MONO_FONT, RADIUS } from '../ThemeContext'
+import { useIsDark, textMuted, statusText, MONO_FONT, RADIUS } from '../ThemeContext'
 import { COLUMN_COLOR, fmtTime } from './runShared'
 
 // The event-audit feed: every event seen + its disposition (fired / skipped,
@@ -13,9 +13,11 @@ import { COLUMN_COLOR, fmtTime } from './runShared'
 // reason (skip_reasons; older records without it fall back to "working hours",
 // which was the only skip reason before lock auto-suspend), and once_per_thread
 // repeats (deduped) read as "already handled".
-export function disposition(ev: TriggerEvent, dim: string): { color: string; text: string } {
+// A fired event reads in the ok colour; a skip is muted, not orange: the rota,
+// the lock gate and once-per-thread are doing their job, nothing needs you.
+export function disposition(ev: TriggerEvent, dim: string, ok: string = COLUMN_COLOR.done): { color: string; text: string } {
   if (ev.matched.length > 0) {
-    return { color: COLUMN_COLOR.done, text: `fired: ${ev.matched.join(', ')}` }
+    return { color: ok, text: `fired: ${ev.matched.join(', ')}` }
   }
   const byReason: Record<string, string[]> = {}
   for (const name of ev.skipped) {
@@ -29,7 +31,7 @@ export function disposition(ev: TriggerEvent, dim: string): { color: string; tex
     groups.push(`skipped (already handled): ${ev.deduped.join(', ')}`)
   }
   if (groups.length > 0) {
-    return { color: COLUMN_COLOR.awaiting_human, text: groups.join('  ·  ') }
+    return { color: dim, text: groups.join('  ·  ') }
   }
   return { color: dim, text: 'no match' }
 }
@@ -62,7 +64,7 @@ export function EventLog({
         ) : (
           <div style={{ maxHeight: 360, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: RADIUS.sm }}>
             {events.map((ev, i) => {
-              const disp = disposition(ev, dim)
+              const disp = disposition(ev, dim, statusText(isDark).ok)
               return (
                 <div
                   key={ev.id || i}

@@ -315,7 +315,7 @@ install, pixel-identical.
 | Key | Accepts | Effect |
 |---|---|---|
 | `brand_name` | text | Sidebar title (unset ⇒ "runspec"). The window title is separate — the prettified package name (§1) |
-| `accent_color` | `#rgb` / `#rrggbb` | UI primary colour **and** the generated app icon. Buttons and fills use it as given; where it is text (links, the active tab, the sidebar title) it is lightened on the dark theme, or darkened on the light one, just enough to read at 4.5:1, so a deep brand colour stays legible |
+| `accent_color` | `#rgb` / `#rrggbb` | UI primary colour **and** the generated app icon. Buttons and fills use it as given; where it is text (links, the active tab, the sidebar title) it is lightened on the dark theme, or darkened on the light one, just enough to read at 4.5:1, so a deep brand colour stays legible. When the accent is itself a red, danger buttons (Stop, Delete, Uninstall) turn magenta so a primary and a destructive button never share a colour; the Approve button on a confirmation card is always green |
 | `icon` | file path or `pkg:<module>:<relpath>` | Explicit `.ico`/`.png` app icon (bundle it as package data with the `pkg:` form) |
 | `title_bar_color` | hex | Native Windows 11 caption tint — independent of `accent_color`, so a blue-accent UI can carry a red title bar. Unset leaves the system title bar; Windows 10 and other platforms keep the system title bar too |
 

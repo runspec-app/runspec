@@ -449,4 +449,27 @@ describe('OutputPanel autonomy-gate confirm', () => {
     await userEvent.click(screen.getByRole('button', { name: /approve & run/i }))
     expect(resolveConfirm).toHaveBeenCalledWith('req-appr', true, undefined)
   })
+
+  it('says "Waiting for you", not "Running", while the gate is parked, and names the host', () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    // Before the gate: the tool is running.
+    expect(screen.getByTestId('activity-label').textContent).toBe('Running')
+    fireConfirm({
+      id: 'chat1',
+      request_id: 'req-wait',
+      tool_name: 'run_runnable',
+      tool_input: { id: 'fleet__drain-node', host: 'web-01' },
+      display_name: 'drain-node',
+      display_input: { node: 'n1' },
+      autonomy: 'confirm',
+    })
+    expect(screen.getByTestId('activity-label').textContent).toBe('Waiting for you')
+    expect(screen.getByTestId('card-waiting').textContent).toBe('waiting for you')
+    expect(screen.getByTestId('confirm-host').textContent).toBe('web-01')
+    // Deny is a neutral button, never the danger style.
+    expect(screen.getByRole('button', { name: /^deny$/i }).className).not.toMatch(/dangerous/)
+    // Answered: back to the running state.
+    fireResolved({ id: 'chat1', request_id: 'req-wait' })
+    expect(screen.getByTestId('activity-label').textContent).toBe('Running')
+  })
 })
