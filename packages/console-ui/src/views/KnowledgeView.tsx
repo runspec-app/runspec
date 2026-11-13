@@ -36,6 +36,7 @@ import { KnowledgeTools } from './KnowledgeTools'
 import { pageTargetFor } from './KnowledgeEdits'
 import type { SyncResult } from '../components/MemorySyncTab'
 import { When } from '../when'
+import { PageToolbar, SectionSwitch } from '../components/kit'
 
 const RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 days' },
@@ -245,15 +246,10 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
   const s = overview?.stats
 
   return (
-    <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, height: '100%', boxSizing: 'border-box' }}>
-      <Tabs
-        activeKey={tab}
-        onChange={k => setTab(k as 'tools' | 'inbox')}
-        items={[
-          { key: 'tools', label: 'Tools' },
-          { key: 'inbox', label: <Badge count={inboxCount} size="small" offset={[8, -2]}>Inbox</Badge> },
-        ]}
-        tabBarExtraContent={
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%', boxSizing: 'border-box' }}>
+      <PageToolbar
+        style={{ marginBottom: 0 }}
+        actions={
           <Space size={8}>
             <Tooltip title="Every fact drawn as a graph, with fact search and the facts pinned into the agent's context">
               <Button icon={<ApartmentOutlined />} onClick={() => showGraph()}>
@@ -263,8 +259,18 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
             <KnowledgeSync onOpenSettings={() => onOpenSettings?.('memorySync')} onResult={setSyncResult} />
           </Space>
         }
-        style={{ marginBottom: -8 }}
-      />
+      >
+        <SectionSwitch
+          style={{ marginBottom: 0 }}
+          label="Knowledge"
+          value={tab}
+          onChange={k => setTab(k as 'tools' | 'inbox')}
+          sections={[
+            { key: 'tools', label: 'Tools' },
+            { key: 'inbox', label: 'Inbox', count: inboxCount, countTone: 'waiting' },
+          ]}
+        />
+      </PageToolbar>
       <SyncResultBanner result={syncResult} onClose={() => setSyncResult(null)} />
 
       {tab === 'tools' ? (

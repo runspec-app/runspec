@@ -14,7 +14,7 @@ import {
 } from '../bridge'
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT } from '../ThemeContext'
-import { EmptyState, IconAction, PageHeader, RowActions, StatusTag, type RowAction } from '../components/kit'
+import { EmptyState, IconAction, PageToolbar, RowActions, StatusTag, type RowAction } from '../components/kit'
 import { RunsIndexModal, type RunsIndexTarget } from './RunsIndexModal'
 import { LogCleanupModal, type LogCleanupTarget } from './LogCleanupModal'
 import { When } from '../when'
@@ -496,16 +496,16 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
 
   return (
     <div>
-      <PageHeader
-        title={<>Log files <span style={{ fontFamily: MONO_FONT, fontWeight: 500, color: 'var(--rs-text-muted)' }}>{host}</span></>}
-        description="Each run's own log file, per venv: read them, compress old ones, delete the oldest."
+      <PageToolbar
         actions={<>
           <Tooltip title="Run analytics for this host — charts, success rate, durations and top runnables, scanned over the connection this tab just warmed">
             <Button size="small" icon={<BarChartOutlined />} onClick={() => (onOpenAnalytics ? onOpenAnalytics() : setAnalyticsOpen(true))}>Charts</Button>
           </Tooltip>
           <IconAction label="Refresh" tip="Read this host's logs again" icon={<ReloadOutlined spin={loading} />} onClick={refresh} />
         </>}
-      />
+      >
+        <Text style={{ color: 'var(--rs-text-secondary)' }}>Host <span style={{ fontFamily: MONO_FONT, fontWeight: 600 }}>{host}</span></Text>
+      </PageToolbar>
 
       {loading && venvs.length === 0 ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>

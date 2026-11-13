@@ -84,6 +84,13 @@ export function applySessionEvent(list: Session[], payload: SessionPayload): Ses
 /** The chip label for a run card. Rule trigger runs read as the target
  *  runnable (`/tool`); agent runs as "Trigger <name> · <event>"; a schedule
  *  fire as "<schedule> · <event_type>". Mirrors the Console block label. */
+/** When a run card started, "21:38" — what tells two runs of the same trigger apart. */
+function cardTime(card: TriggerCard): string {
+  if (!card.created_at) return ''
+  const d = new Date(card.created_at * 1000)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 export function cardLabel(card: TriggerCard, kind: 'trigger' | 'schedule'): string {
   if (kind === 'schedule') return `${card.trigger} · ${card.event_type}`
   const mode = String(card.detail?.mode ?? 'agent')
@@ -94,12 +101,25 @@ export function cardLabel(card: TriggerCard, kind: 'trigger' | 'schedule'): stri
   return `Trigger ${card.trigger} · ${card.event_type}`
 }
 
+/** A run card's session chip: what ran, when, and (for an agent trigger) what
+ *  it was about, so several runs of one trigger don't share a name:
+ *  "vip-outage-triage · 21:38 · Outage on web01". */
+export function chipLabel(card: TriggerCard, kind: 'trigger' | 'schedule'): string {
+  const parts = (...xs: string[]) => xs.filter(Boolean).join(' · ')
+  const at = cardTime(card)
+  if (kind === 'schedule') return parts(card.trigger, at)
+  const mode = String(card.detail?.mode ?? 'agent')
+  if (mode === 'rule') return parts(cardLabel(card, kind), at)
+  const about = (card.summary || '').trim() || card.event_type
+  return parts(card.trigger, at, about.length > 48 ? `${about.slice(0, 47)}…` : about)
+}
+
 /** The read-only session behind a trigger / schedule run card. */
 export function sessionFromCard(card: TriggerCard, kind: 'trigger' | 'schedule'): Session {
   return {
     id: card.card_id,
     kind,
-    label: cardLabel(card, kind),
+    label: chipLabel(card, kind),
     interactive: false,
     createdAt: (card.created_at || Date.now() / 1000) * 1000,
     state: TERMINAL_COLUMNS.has(card.column) ? 'done' : 'running',

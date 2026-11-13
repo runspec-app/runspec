@@ -30,7 +30,7 @@ interface SessionStripProps {
 
 // Ant's gold-6 — the semantic "needs attention" colour (same family as the
 // existing amber warning states), deliberately not the brand accent.
-const WAITING_COLOR = '#faad14'
+const WAITING_COLOR = 'var(--rs-waiting)'
 
 const KIND_ICON = {
   chat: MessageOutlined,
@@ -48,6 +48,15 @@ const STATUS_TIP: Record<SessionStatus, string> = {
 
 // Automation chips shown before the rest fold into the overflow menu.
 export const VISIBLE_AUTOMATION = 4
+
+/** A chip's text. An automation run whose label carries no time gets its
+ *  start time, so two runs of one trigger never read the same. */
+export function chipText(s: Session): string {
+  const base = s.label || (s.interactive ? 'New chat' : s.kind)
+  if (s.interactive || /\b\d\d:\d\d\b/.test(base) || !s.createdAt) return base
+  const d = new Date(s.createdAt)
+  return `${base} · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 /**
  * Split sessions into the chips shown inline and the overflow menu. Always
@@ -76,7 +85,10 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
   const accent = useAccent()
   const sf = surfaces(isDark)
   if (sessions.length === 0) return null
-  const { inline, overflow } = partitionSessions(sessions, statusOf, selectedId)
+  const parts = partitionSessions(sessions, statusOf, selectedId)
+  // A chip waiting for you comes first, so it's never the one scrolled away.
+  const inline = [...parts.inline.filter(s => statusOf(s) === 'waiting'), ...parts.inline.filter(s => statusOf(s) !== 'waiting')]
+  const overflow = parts.overflow
   const finishedOverflow = overflow.filter(s => {
     const st = statusOf(s)
     return st === 'idle' || st === 'done'
@@ -147,7 +159,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
         const finished = status === 'idle' || status === 'done'
         const muted = finished && !selected
         const labelColor = selected ? textColor(isDark) : muted ? textMuted(isDark) : textSecondary(isDark)
-        const label = s.label || (s.interactive ? 'New chat' : s.kind)
+        const label = chipText(s)
         const closeBtn = (
           <Button
             size="small" type="text"
@@ -195,9 +207,10 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
               <Spin size="small" indicator={<LoadingOutlined style={{ fontSize: 11, color: selected ? accent : labelColor }} spin />} />
             )}
             {status === 'waiting' && (
-              <Tooltip title={STATUS_TIP.waiting}>
-                <BellOutlined aria-label="waiting for input" style={{ fontSize: 12, color: WAITING_COLOR, flexShrink: 0 }} />
-              </Tooltip>
+              <span data-testid="chip-waiting" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: WAITING_COLOR, fontWeight: 600, flexShrink: 0 }}>
+                <BellOutlined aria-hidden style={{ fontSize: 12 }} />
+                waiting for you
+              </span>
             )}
             {s.unread && !selected && (
               <span aria-label="unread" style={{ width: 6, height: 6, borderRadius: 3, background: accent, flexShrink: 0 }} />

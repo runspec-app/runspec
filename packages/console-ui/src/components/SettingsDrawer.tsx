@@ -2073,17 +2073,14 @@ function AgentToolsTab() {
   return (
     <div style={{ maxWidth: 780 }}>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        Curate where each runnable is offered. <strong>Hide from agent</strong> removes it from the tool list that
-        connected callers receive, while keeping it runnable directly in the <strong>Forms</strong> tab.
-        <strong> Hide everywhere</strong> also removes it from Forms and from any published catalog. This keeps the offered
-        tool list focused and hides capabilities that can't work in this environment (e.g. Office 365 runnables where
-        Microsoft Graph is blocked).
+        Choose which runnables the assistant is offered (<strong>Hide from agent</strong>) and which are hidden everywhere.
       </Typography.Paragraph>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        This is <strong>curation, not a safety block</strong> — a hidden runnable is still installed and directly runnable
-        (that's what the Denylist is for). The two lists live in <code>config.toml</code>, so they ride
-        <strong> Config Sync</strong> and the config seed — a baseline can hide capabilities fleet-wide from one source.
-      </Typography.Paragraph>
+      <OnceHint id="settings.toolVisibility">
+        Hide from agent keeps a runnable in Forms; Hide everywhere also removes it from Forms and published catalogs.
+        Use it for runnables that can't work here (Office 365 where Graph is blocked). It's curation, not a safety
+        block: a hidden runnable can still be run directly (the Denylist stops runs). The lists live in config.toml,
+        so Config Sync and a config seed can apply them fleet-wide.
+      </OnceHint>
 
       <Space style={{ marginBottom: 8 }}>
         <Input
@@ -5605,13 +5602,16 @@ export function TelemetryTab() {
         <div>
           {ai && <Typography.Title level={5} style={{ marginTop: 0 }}>Traces</Typography.Title>}
           {ai ? (
-            <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-              Export a trace per agent turn — <strong>turn → LLM call → tool call</strong> — over
-              OpenTelemetry (OTLP) to any OTel backend (LangSmith, Langfuse, Phoenix, Jaeger, Tempo).
-              Spans follow the OpenTelemetry GenAI conventions. Requires the optional <code>otel</code> extra
-              to be installed. Standard <code>OTEL_*</code> environment
-              variables fill in anything left blank below.
-            </Typography.Paragraph>
+            <>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+                Send a trace of each assistant turn to your tracing backend.
+              </Typography.Paragraph>
+              <OnceHint id="settings.telemetry">
+                Each turn is exported as turn → model call → tool call over OpenTelemetry (OTLP), to LangSmith,
+                Langfuse, Phoenix, Jaeger, Tempo or any OTel backend. Needs the <code>otel</code> extra; standard
+                <code> OTEL_*</code> environment variables fill anything left blank.
+              </OnceHint>
+            </>
           ) : (
             <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
               Export <strong>metrics</strong> over OpenTelemetry (OTLP) — per-runnable-run counters and

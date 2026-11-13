@@ -19,8 +19,10 @@ same time. The chip row beside **New chat** lists them:
 - **Trigger fires** and **schedule fires**, one chip each (agent-mode and
   rule-mode triggers; prompt, runbook, runnable, saved-run and eval
   schedules). They appear as they happen and never interrupt the chat you are
-  typing in. A chip shows a spinner while its run is working, an amber bell
-  when it is waiting for your Approve / Deny, and a dot when something
+  typing in. Each chip names the run, when it started and, for a trigger,
+  what it was about ("vip-outage-triage · 21:38 · Outage on web01"). A chip
+  shows a spinner while its run is working, **waiting for you** (and moves to
+  the front) when it needs your Approve / Deny, and a dot when something
   happened in it while you were looking elsewhere. Open one to read its
   transcript, approve its gates or stop it; it is read-only otherwise ("switch
   to a chat to talk"). Finished ones stay until you dismiss them (the newest
@@ -39,10 +41,14 @@ agent honours it:
 
 - `autonomous` — the agent runs it without asking.
 - `confirm` (the default) — the agent proposes the call; a confirmation card
-  appears with the exact arguments and the host it targets, which you can
-  **edit before approving**. While it waits, the card, its header and the
-  activity bar at the bottom say **Waiting for you** (amber, with how long it
-  has waited), never "Running": nothing runs until you answer. The card looks
+  appears with the exact arguments, the host it targets, its autonomy level and
+  the account it runs as. The arguments are read-only; **Edit arguments** opens
+  them, a changed field shows what it was, and the button becomes **Approve
+  edited & run**. **Add a reason…** beside Deny opens a box for telling the
+  assistant why (Deny on its own denies at once). While it waits, the card, its
+  header and the activity bar at the bottom say **Waiting for you** (amber, with
+  how long it has waited), never "Running": nothing runs until you answer. An
+  approval waiting in another chat shows a bar with **Show it**. The card looks
   the same whatever your brand colour: a green **Approve** and a plain
   **Deny**.
 - `supervised` / `manual` — stricter still; `manual` runnables are never run

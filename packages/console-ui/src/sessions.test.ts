@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   applySessionEvent, applyCardEvent, sessionFromCard, sessionStatus,
-  pruneFinished, nextSelection, markUnread, cardLabel, type Session,
+  pruneFinished, nextSelection, markUnread, cardLabel, chipLabel, type Session,
 } from './sessions'
 import type { ChatSessionInfo, TriggerCard } from './bridge'
 
@@ -46,16 +46,31 @@ describe('applySessionEvent', () => {
   })
 })
 
+const hhmm = (c: { created_at: number }) => {
+  const d = new Date(c.created_at * 1000)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 describe('run cards as sessions', () => {
   it('builds a read-only session from a trigger card (agent label)', () => {
     const s = sessionFromCard(card(), 'trigger')
     expect(s).toMatchObject({ id: 'c1', kind: 'trigger', interactive: false, state: 'running', column: 'running', turnId: 'c1' })
-    expect(s.label).toBe('Trigger nightly · new_mail')
+    expect(s.label).toBe(`nightly · ${hhmm(card())} · A mail`)
   })
 
   it('labels a rule trigger by its target and a schedule by name · event_type', () => {
     expect(cardLabel(card({ detail: { mode: 'rule', tool: 'restart' } }), 'trigger')).toBe('/restart')
     expect(cardLabel(card({ trigger: 'nightly-backup', event_type: 'runnable' }), 'schedule')).toBe('nightly-backup · runnable')
+  })
+
+  it('chips carry the start time so two runs of one trigger differ', () => {
+    const c = card()
+    expect(chipLabel(card({ detail: { mode: 'rule', tool: 'restart' } }), 'trigger')).toBe(`/restart · ${hhmm(c)}`)
+    expect(chipLabel(card({ trigger: 'nightly-backup', event_type: 'runnable' }), 'schedule')).toBe(`nightly-backup · ${hhmm(c)}`)
+    const a = chipLabel(card({ created_at: Date.UTC(2026, 10, 13, 9, 5) / 1000, summary: 'Outage on web01' }), 'trigger')
+    const b = chipLabel(card({ created_at: Date.UTC(2026, 10, 13, 9, 40) / 1000, summary: 'Outage on db02' }), 'trigger')
+    expect(a).not.toBe(b)
+    expect(a).toContain('Outage on web01')
   })
 
   it('reconciles later card events onto the same session (terminal ⇒ done)', () => {

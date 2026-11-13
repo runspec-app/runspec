@@ -202,13 +202,7 @@ export function EvalsView({ active }: EvalsViewProps) {
   if (!active) return null
 
   return (
-    <div style={{ padding: 16, overflow: 'auto', height: '100%' }}>
-      <Title level={4} style={{ marginTop: 0 }}>
-        <ExperimentOutlined /> Evals
-      </Title>
-      <Paragraph type="secondary" style={{ maxWidth: 760 }}>
-        Check which runnable the assistant would pick for a set of prompts, <b>without running anything</b>.
-      </Paragraph>
+    <div style={{ overflow: 'auto', height: '100%' }}>
       <OnceHint id="quality.evals" style={{ maxWidth: 760 }}>
         Write prompts and the runnable and arguments you expect, then run them against your real runnables and model
         to catch a change in what the assistant picks before you rely on it. With tracing on in Settings → Telemetry,
