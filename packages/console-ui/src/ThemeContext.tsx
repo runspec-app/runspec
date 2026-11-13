@@ -201,6 +201,17 @@ export const approveColors = (isDark: boolean) => (isDark
   ? { bg: '#6fd38a', hover: '#8ade9f', text: '#10261a' }
   : { bg: '#16632f', hover: '#1d7a3b', text: '#ffffff' })
 
+/**
+ * Primary buttons (Run, Save, Install): an ink fill, not the brand. A white-label
+ * accent can be any hue; under a red brand every routine "do it" button looked
+ * like a destructive one. The brand keeps the identity surfaces (title, the
+ * selected bar, links, focus); action colour stays neutral, and danger keeps
+ * its own hue. `text` reads at 4.5:1 on `bg` and `hover`.
+ */
+export const inkColors = (isDark: boolean) => (isDark
+  ? { bg: '#e8ebef', hover: '#ffffff', active: '#c3ccd2', text: '#1e2428' }
+  : { bg: '#1b2126', hover: '#2f383e', active: '#0e1215', text: '#ffffff' })
+
 /** 'rgba(r,g,b,a)' from a '#rgb'/'#rrggbb' hex — for accent-tinted hover fills. */
 export function withAlpha(hex: string, alpha: number): string {
   const h = hex.replace('#', '')

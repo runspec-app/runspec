@@ -684,7 +684,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           style={{ width: 300 }}
         />
         {scope === 'all' && (
-          <Select mode="multiple" allowClear placeholder="Source" style={selectStyle} maxTagCount="responsive"
+          <Select mode="multiple" allowClear placeholder="Source" aria-label="Filter by source" style={selectStyle} maxTagCount="responsive"
             value={filters.source} onChange={v => setFilters({ source: v })}
             options={[
               { label: 'This console', value: 'console' },
@@ -693,15 +693,15 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
               { label: 'Unreadable venv', value: 'unknown' },
             ]} />
         )}
-        <Select mode="multiple" allowClear placeholder="State" style={selectStyle} maxTagCount="responsive"
+        <Select mode="multiple" allowClear placeholder="State" aria-label="Filter by state" style={selectStyle} maxTagCount="responsive"
           value={filters.states} onChange={v => setFilters({ states: v })}
           options={states.map(s => ({ label: s, value: s }))} />
         {scope !== 'console' && (
           <>
-            <Select mode="multiple" allowClear placeholder="Owner" style={selectStyle} maxTagCount="responsive"
+            <Select mode="multiple" allowClear placeholder="Owner" aria-label="Filter by owner" style={selectStyle} maxTagCount="responsive"
               value={filters.owners} onChange={v => setFilters({ owners: v })}
               options={[...new Set([...owners, ...filters.owners])].map(o => ({ label: o, value: o }))} />
-            <Select mode="multiple" allowClear placeholder="Run as" style={selectStyle} maxTagCount="responsive"
+            <Select mode="multiple" allowClear placeholder="Run as" aria-label="Filter by run-as account" style={selectStyle} maxTagCount="responsive"
               value={filters.runAs} onChange={v => setFilters({ runAs: v })}
               options={[...new Set([...runAs, ...filters.runAs])].map(o => ({ label: o, value: o }))} />
           </>
@@ -710,7 +710,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           <Switch size="small" checked={filters.onlyProblems} onChange={v => setFilters({ onlyProblems: v })} aria-label="Only problems" />
           <span style={{ fontSize: 13, color: secondary }}>Only problems</span>
         </Space>
-        <Select size="middle" value={filters.sort} onChange={v => setFilters({ sort: v })} style={{ width: 170 }}
+        <Select size="middle" aria-label="Sort schedules" value={filters.sort} onChange={v => setFilters({ sort: v })} style={{ width: 170 }}
           options={[
             { label: 'Sort: next fire', value: 'next' },
             { label: 'Sort: last run', value: 'last' },

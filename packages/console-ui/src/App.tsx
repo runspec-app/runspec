@@ -89,7 +89,7 @@ import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type OtherHost, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
-import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning, dangerColors, statusText } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning, dangerColors, inkColors, statusText } from './ThemeContext'
 import GateMark from './components/GateMark'
 import {
   anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
@@ -953,6 +953,7 @@ export default function App() {
     ? readableAccent(brandTheme.accent_color, isDark)
     : (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
   const danger    = dangerColors(brandTheme.accent_color || undefined, isDark)
+  const ink       = inkColors(isDark)
   const contentBg = sf.base
   const iconCol   = textMuted(isDark)
   const textCol   = isDark ? '#ccc'    : '#333'
@@ -1225,6 +1226,11 @@ export default function App() {
             colorErrorHover: danger.text,
             colorErrorText: danger.text,
             colorErrorTextHover: danger.text,
+            // Keyboard focus ring on every Ant control: Ant draws it in
+            // colorPrimaryBorder, a dark shade of the raw brand (1.15:1 on the
+            // dark surface). Use the readable accent, 2px, like our own controls.
+            colorPrimaryBorder: titleCol,
+            lineWidthFocus: 2,
           },
           components: {
             // Active tab text and its underline: the text accent, not the fill.
@@ -1234,7 +1240,14 @@ export default function App() {
             Drawer: { colorBgElevated: sf.overlay },
             Table: { headerBg: sf.overlay, headerSplitColor: 'transparent', borderColor: sf.border, rowHoverBg: withAlpha(titleCol, isDark ? 0.06 : 0.04) },
             Tag: { borderRadiusSM: 4 },
-            Button: { fontWeight: 500, primaryShadow: `0 1px 2px ${withAlpha(titleCol, 0.25)}`, dangerColor: danger.onFill, dangerShadow: 'none' },
+            // Primary buttons are ink, not the brand (inkColors): routine actions
+            // stay neutral and only danger is hot. Hover on a default button
+            // follows the same ink. The focus ring keeps the readable accent.
+            Button: {
+              fontWeight: 500, dangerColor: danger.onFill, dangerShadow: 'none',
+              colorPrimary: ink.bg, colorPrimaryHover: ink.hover, colorPrimaryActive: ink.active,
+              primaryColor: ink.text, primaryShadow: 'none', colorPrimaryBorder: titleCol,
+            },
             // Ant paints these in colorPrimary as TEXT; use the text accent.
             Pagination: { itemActiveColor: titleCol, itemActiveColorHover: titleCol },
             Menu: { itemSelectedColor: titleCol },

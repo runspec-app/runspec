@@ -51,6 +51,16 @@ beforeEach(() => {
 })
 
 describe('RotaView Take a break', () => {
+  it('names each day times, and an off day shows no times', async () => {
+    listTriggers.mockResolvedValue({ triggers: [], errors: [], sources: [], running: true, break_until: null,
+      rota: { enabled: true, source: 'console', mon: { on: true, start: '09:00', end: '17:00' }, sun: { on: false, start: '09:00', end: '17:00' } } })
+    render(<RotaView />)
+    expect(((await screen.findByLabelText('Monday start')) as HTMLInputElement).value).toBe('09:00')
+    expect(screen.getByLabelText('Monday end')).toBeTruthy()
+    expect(screen.getByLabelText('Work on Sunday')).toBeTruthy()
+    expect(screen.queryByLabelText('Sunday start')).toBeNull()
+  })
+
   it('starts a break with the default 60 minutes', async () => {
     render(<RotaView />)
     const btn = await screen.findByRole('button', { name: /Take a break/ })
