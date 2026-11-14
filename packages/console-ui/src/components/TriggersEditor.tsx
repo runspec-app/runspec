@@ -14,6 +14,7 @@ import { ModelSelect } from './ModelSelect'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
 import { EmptyState, IconAction, StatusTag } from './kit'
 import { useFeatures } from '../features'
+import { useRiskConfirm } from './risk'
 
 const { Text } = Typography
 
@@ -573,6 +574,7 @@ export function TriggersEditor({
   sources: TriggerSourceInfo[]
   reload: () => void
 }) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState<string | null>(null) // null = adding new
   const [testName, setTestName] = useState<string | null>(null) // "Trigger now" target
@@ -708,6 +710,7 @@ export function TriggersEditor({
 
   return (
     <div>
+      {riskHolder}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
           When something happens (a new email, a schedule, an alert), run a runnable or hand it to the assistant.
@@ -913,9 +916,10 @@ export function TriggersEditor({
                 <Button aria-label={`Trigger ${String(t.name)} now`} type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => setTestName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
               </Tooltip>
               <Tooltip title="Edit"><Button aria-label={`Edit ${String(t.name)}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(t)} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} /></Tooltip>
-              <Popconfirm title={`Delete trigger ${String(t.name)}?`} onConfirm={() => remove(String(t.name))} okText="Delete" cancelText="Cancel" placement="left">
-                <Button aria-label={`Delete ${String(t.name)}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
-              </Popconfirm>
+                <Button onClick={async () => {
+                  const a = await askRisk({ level: 'local', title: 'Delete this trigger?', action: String(t.name), okText: 'Delete' })
+                  if (a.ok) remove(String(t.name))
+                }} aria-label={`Delete ${String(t.name)}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
             </div>
           ))}
         </div>

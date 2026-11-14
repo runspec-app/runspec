@@ -596,13 +596,18 @@ function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
             {currentNode.description}
           </Text>
         )}
-        {multiHost && (
+        {multiHost ? (
           <HostTargets
             records={hostRecords!}
             hosts={hosts}
             value={targetHosts}
             onChange={setTargetHosts}
           />
+        ) : (
+          // One host: still say where Run lands.
+          <Text data-testid="run-target" style={{ display: 'block', fontSize: 13, marginBottom: 16 }}>
+            Runs on <Text code>{rootRunnable.host}</Text>{rootRunnable.host === 'local' ? ' (this computer)' : ''}
+          </Text>
         )}
         {hasSubcommands && (
           <div style={{ marginBottom: canRunHere ? 18 : 0 }}>

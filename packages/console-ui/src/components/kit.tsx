@@ -12,6 +12,7 @@ import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, Synthet
 import { cloneElement, isValidElement, useState } from 'react'
 import { Button, Dropdown, Modal, Segmented, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
+import { useRiskConfirm } from './risk'
 import { CheckCircleFilled, CloseCircleFilled, CloseOutlined, EllipsisOutlined, ExclamationCircleOutlined, InfoCircleOutlined, PauseCircleOutlined, WarningFilled } from '@ant-design/icons'
 
 import {
@@ -176,20 +177,11 @@ export interface RowAction {
   tip?: ReactNode
   disabled?: boolean
   danger?: boolean
-  // Ask before running it. A string is the question; Modal.confirm's OK button
-  // repeats the action's label.
+  // Ask before running it, through the shared confirmation dialog (risk.tsx,
+  // local level). A string is the question; OK repeats the action's label.
+  // (This used antd's static Modal.confirm, which doesn't render under
+  // React 19, so the ask, and the action, silently never happened.)
   confirm?: string | { title: string; content?: ReactNode; okText?: string }
-}
-
-function runAction(a: RowAction) {
-  if (!a.confirm) { a.onClick(); return }
-  const c = typeof a.confirm === 'string' ? { title: a.confirm } : a.confirm
-  Modal.confirm({
-    title: c.title, content: c.content,
-    okText: c.okText ?? a.label, okButtonProps: { danger: !!a.danger },
-    cancelText: 'Cancel',
-    onOk: a.onClick,
-  })
 }
 
 /** One visible primary action, quiet secondaries beside it, and everything else
@@ -206,16 +198,27 @@ export function RowActions({ primary, secondary = [], more = [], style, testId =
     key: a.key, label: a.label, icon: a.icon, danger: a.danger, disabled: a.disabled,
   }))
   const wrap = (a: RowAction, node: ReactNode) => (a.tip ? <Tooltip key={a.key} title={a.tip}>{node}</Tooltip> : node)
+  const [askRisk, riskHolder] = useRiskConfirm()
+  const runAction = async (a: RowAction) => {
+    if (!a.confirm) { a.onClick(); return }
+    const c = typeof a.confirm === 'string' ? { title: a.confirm } : a.confirm
+    const answer = await askRisk({
+      level: 'local', title: c.title, action: c.content ?? a.label,
+      okText: c.okText ?? a.label, danger: !!a.danger,
+    })
+    if (answer.ok) a.onClick()
+  }
   return (
     <div data-testid={testId} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', ...style }}>
+      {riskHolder}
       {primary && wrap(primary,
         <Button key={primary.key} size="small" icon={primary.icon} disabled={primary.disabled} danger={primary.danger}
-          onClick={() => runAction(primary)}>
+          onClick={() => { void runAction(primary) }}>
           {primary.label}
         </Button>)}
       {secondary.map(a => wrap(a,
         <Button key={a.key} size="small" type="text" icon={a.icon} disabled={a.disabled} danger={a.danger}
-          onClick={() => runAction(a)} style={{ color: a.danger || a.disabled ? undefined : 'var(--rs-text-secondary)' }}>
+          onClick={() => { void runAction(a) }} style={{ color: a.danger || a.disabled ? undefined : 'var(--rs-text-secondary)' }}>
           {a.label}
         </Button>))}
       {more.length > 0 && (
@@ -224,7 +227,7 @@ export function RowActions({ primary, secondary = [], more = [], style, testId =
           onClick: ({ key, domEvent }) => {
             domEvent.stopPropagation()
             const a = more.find(m => m.key === key)
-            if (a) runAction(a)
+            if (a) void runAction(a)
           },
         }}>
           <span><IconAction label="More actions" icon={<EllipsisOutlined />} testId="row-actions-more" /></span>

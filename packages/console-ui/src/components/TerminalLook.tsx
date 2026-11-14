@@ -141,7 +141,7 @@ export function TerminalLook() {
         </div>
         <div style={{ width: 80 }}>
           {label('Size (pt)')}
-          <InputNumber size="small" min={6} max={72} style={{ width: '100%' }} value={look.font_size} placeholder="10" onChange={v => set({ font_size: v ?? null })} />
+          <InputNumber size="small" min={6} max={72} style={{ width: '100%' }} aria-label="Font size" value={look.font_size} placeholder="10" onChange={v => set({ font_size: v ?? null })} />
         </div>
       </Space>
       <Space wrap size={[12, 8]} align="start" style={{ marginBottom: 12 }}>
@@ -158,11 +158,11 @@ export function TerminalLook() {
         </div>
         <div style={{ width: 110 }}>
           {label('Scrollback lines')}
-          <InputNumber size="small" min={100} style={{ width: '100%' }} value={look.scrollback} placeholder="2000" onChange={v => set({ scrollback: v ?? null })} />
+          <InputNumber size="small" min={100} style={{ width: '100%' }} aria-label="Scrollback lines" value={look.scrollback} placeholder="2000" onChange={v => set({ scrollback: v ?? null })} />
         </div>
         <div style={{ width: 90 }}>
           {label('Padding (px)')}
-          <InputNumber size="small" min={0} max={40} style={{ width: '100%' }} value={look.padding} placeholder="1" onChange={v => set({ padding: v ?? null })} />
+          <InputNumber size="small" min={0} max={40} style={{ width: '100%' }} aria-label="Padding" value={look.padding} placeholder="1" onChange={v => set({ padding: v ?? null })} />
         </div>
       </Space>
 

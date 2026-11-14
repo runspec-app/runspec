@@ -195,6 +195,7 @@ class _StubBridge:
 
     _confirm_card_view = Bridge._confirm_card_view
     _confirm_runs_as = Bridge._confirm_runs_as
+    _confirm_target_host = Bridge._confirm_target_host
     _register_confirm = Bridge._register_confirm
     _notify_confirm = Bridge._notify_confirm
 

@@ -115,7 +115,8 @@ export function SendBar() {
         rememberLabel: plan.canRemember ? "Don't ask again for these terminals (until the ticked set changes)" : undefined,
       })
       refocus()
-      if (!answer.ok) return
+      // A cancelled send says so, not the last send's "Sent → …".
+      if (!answer.ok) { setStatusWarn(false); setStatus('Not sent.'); return }
       if (answer.remember) confirmed.current = signature(ticked)
     }
     setBusy(true)
@@ -300,6 +301,9 @@ export function SendBarApp() {
     document.body.style.background = sf.base
     // The theme's CSS variables (index.css) key off this, as in the main window.
     document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
+    // …and the control colour the rs-* focus rules read (it stayed the default
+    // teal here).
+    document.documentElement.style.setProperty('--rs-focus', controlAccent(undefined, isDark))
   }, [sf.base])
   return (
     <ThemeContext.Provider value={isDark}>
@@ -323,6 +327,8 @@ export function SendBarApp() {
           colorError: danger.text,
           colorErrorHover: danger.text,
           colorErrorText: danger.text,
+          // Form controls' outline at 3:1, as in the main window.
+          colorBorder: sf.field,
           colorBgBase: sf.base,
           colorBgLayout: sf.base,
           colorBgContainer: sf.raised,

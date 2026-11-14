@@ -4,6 +4,9 @@
  *
  *   routine      Reversible, one place. No confirmation; the result shows
  *                next to the control.
+ *   local        One place, but not simply undone: delete a saved item, stop
+ *                a run, discard edits. The dialog, naming what goes; no
+ *                targets list needed.
  *   fleet        Reaches many hosts, or turns a safety off, but can be put
  *                back. A dialog that names the exact action and every target,
  *                with Cancel focused so a reflexive Enter backs out.
@@ -22,13 +25,13 @@
  * Deprovision's typed-name dialog predates this file and already follows the
  * destructive rule.
  */
-import type { ReactNode } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import type { MouseEvent, ReactElement, ReactNode } from 'react'
+import { cloneElement, useEffect, useRef, useState } from 'react'
 import { Button, Checkbox, Input, Modal, Typography, theme } from 'antd'
 import { ExclamationCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import { MONO_FONT, RADIUS, statusText, textMuted, useIsDark } from '../ThemeContext'
 
-export type RiskLevel = 'routine' | 'fleet' | 'destructive'
+export type RiskLevel = 'routine' | 'local' | 'fleet' | 'destructive'
 
 export interface RiskAsk {
   level: Exclude<RiskLevel, 'routine'>
@@ -47,6 +50,9 @@ export interface RiskAsk {
   typeToConfirm?: string
   /** Offer "don't ask again" with this label (fleet only). */
   rememberLabel?: string
+  /** OK in the danger colour (the default). False for an ask that doesn't
+   *  remove or stop anything ("Discard and reload" isn't danger; "Delete" is). */
+  danger?: boolean
 }
 
 export interface RiskAnswer { ok: boolean; remember: boolean }
@@ -95,7 +101,7 @@ function RiskDialog({ ask, cover, onDone }: { ask: RiskAsk; cover: boolean; onDo
   const footer = (
     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
       <Button ref={cancelRef} onClick={cancel}>Cancel</Button>
-      <Button type="primary" danger disabled={!ready} data-testid="risk-ok"
+      <Button type="primary" danger={ask.danger !== false} disabled={!ready} data-testid="risk-ok"
         onClick={() => onDone({ ok: true, remember })}>
         {ask.okText}
       </Button>
@@ -163,4 +169,32 @@ export function useRiskConfirm(opts: { cover?: boolean } = {}): [(ask: RiskAsk) 
     ? <RiskDialog ask={pending.ask} cover={!!opts.cover} onDone={a => { pending.resolve(a); setPending(null) }} />
     : null
   return [ask, holder]
+}
+
+/** The ladder's confirmation around one control, a drop-in for antd's
+ *  Popconfirm: the child's click asks first, and `onConfirm` runs only on OK.
+ *  Each instance holds its own dialog, so it works inside lists and table
+ *  cells where a hook can't be called per row. Wrap the button itself, not a
+ *  Tooltip around it (a Tooltip doesn't pass the click through). */
+export function AskFirst({ ask, onConfirm, disabled, children }: {
+  ask: RiskAsk
+  onConfirm: () => void | Promise<void>
+  disabled?: boolean
+  children: ReactElement<{ onClick?: (e: MouseEvent<HTMLElement>) => void }>
+}) {
+  const [confirm, holder] = useRiskConfirm()
+  const own = children.props.onClick
+  return (
+    <>
+      {cloneElement(children, {
+        onClick: async (e: MouseEvent<HTMLElement>) => {
+          own?.(e)
+          if (disabled) return
+          const a = await confirm(ask)
+          if (a.ok) await onConfirm()
+        },
+      })}
+      {holder}
+    </>
+  )
 }

@@ -118,7 +118,7 @@ export function MemorySyncTab() {
         <SettingsColumns>
           <div>
           <Form.Item name="url" label="Wiki repository" extra="HTTPS or SSH URL of an empty repo kept for the wiki.">
-            <Input placeholder="https://gitlab.example.com/ops/wiki.git" style={{ fontFamily: MONO_FONT }} />
+            <Input placeholder="https://gitlab.example.com/ops/wiki.git" aria-label="Wiki repository" style={{ fontFamily: MONO_FONT }} />
           </Form.Item>
           <Form.Item name="credential_id" label="Credential" extra="A token that can push to the repo (Settings → Credentials). Over SSH, an ssh-key credential or your SSH key.">
             <Select
@@ -178,10 +178,10 @@ export function MemorySyncTab() {
           </div>
           <div>
           <Form.Item name="ca_bundle" label="CA bundle (HTTPS)" extra="A PEM file for an internal CA or a TLS-inspecting proxy.">
-            <Input placeholder="optional" style={{ fontFamily: MONO_FONT }} />
+            <Input placeholder="optional" aria-label="CA bundle (HTTPS)" style={{ fontFamily: MONO_FONT }} />
           </Form.Item>
           <Form.Item name="tls_verify" label="Verify TLS certificates" valuePropName="checked">
-            <Switch />
+            <Switch aria-label="Verify TLS certificates" />
           </Form.Item>
             <Space>
               <Button type="primary" loading={saving} onClick={save}>Save</Button>

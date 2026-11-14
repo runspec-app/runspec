@@ -135,6 +135,7 @@ class _Bridge:
     _search_runnables = Bridge._search_runnables
     _runs_as_by_host = Bridge._runs_as_by_host
     _confirm_runs_as = Bridge._confirm_runs_as
+    _confirm_target_host = Bridge._confirm_target_host
     _search_host_groups = Bridge._search_host_groups
     _is_literal_host = Bridge._is_literal_host
     _command_arg_rows = staticmethod(Bridge._command_arg_rows)
@@ -1192,6 +1193,25 @@ def test_run_runnable_confirm_keeps_raw_name_for_segment_match():
     }
     assert detail["display_name"] == "drain-node"  # human-readable resolved runnable
     assert detail["display_input"] == {"host": "a", "node": "n1"}
+    # Where it lands, resolved the way the run resolves it, for "on <host>".
+    assert detail["target_host"] == "a"
+
+
+def test_confirm_names_the_host_even_when_the_call_omits_it():
+    # A runnable on one host: the call needn't name the host, but the card does.
+    b = _Bridge([_rn("web01", "flush-dns")])
+    b._register_confirm(
+        "chat1", "run_runnable", {"id": "flush-dns", "args": {}}, "confirm"
+    )
+    _, detail = b._dispatched[0]
+    assert detail["target_host"] == "web01"
+
+
+def test_confirm_target_is_empty_for_a_built_in_tool():
+    b = _Bridge([_rn("a", "ping")])
+    b._register_confirm("chat1", "create_document", {"filename": "x.md"}, "confirm")
+    _, detail = b._dispatched[0]
+    assert detail["target_host"] == ""
 
 
 def test_plain_tool_confirm_display_equals_raw():

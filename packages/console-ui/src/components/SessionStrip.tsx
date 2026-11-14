@@ -16,6 +16,7 @@ import type { MenuProps } from 'antd'
 import { ApiOutlined, BellOutlined, ClockCircleOutlined, CloseOutlined, DownOutlined, LoadingOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useIsDark, useAccent, textColor, textMuted, textSecondary, surfaces, withAlpha, MONO_FONT, RADIUS } from '../ThemeContext'
 import type { Session, SessionStatus } from '../sessions'
+import { useRiskConfirm } from './risk'
 
 interface SessionStripProps {
   sessions: Session[]
@@ -81,6 +82,7 @@ export function partitionSessions(
 }
 
 export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSelect, onClose }: SessionStripProps) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const isDark = useIsDark()
   const accent = useAccent()
   const sf = surfaces(isDark)
@@ -152,6 +154,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
         padding: '2px 0',
       }}
     >
+      {riskHolder}
       {inline.map(s => {
         const status = statusOf(s)
         const selected = s.id === selectedId
@@ -160,15 +163,6 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
         const muted = finished && !selected
         const labelColor = selected ? textColor(isDark) : muted ? textMuted(isDark) : textSecondary(isDark)
         const label = chipText(s)
-        const closeBtn = (
-          <Button
-            size="small" type="text"
-            aria-label="Close session"
-            icon={<CloseOutlined style={{ fontSize: 10 }} />}
-            onClick={e => { e.stopPropagation() }}
-            style={{ padding: '0 2px', height: 16, minWidth: 16, lineHeight: 1, color: textMuted(isDark) }}
-          />
-        )
         return (
           <div
             key={s.id}
@@ -217,20 +211,25 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
             )}
             {finished && (
               s.interactive && hasBlocks(s.id) ? (
-                <Popconfirm
-                  title="Close this chat?"
-                  description="Its transcript leaves the Console (the saved conversation stays in History)."
-                  okText="Close" cancelText="Keep"
-                  placement="bottom"
-                  onConfirm={e => { e?.stopPropagation(); onClose(s.id) }}
-                  onCancel={e => e?.stopPropagation()}
-                >
-                  {closeBtn}
-                </Popconfirm>
+                <Button
+                  size="small" type="text"
+                  aria-label={`Close ${label}`}
+                  icon={<CloseOutlined style={{ fontSize: 10 }} />}
+                  onClick={async e => {
+                    e.stopPropagation()
+                    const a = await askRisk({
+                      level: 'local', title: 'Close this chat?', action: label,
+                      consequence: 'Its transcript leaves the Console; the saved conversation stays in History.',
+                      okText: 'Close chat', danger: false,
+                    })
+                    if (a.ok) onClose(s.id)
+                  }}
+                  style={{ padding: '0 2px', height: 16, minWidth: 16, lineHeight: 1, color: textMuted(isDark) }}
+                />
               ) : (
                 <Button
                   size="small" type="text"
-                  aria-label="Close session"
+                  aria-label={`Close ${label}`}
                   icon={<CloseOutlined style={{ fontSize: 10 }} />}
                   onClick={e => { e.stopPropagation(); onClose(s.id) }}
                   style={{ padding: '0 2px', height: 16, minWidth: 16, lineHeight: 1, color: textMuted(isDark) }}

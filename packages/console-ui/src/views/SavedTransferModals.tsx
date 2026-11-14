@@ -537,6 +537,7 @@ export function SavedTransfersListModal({ saved, onClose, onRun, onEdit, onNew }
   onEdit: (t: SavedTransfer, replaceId?: string) => void
   onNew: () => void
 }) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
   const rows = q
@@ -601,9 +602,12 @@ export function SavedTransfersListModal({ saved, onClose, onRun, onEdit, onNew }
           <Tooltip title="Run"><Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!!t.error} onClick={() => onRun(t)} aria-label={`Run ${t.id}`} /></Tooltip>
           <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} onClick={() => onEdit(t, t.id)} aria-label={`Edit ${t.id}`} /></Tooltip>
           <Tooltip title="Duplicate"><Button size="small" icon={<CopyOutlined />} onClick={() => duplicate(t)} aria-label={`Duplicate ${t.id}`} /></Tooltip>
-          <Popconfirm title={`Delete saved transfer '${t.id}'?`} onConfirm={() => remove(t.id)}>
-            <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${t.id}`} /></Tooltip>
-          </Popconfirm>
+          <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${t.id}`}
+              onClick={async () => {
+                const r = await askRisk({ level: 'local', title: 'Delete this saved transfer?', action: t.title ? `${t.title} (${t.id})` : t.id, okText: 'Delete' })
+                if (r.ok) remove(t.id)
+              }} /></Tooltip>
+          
         </div>
       ),
     },
@@ -616,6 +620,7 @@ export function SavedTransfersListModal({ saved, onClose, onRun, onEdit, onNew }
       title="Saved transfers"
       footer={<Button onClick={onClose}>Close</Button>}
     >
+      {riskHolder}
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
         <Input size="small" allowClear value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name, host or path" style={{ flex: 1 }} />
         <Button size="small" icon={<PlusOutlined />} onClick={onNew}>New…</Button>

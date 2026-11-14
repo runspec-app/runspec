@@ -9,6 +9,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.435.0] — 2026-11-14
+
+### Fixed
+
+- **Confirmations that never appeared now do.** Row actions with a confirm
+  (Schedules' **Delete this schedule?**), closing a Knowledge page with
+  unsaved edits, and Env files' discard-and-reload used antd's static
+  `Modal.confirm`, which doesn't render under React 19: the ask, and the
+  action behind it, silently never happened. They now use the shared dialog.
+
+### Changed
+
+- **Every confirmation uses the shared dialog.** All 34 small pop-up confirms
+  (antd `Popconfirm`) are gone. Each now asks through the risk ladder
+  (`components/risk.tsx`): a new **local** level for one-place actions that
+  aren't simply undone (delete a saved item, cancel a run, discard edits), the
+  dialog naming exactly what goes, with Cancel focused. **Generate new key**
+  is destructive: type `generate` (it replaces the key every host trusts).
+  `AskFirst` wraps one control as a drop-in, and a test keeps `Popconfirm` and
+  static `Modal.confirm/info/…` out.
+- **The brand is identity only.** The white-label accent now marks the
+  sidebar title, the selected tab's bar and the icon, nothing else. Links,
+  focus, switches, checkboxes, selected host rows and Schedules cards, table
+  sort arrows (1.05:1 on dark under a deep brand), pagination and the footer
+  counts use the neutral control colour for every brand, and links are
+  underlined. Charts use a fixed palette (`chartPalette`) instead of the brand.
+- **Approvals and runs say where.** The approval card names the host even
+  when the call didn't (the backend sends the resolved `target_host`), and a
+  local run says "(this computer)". Forms' run dialog says "Runs on <host>"
+  for a runnable on one host too.
+- **Send to terminals.** A cancelled send says "Not sent." instead of leaving
+  the last send's status; the bar's focus rings use the control colour (they
+  were the default teal) and its fields have 3:1 outlines. `chown -R`, `mv`,
+  `apt remove`, `crontab -r` and the like now ask every time too.
+- **Smaller.** The denylist (kill switch) is in Ctrl+K. Each session chip's ×
+  names the chat it closes. Named: Mailbox, Memory Sync, Config Sync, Local
+  venvs, Notifications, Tool visibility, SSH and Terminal fields that had only
+  a placeholder.
+
 ## [0.434.0] — 2026-11-14
 
 ### Fixed

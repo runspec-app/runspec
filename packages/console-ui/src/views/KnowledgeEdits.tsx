@@ -13,6 +13,7 @@ import { BranchesOutlined, EditOutlined, ExportOutlined } from '@ant-design/icon
 import { bridge, type WikiDraft } from '../bridge'
 import { Markdown } from '../components/Markdown'
 import { MONO_FONT, RADIUS, surfaces, textColor, textMuted, textSecondary, useIsDark } from '../ThemeContext'
+import { useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -93,14 +94,16 @@ export function PageEditor({ path, entity, description = '', onClose, onSaved }:
     return () => { live = false }
   }, [path, entity, description])
   // Closing with unsaved typing asks first.
-  const close = () => {
+  // (This used antd's static Modal.confirm, which doesn't render under React
+  // 19: the editor just stayed open.)
+  const [askClose, closeHolder] = useRiskConfirm()
+  const close = async () => {
     if (text !== null && initial !== null && text !== initial) {
-      Modal.confirm({
-        title: 'Close without saving?',
-        content: 'Your changes to this page are lost.',
-        okText: 'Close without saving', okButtonProps: { danger: true }, cancelText: 'Keep editing',
-        onOk: onClose,
+      const a = await askClose({
+        level: 'local', title: 'Close without saving?', action: path,
+        consequence: 'Your changes to this page are lost.', okText: 'Close without saving',
       })
+      if (a.ok) onClose()
     } else onClose()
   }
   const save = async () => {
@@ -116,6 +119,7 @@ export function PageEditor({ path, entity, description = '', onClose, onSaved }:
   return (
     <Modal open title={<span>{isNew ? 'New page ' : 'Edit '}<span style={{ fontFamily: MONO_FONT }}>{path}</span></span>}
       width={760} okText="Save edit" onOk={save} confirmLoading={saving} onCancel={close} okButtonProps={{ disabled: text === null }}>
+      {closeHolder}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
         <Text style={{ flex: 1, color: textSecondary(isDark) }}>
           Your edit stays on this console until you propose it. Write what holds on any teammate&rsquo;s console: no host names, home directories or accounts.

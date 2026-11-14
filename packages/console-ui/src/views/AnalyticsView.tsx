@@ -4,7 +4,7 @@ import { ReloadOutlined, WarningOutlined } from '@ant-design/icons'
 import { Area, Line, Column, Pie } from '@ant-design/plots'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type AnalyticsData, type AnalyticsBucket, type AnalyticsException } from '../bridge'
-import { ThemeContext, statusText, useAccent, useIsDark } from '../ThemeContext'
+import { ThemeContext, chartPalette, statusText, useIsDark } from '../ThemeContext'
 import {
   filterBuckets, computeKpis, runsOverTime, successRateOverTime,
   durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown,
@@ -35,12 +35,14 @@ interface AnalyticsViewProps {
 
 export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsViewProps) {
   const isDark = useContext(ThemeContext)
-  const ACCENT = useAccent()
+  // A fixed series palette, never the brand (chartPalette).
+  const PALETTE = chartPalette(useIsDark())
+  const ACCENT = PALETTE[0]
   const st = statusText(useIsDark())
   const SUCCESS = st.ok, FAILURE = st.error, WARNING = st.warn
   const BRAND_RANGE = useMemo(
-    () => [ACCENT, '#722ed1', WARNING, '#13c2c2', '#eb2f96', SUCCESS, '#fa8c16', '#2f54eb'],
-    [ACCENT],
+    () => PALETTE,
+    [PALETTE],
   )
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -298,7 +300,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
               <Pie
                 data={initiated} angleField="value" colorField="type"
                 height={chartHeight} theme={plotTheme} innerRadius={0.5}
-                scale={{ color: { domain: ['user', 'agent'], range: [ACCENT, '#722ed1'] } }}
+                scale={{ color: { domain: ['user', 'agent'], range: [PALETTE[0], PALETTE[1]] } }}
                 legend={{ color: { position: 'right' } }} label={{ text: 'value', position: 'inside' }}
               />
             )}

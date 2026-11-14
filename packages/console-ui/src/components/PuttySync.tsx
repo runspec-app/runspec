@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Input, InputNumber, Popconfirm, Select, Space, Switch, Typography, message } from 'antd'
+import { Alert, Button, Input, InputNumber, Select, Space, Switch, Typography, message } from 'antd'
 import { SyncOutlined } from '@ant-design/icons'
 import { bridge, type HostProfile, type PuttySyncConfig, type PuttySyncResult, type PuttySyncStatus } from '../bridge'
 import { textSecondary, useIsDark } from '../ThemeContext'
+import { useRiskConfirm } from './risk'
 
 const { Text } = Typography
 
@@ -30,6 +31,7 @@ export function summarizeSync(r: PuttySyncResult): string {
 
 /** Settings → SSH → PuTTY sessions: keep one PuTTY saved session per console host. */
 export function PuttySync() {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const isDark = useIsDark()
   const [status, setStatus] = useState<PuttySyncStatus | null>(null)
   const [cfg, setCfg] = useState<PuttySyncConfig>(DEFAULT_PUTTY_SYNC)
@@ -85,6 +87,7 @@ export function PuttySync() {
 
   return (
     <div style={{ marginTop: 8 }} data-testid="putty-sync">
+      {riskHolder}
       <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 4 }}>PuTTY sessions</Text>
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
         Save every console host as a PuTTY session, so PuTTY on its own lists them with the host, user, key,
@@ -128,16 +131,21 @@ export function PuttySync() {
       <Space wrap style={{ marginBottom: 8 }}>
         <Button size="small" type="primary" loading={busy === 'save'} onClick={save}>Save PuTTY settings</Button>
         <Button size="small" icon={<SyncOutlined />} loading={busy === 'sync'} disabled={unsupported} onClick={() => run('sync')}>Sync now</Button>
-        <Popconfirm
-          title="Remove the PuTTY sessions the console saved?"
-          description="Sessions you made yourself are kept."
-          okText="Remove" onConfirm={() => run('remove')}
-          disabled={unsupported || !status?.sessions.length}
-        >
-          <Button size="small" danger loading={busy === 'remove'} disabled={unsupported || !status?.sessions.length}>
-            Remove synced sessions
-          </Button>
-        </Popconfirm>
+        <Button size="small" danger loading={busy === 'remove'} disabled={unsupported || !status?.sessions.length}
+          onClick={async () => {
+            const sessions = status?.sessions ?? []
+            const a = await askRisk({
+              level: 'local',
+              title: 'Remove the PuTTY sessions the console saved?',
+              action: `Remove ${sessions.length} saved PuTTY session${sessions.length === 1 ? '' : 's'}`,
+              targets: sessions,
+              consequence: 'Sessions you made yourself are kept.',
+              okText: 'Remove',
+            })
+            if (a.ok) run('remove')
+          }}>
+          Remove synced sessions
+        </Button>
         {status?.supported && (
           <Text type="secondary" style={{ fontSize: 12 }}>{status.sessions.length} saved by the console</Text>
         )}

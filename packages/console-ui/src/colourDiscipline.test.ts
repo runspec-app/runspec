@@ -42,7 +42,6 @@ const BASELINE: Record<string, number> = {
   'components/SettingsDrawer.tsx': 13,
   'components/TriggersEditor.tsx': 2,
   'components/runShared.tsx': 8,
-  'views/AnalyticsView.tsx': 6,
   'views/DevView.tsx': 9,
   'views/EvalsView.tsx': 1,
   'views/FormsView.tsx': 4,

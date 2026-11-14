@@ -151,17 +151,13 @@ describe('RowActions', () => {
     expect(rerun).toHaveBeenCalled()
     expect(edit).toHaveBeenCalled()
     expect(screen.queryByText('Delete')).toBeNull()
-    const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => ({ destroy: () => {}, update: () => {} }) as ReturnType<typeof Modal.confirm>)
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     fireEvent.click(await screen.findByText('Delete'))
-    await waitFor(() => expect(confirm).toHaveBeenCalled())
-    const opts = confirm.mock.calls[0][0]
-    expect(opts.title).toBe('Delete this run?')
-    expect(opts.okText).toBe('Delete')
+    // The shared dialog asks (antd's static Modal.confirm never rendered).
+    expect(await screen.findByText('Delete this run?')).toBeTruthy()
     expect(del).not.toHaveBeenCalled()
-    ;(opts.onOk as () => void)()
-    expect(del).toHaveBeenCalled()
-    confirm.mockRestore()
+    fireEvent.click(screen.getByTestId('risk-ok'))
+    await waitFor(() => expect(del).toHaveBeenCalled())
   })
 })
 

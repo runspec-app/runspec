@@ -986,7 +986,8 @@ export default function App() {
   // Focus rings, checked fills and links: the text accent, or a neutral ink
   // when the brand reads as red (so a focused field never looks invalid).
   const ctrlCol   = controlAccent(brandTheme.accent_color || undefined, isDark)
-  const neutralControls = isDark || isRedBrand(brandTheme.accent_color || undefined)
+  // Checked controls always take the neutral fill (identity-only brand).
+  const neutralControls = true
   const ink       = inkColors(isDark)
   const contentBg = sf.base
   const iconCol   = textMuted(isDark)
@@ -1153,6 +1154,7 @@ export default function App() {
     act('settings', 'Open Settings', () => openSettings(), shortcutHint('settings'))
     act('transfer', 'Files: browse hosts and copy files', () => setView('files'))
     act('sendBar', 'Send to terminals', () => { void openSendBar() })
+    act('denylist', 'Denylist: block runnables (kill switch)…', () => setDenylistOpen(true))
     act('theme', isDark ? 'Switch to light theme' : 'Switch to dark theme', toggleTheme)
     act('docs', 'Open documentation', () => { bridge.open_docs().catch(console.error) })
     act('help', 'Keyboard shortcuts', () => setShortcutsOpen(true), shortcutHint('help'))
@@ -1209,7 +1211,9 @@ export default function App() {
   return (
     <ThemeContext.Provider value={isDark}>
     <FeaturesContext.Provider value={features}>
-      <AccentContext.Provider value={titleCol}>
+      {/* Components read the control colour; the brand stays on the title and
+          the selected tab's bar (identity only). */}
+      <AccentContext.Provider value={ctrlCol}>
       <ConfigProvider theme={{
           algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
           token: {
@@ -1243,7 +1247,10 @@ export default function App() {
             motionDurationSlow: '0.24s',
             // Buttons, links, active tabs, switches: the white-label accent, else
             // runspec teal.
-            colorPrimary: brandTheme.accent_color || BRAND_PRIMARY,
+            // Ant paints selection, sort arrows, pagination, sliders and
+            // spinners in colorPrimary: the neutral control colour, not the
+            // brand (a deep brand on dark was 1.05:1 on the active sort arrow).
+            colorPrimary: ctrlCol,
             // Ant's own dim text (Text type="secondary", descriptions,
             // placeholders) is a 25–45% alpha of the text colour, which lands
             // under 4.5:1 (placeholders ~2:1). Route it through the muted
@@ -1271,11 +1278,12 @@ export default function App() {
           },
           components: {
             // Active tab text and its underline: the text accent, not the fill.
-            Tabs: { itemSelectedColor: titleCol, itemActiveColor: titleCol, itemHoverColor: titleCol, inkBarColor: titleCol },
+            // The selected tab's bar is identity (the brand); its text is text.
+            Tabs: { itemSelectedColor: textColor(isDark), itemActiveColor: textColor(isDark), itemHoverColor: textColor(isDark), inkBarColor: titleCol },
             Card: { colorBgContainer: sf.raised, colorBorderSecondary: sf.border, boxShadowTertiary: sf.shadowSm },
             Modal: { contentBg: sf.overlay, headerBg: sf.overlay, footerBg: sf.overlay },
             Drawer: { colorBgElevated: sf.overlay },
-            Table: { headerBg: sf.overlay, headerSplitColor: 'transparent', borderColor: sf.border, rowHoverBg: withAlpha(titleCol, isDark ? 0.06 : 0.04) },
+            Table: { headerBg: sf.overlay, headerSplitColor: 'transparent', borderColor: sf.border, rowHoverBg: withAlpha(ctrlCol, isDark ? 0.06 : 0.04) },
             Tag: { borderRadiusSM: 4 },
             // Primary buttons are ink, not the brand (inkColors): routine actions
             // stay neutral and only danger is hot. Hover on a default button
@@ -1286,8 +1294,8 @@ export default function App() {
               primaryColor: ink.text, primaryShadow: 'none', colorPrimaryBorder: ctrlCol,
             },
             // Ant paints these in colorPrimary as TEXT; use the text accent.
-            Pagination: { itemActiveColor: titleCol, itemActiveColorHover: titleCol },
-            Menu: { itemSelectedColor: titleCol },
+            Pagination: { itemActiveColor: ctrlCol, itemActiveColorHover: ctrlCol },
+            Menu: { itemSelectedColor: ctrlCol },
             // A focused field's border is Ant's colorPrimary, the raw brand: a
             // deep brand on the dark surface was 1.2:1. Use the readable accent
             // for the focus border everywhere a field takes focus.
@@ -1472,12 +1480,12 @@ export default function App() {
                         display: 'flex', alignItems: 'center', gap: 8,
                         padding: '8px 12px 8px 14px', cursor: 'pointer',
                         borderLeft: selectedHost === h.name
-                          ? `2px solid ${titleCol}`
+                          ? `2px solid ${ctrlCol}`
                           : '2px solid transparent',
                         // Selected fill is inline (wins over the CSS :hover rule);
                         // unselected rows leave background to .rs-host-row:hover.
                         background: selectedHost === h.name
-                          ? withAlpha(titleCol, isDark ? 0.1 : 0.07)
+                          ? withAlpha(ctrlCol, isDark ? 0.1 : 0.07)
                           : undefined,
                       }}
                     >
@@ -2010,7 +2018,7 @@ export default function App() {
                             <div key={`${r.host}/${r.room}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
                               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 <span style={{ color: stateColor(r), marginRight: 6 }}>●</span>
-                                <span style={{ color: titleCol }}>{r.queue || r.room}</span>
+                                <span style={{ color: ctrlCol }}>{r.queue || r.room}</span>
                                 <span style={{ color: iconCol }}> · {r.host}</span>
                               </span>
                               <span style={{ color: stateColor(r), flexShrink: 0 }}>{st}</span>
@@ -2032,7 +2040,7 @@ export default function App() {
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
                       <CommentOutlined className={active && !activeUp ? 'rs-pulse' : undefined} style={{ fontSize: 12, color: dot }} />
-                      <span style={{ color: titleCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+                      <span style={{ color: ctrlCol, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
                         {label}
                       </span>
                     </div>
@@ -2067,7 +2075,7 @@ export default function App() {
                       <div style={{ color: iconCol }}>No runnables discovered yet.</div>
                     ) : catalogue.hostsBreakdown.map(h => (
                       <div key={h.host} style={{ marginBottom: 5 }}>
-                        <div style={{ fontWeight: 600, color: titleCol }}>
+                        <div style={{ fontWeight: 600, color: ctrlCol }}>
                           {h.host} <span style={{ fontWeight: 400, color: iconCol }}>· {h.total}</span>
                         </div>
                         <div style={{ paddingLeft: 8 }}>
@@ -2099,7 +2107,7 @@ export default function App() {
                   <span>
                     <span style={{
                       fontVariantNumeric: 'tabular-nums',
-                      color: countFlash ? 'var(--rs-ok)' : titleCol,
+                      color: countFlash ? 'var(--rs-ok)' : ctrlCol,
                       fontWeight: countFlash ? 600 : 400,
                       transition: 'color 0.6s ease, font-weight 0.6s ease',
                     }}>{catalogue.distinct}</span>
@@ -2139,14 +2147,14 @@ export default function App() {
                     content={
                       <div style={{ maxWidth: 320, fontSize: 13 }}>
                         <div style={{ marginBottom: 6, color: iconCol }}>
-                          <span style={{ color: titleCol, fontVariantNumeric: 'tabular-nums' }}>{ctx.total_tokens.toLocaleString()}</span>
+                          <span style={{ color: ctrlCol, fontVariantNumeric: 'tabular-nums' }}>{ctx.total_tokens.toLocaleString()}</span>
                           {' '}of {ctx.window.toLocaleString()} tokens ({pct}%)
                           {ctx.cache_hit_pct > 0 && <span> · {ctx.cache_hit_pct}% cached</span>}
                         </div>
                         {shown.map(b => (
                           <div key={b.key} style={{ marginBottom: 4 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                              <span style={{ color: titleCol }}>
+                              <span style={{ color: ctrlCol }}>
                                 {CTX_BUCKET_LABELS[b.key] || b.key}
                                 {b.key === 'memory' && pins > 0 && <span style={{ color: iconCol }}> · {pins} pinned</span>}
                                 {b.key === 'history' && (ctx.history_msgs ?? 0) > 0 && <span style={{ color: iconCol }}> · {ctx.history_msgs} msgs</span>}
@@ -2194,7 +2202,7 @@ export default function App() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}>
                       <DashboardOutlined style={{ fontSize: 12, color: dot }} />
                       <span>
-                        <span style={{ fontVariantNumeric: 'tabular-nums', color: titleCol }}>{fmtTokens(ctx.total_tokens)}</span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums', color: ctrlCol }}>{fmtTokens(ctx.total_tokens)}</span>
                         {' / '}{fmtTokens(ctx.window)}
                         <span style={{ color: dot }}> · {pct}%</span>
                       </span>

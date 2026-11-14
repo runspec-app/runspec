@@ -20,6 +20,7 @@ import { Markdown } from '../components/Markdown'
 import {
   MONO_FONT, RADIUS, surfaces, textColor, textFaint, textMuted, textSecondary, useAccent, useIsDark, withAlpha,
 } from '../ThemeContext'
+import { AskFirst } from '../components/risk'
 
 const { Text } = Typography
 
@@ -374,10 +375,13 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus, onRun
                   </Text>
                   <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                     <Button size="small" icon={<EditOutlined />} onClick={() => setEditing({ path: draft.path, entity: draft.entity })}>Edit</Button>
-                    <Popconfirm title="Discard your edit to this page?" description={draft.proposed ? 'It stays in your merge request until you change that branch.' : 'It can\u2019t be undone.'}
-                      okText="Discard" okButtonProps={{ danger: true }} onConfirm={() => { bridge.knowledge_draft_discard(draft.path).then(load).catch(load) }}>
+                    <AskFirst onConfirm={() => { bridge.knowledge_draft_discard(draft.path).then(load).catch(load) }} ask={{
+                      level: 'local', title: 'Discard your edit to this page?', action: draft.path,
+                      consequence: draft.proposed ? 'It stays in your merge request until you change that branch.' : 'It can\u2019t be undone.',
+                      okText: 'Discard',
+                    }}>
                       <Button size="small">Discard</Button>
-                    </Popconfirm>
+                    </AskFirst>
                   </span>
                 </div>
                 <DiffView diff={draft.diff} />
@@ -451,11 +455,13 @@ function ToolFacts({ facts, drafted, onAddToPage, onConvertAll }: {
         <section>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
             <h3 style={headingStyle(isDark)}>Team facts not on the page yet</h3>
-            <Popconfirm title="Add every approved team fact to its page?"
-              description="Every approved team fact that isn't on a page yet, for any tool, becomes an edit of its page. You see each edit before you propose it, and can discard it."
-              okText="Add to pages" onConfirm={onConvertAll}>
-              <a role="button" style={{ fontSize: 12 }}>Add all facts to pages</a>
-            </Popconfirm>
+            <AskFirst onConfirm={onConvertAll} ask={{
+              level: 'local', danger: false, title: 'Add every approved team fact to its page?',
+              action: `${team.length} team fact${team.length === 1 ? '' : 's'} become page edits`,
+              consequence: 'You see each edit before you propose it, and can discard it.', okText: 'Add to pages',
+            }}>
+              <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12 }}>Add all facts to pages</Button>
+            </AskFirst>
           </div>
           <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6, color: textColor(isDark), maxWidth: '76ch' }}>
             {team.map(f => (

@@ -36,6 +36,7 @@ import {
 } from '../bridge'
 import { MONO_FONT, statusText, useIsDark, withAlpha } from '../ThemeContext'
 import { EmptyState, StatusTag } from '../components/kit'
+import { AskFirst, useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -157,14 +158,14 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
   // Closing, or switching view or file, drops unsaved edits: ask first, the
   // way switching venvs already does.
   const [dirty, setDirty] = useState(0)
-  const [modalApi, modalHolder] = Modal.useModal()
-  const guard = (then: () => void) => {
+  const [askGuard, modalHolder] = useRiskConfirm()
+  const guard = async (then: () => void) => {
     if (!dirty) { then(); return }
-    modalApi.confirm({
-      title: `Discard ${dirty} unsaved change${dirty === 1 ? '' : 's'}?`,
-      okText: 'Discard', okButtonProps: { danger: true }, autoFocusButton: 'cancel',
-      onOk: () => { setDirty(0); then() },
+    const a = await askGuard({
+      level: 'local', title: `Discard ${dirty} unsaved change${dirty === 1 ? '' : 's'}?`,
+      action: 'Edits not saved to the env files', okText: 'Discard',
     })
+    if (a.ok) { setDirty(0); then() }
   }
 
   return (
@@ -261,7 +262,7 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
 
   const changes = draftChanges(rows)
   const changeCount = Object.keys(changes.set).length + changes.unset.length
-  const [switchModal, switchHolder] = Modal.useModal()
+  const [askSwitch, switchHolder] = useRiskConfirm()
   useEffect(() => { onDirty(changeCount) }, [changeCount, onDirty])
   useEffect(() => () => onDirty(0), [onDirty])
 
@@ -396,13 +397,13 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
           placeholder="Pick a venv"
           loading={loadingTargets}
           value={selected || undefined}
-          onChange={v => {
+          onChange={async v => {
             if (changeCount === 0) { setSelected(v); return }
-            switchModal.confirm({
-              title: `Discard ${changeCount} unsaved change${changeCount === 1 ? '' : 's'}?`,
-              okText: 'Discard', okButtonProps: { danger: true }, autoFocusButton: 'cancel',
-              onOk: () => setSelected(v),
+            const a = await askSwitch({
+              level: 'local', title: `Discard ${changeCount} unsaved change${changeCount === 1 ? '' : 's'}?`,
+              action: `Edits to ${target?.host} · ${target?.venv}`, okText: 'Discard',
             })
+            if (a.ok) setSelected(v)
           }}
           options={options}
           optionFilterProp="label"
@@ -470,23 +471,21 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
                 <Button size="small" icon={<PlusOutlined />} disabled={!newKey} onClick={() => addKey(newKey)}>Add</Button>
                 <div style={{ flex: 1 }} />
                 <Button size="small" disabled={!changeCount} onClick={() => setRows(draftFromView(view))}>Discard</Button>
-                <Popconfirm
-                  title={`Save ${changeCount} change${changeCount === 1 ? '' : 's'}?`}
-                  description={
+                <AskFirst onConfirm={save} disabled={!changeCount || !view.writable} ask={{
+                  level: 'local', danger: false, okText: 'Save',
+                  title: `Save ${changeCount} change${changeCount === 1 ? '' : 's'}?`,
+                  action: (
                     <span style={{ fontSize: 13 }}>
                       {Object.keys(changes.set).length > 0 && <>Set: <Text code>{Object.keys(changes.set).join(', ')}</Text><br /></>}
                       {changes.unset.length > 0 && <>Remove: <Text code>{changes.unset.join(', ')}</Text><br /></>}
                       on {target?.host} · {target?.venv}
                     </span>
-                  }
-                  okText="Save"
-                  onConfirm={save}
-                  disabled={!changeCount || !view.writable}
-                >
+                  ),
+                }}>
                   <Button size="small" type="primary" icon={<SaveOutlined />} loading={saving} disabled={!changeCount || !view.writable}>
                     Save{changeCount ? ` (${changeCount})` : ''}
                   </Button>
-                </Popconfirm>
+                </AskFirst>
               </Space>
             </>
           )}
@@ -865,9 +864,14 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
     }
   }
 
-  const reload = () => {
+  const [askReload, reloadHolder] = useRiskConfirm()
+  const reload = async () => {
     if (!editCount) { load(supported); return }
-    Modal.confirm({ title: 'Discard unsaved changes?', okText: 'Discard and reload', onOk: () => load(supported) })
+    const a = await askReload({
+      level: 'local', title: `Discard ${editCount} unsaved change${editCount === 1 ? '' : 's'} and reload?`,
+      action: 'Reload every venv\'s file from its host', okText: 'Discard and reload',
+    })
+    if (a.ok) load(supported)
   }
 
   const renderCell = (refs: string[], key: string, common: string | null, distinct: number, letters: Map<string, string>) => {
@@ -1049,6 +1053,7 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
 
   return (
     <div>
+      {reloadHolder}
       <style>{'.rs-env-grid .rs-env-cell-remove{opacity:0}.rs-env-grid td:hover .rs-env-cell-remove,.rs-env-grid td:focus-within .rs-env-cell-remove{opacity:1}'}</style>
       <Space wrap style={{ marginBottom: 8, width: '100%' }}>
         <Input
@@ -1123,9 +1128,10 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
         <div style={{ flex: 1 }} />
         <Text type="secondary" style={{ fontSize: 12 }}>Click a cell to edit it, or a variable to see all its values.</Text>
         <Button size="small" disabled={!editCount} onClick={() => setDraft({})}>Discard</Button>
-        <Popconfirm
-          title={`Save ${editCount} change${editCount === 1 ? '' : 's'} in ${venvsEdited} venv${venvsEdited === 1 ? '' : 's'}?`}
-          description={
+        <AskFirst onConfirm={save} disabled={!editCount} ask={{
+          level: 'fleet', danger: false, okText: 'Save',
+          title: `Save ${editCount} change${editCount === 1 ? '' : 's'} in ${venvsEdited} venv${venvsEdited === 1 ? '' : 's'}?`,
+          action: (
             <div style={{ fontSize: 13, maxHeight: 260, overflowY: 'auto', maxWidth: 520 }}>
               {changeGroups.map(g => (
                 <div key={g.refs[0]} style={{ marginBottom: 4 }}>
@@ -1138,15 +1144,12 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
               ))}
               <Text type="secondary" style={{ fontSize: 12 }}>Each file changes only these keys, and only if it hasn't changed since it was loaded.</Text>
             </div>
-          }
-          okText="Save"
-          onConfirm={save}
-          disabled={!editCount}
-        >
+          ),
+        }}>
           <Button size="small" type="primary" icon={<SaveOutlined />} loading={saving} disabled={!editCount}>
             Save{editCount ? ` (${editCount})` : ''}
           </Button>
-        </Popconfirm>
+        </AskFirst>
       </Space>
 
       <Modal

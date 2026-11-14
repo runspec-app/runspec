@@ -64,6 +64,7 @@ class _StubBridge:
     _confirm_decision = Bridge._confirm_decision
     _confirm_card_view = Bridge._confirm_card_view
     _confirm_runs_as = Bridge._confirm_runs_as
+    _confirm_target_host = Bridge._confirm_target_host
     # Pre-gate command/arg validation for run_runnable (search mode).
     _group_fanout_calls = Bridge._group_fanout_calls
     _preflight_run_runnable = Bridge._preflight_run_runnable

@@ -38,9 +38,9 @@ html, body, #root {
    in sync with the (possibly white-labelled) accent colour. */
 :root {
   --rs-accent: #3cc7b6;
-  /* Focus rings and links: the accent, or a neutral when the brand reads as
-     red (App.tsx sets it from controlAccent). */
-  --rs-focus: #3cc7b6;
+  /* Focus rings, links and selections: the neutral control colour (the brand
+     is identity only; App.tsx sets it from controlAccent). */
+  --rs-focus: #c3ccd2;
   --rs-hover: rgba(255, 255, 255, 0.05);
   --rs-scroll-thumb: #4d5860;
   --rs-scroll-thumb-hover: #5f6b74;
@@ -85,6 +85,7 @@ html[data-theme='light'] {
   --rs-border: #c3c9ce;
   --rs-border-strong: #adb4ba;
   --rs-field: #6e7880;
+  --rs-focus: #3d454c;
   --rs-divider: rgba(20, 30, 40, 0.08);
   --rs-shadow-sm: 0 1px 2px rgba(20, 30, 40, 0.10);
   --rs-shadow-md: 0 4px 14px rgba(20, 30, 40, 0.12);
@@ -136,7 +137,7 @@ body {
   transition: background 0.12s;
 }
 .rs-sidebar-resize:hover::after,
-.rs-sidebar-resize:active::after { background: var(--rs-accent); }
+.rs-sidebar-resize:active::after { background: var(--rs-focus, var(--rs-accent)); }
 
 /* Top nav tabs (raw <button>s — base look lives here so :hover/:focus work). */
 .rs-nav-tab {
@@ -335,8 +336,8 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
    Alt+D flashes an accent ring so the operator sees which card the next
    press will answer. */
 @keyframes rs-flash {
-  0%   { box-shadow: 0 0 0 0 var(--rs-accent); }
-  40%  { box-shadow: 0 0 0 3px var(--rs-accent); }
+  0%   { box-shadow: 0 0 0 0 var(--rs-focus, var(--rs-accent)); }
+  40%  { box-shadow: 0 0 0 3px var(--rs-focus, var(--rs-accent)); }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
 .rs-flash { animation: rs-flash 900ms ease-out 2; }
@@ -370,7 +371,7 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
 
 /* Schedules tab option cards (ScheduleScopeCards): hover + keyboard focus. */
 .rs-scope-card { transition: background var(--rs-motion), border-color var(--rs-motion); }
-.rs-scope-card[aria-checked='false']:hover { background: var(--rs-hover) !important; border-color: var(--rs-accent) !important; }
+.rs-scope-card[aria-checked='false']:hover { background: var(--rs-hover) !important; border-color: var(--rs-focus, var(--rs-accent)) !important; }
 .rs-scope-card:focus-visible { outline: 2px solid var(--rs-focus, var(--rs-accent)); outline-offset: 2px; }
 
 /* Rows and cards made pressable (kit.pressable) show where keyboard focus is. */
@@ -384,8 +385,8 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
 /* A ghost primary button paints its text and border in the raw brand colour;
    a deep brand on a dark surface fell to 1.4:1. Use the readable accent. */
 .ant-btn-primary.ant-btn-background-ghost:not(:disabled) {
-  color: var(--rs-accent);
-  border-color: var(--rs-accent);
+  color: var(--rs-focus, var(--rs-accent));
+  border-color: var(--rs-focus, var(--rs-accent));
 }
 
 /* Ant derives link, warning-text and outlined-danger colours from the raw
@@ -393,6 +394,10 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
    surface, warning text 4.0:1, the outlined Stop 4.3:1). Pin them. */
 a.ant-typography:not(.ant-typography-disabled),
 .ant-typography a:not(.ant-typography-disabled) { color: var(--rs-focus, var(--rs-accent)); }
+/* Links are the neutral control colour, so they carry an underline to stay
+   distinct from body text. */
+a.ant-typography:not(.ant-typography-disabled),
+.ant-typography a:not(.ant-typography-disabled) { text-decoration: underline; text-underline-offset: 2px; }
 .ant-typography.ant-typography-warning { color: var(--rs-warn); }
 .ant-typography.ant-typography-danger { color: var(--rs-danger); }
 .ant-typography.ant-typography-success { color: var(--rs-ok); }

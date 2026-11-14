@@ -167,7 +167,7 @@ describe('AllSchedulesView host actions', () => {
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1))
 
     fireEvent.click(within(row('nightly')).getByLabelText('Remove'))
-    fireEvent.click(within(await waitFor(() => document.querySelector('.ant-popconfirm') as HTMLElement)).getByRole('button', { name: 'Remove' }))
+    fireEvent.click(await screen.findByTestId('risk-ok'))
     await waitFor(() => expect(api.host_schedule_remove).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', backend: 'cron', id: 'nightly' }))
 
     fireEvent.click(within(row('gone')).getByLabelText('Sync crontab'))
@@ -181,9 +181,8 @@ describe('AllSchedulesView host actions', () => {
       onRefresh={() => {}} runnables={RUNNABLES} />)
     const row = screen.getByText('nightly').closest('tr') as HTMLElement
     fireEvent.click(within(row).getByLabelText('Run now'))
-    const pop = await waitFor(() => document.querySelector('.ant-popconfirm') as HTMLElement)
-    expect(within(pop).getByText(/as svc/)).toBeTruthy()
-    fireEvent.click(within(pop).getByRole('button', { name: 'Run now' }))
+    expect((await screen.findByTestId('risk-action')).textContent).toMatch(/as svc/)
+    fireEvent.click(screen.getByTestId('risk-ok'))
     await waitFor(() => expect(api.host_schedule_run_now).toHaveBeenCalledWith({ host: 'web-1', venv: 'ops', id: 'nightly' }))
   })
 
@@ -216,7 +215,7 @@ describe('AllSchedulesView host daemon', () => {
     expect(screen.getByText(/kept by systemd --user/)).toBeTruthy()
     expect(screen.getByText(/v0\.6\.2/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Restart/ }))
-    fireEvent.click(within(await waitFor(() => document.querySelector('.ant-popconfirm') as HTMLElement)).getByRole('button', { name: 'Restart' }))
+    fireEvent.click(await screen.findByTestId('risk-ok'))
     await waitFor(() => expect(api.host_scheduler_restart).toHaveBeenCalledWith({ host: 'job-1', venv: 'jobs' }))
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1))
   })
