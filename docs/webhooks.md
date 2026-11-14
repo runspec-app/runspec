@@ -278,7 +278,72 @@ are skipped, since runspec-scheduler never runs as root.
   when you're back. If everyone following a hook is away, its approvals are
   mailed straight away.
 - **Triggers.** Every delivery is also a `webhook` event for the console's
-  triggers (`event` is the hook name, fields are flattened to `a.b` keys).
+  triggers (`event` is the hook name, fields are flattened to `a.b` keys). See
+  [Webhooks in console triggers](#webhooks-in-console-triggers).
+
+## Webhooks in console triggers
+
+A hook doesn't have to run anything on its host. A hook with no rules and no
+`run`, or a rule with no `run`, is a **pass-through**: the host only records
+the delivery (state `event`, "consoles only"), and every console following
+that venv hands it to its triggers. That's how a request from Jira or Grafana
+reaches a console's agent, which can read it, use its tools and runbooks, and
+ask before it changes anything.
+
+```toml
+# on the host: no run, so nothing runs here
+[[hook]]
+name   = "incident"
+token_sha256 = "…"
+fields = { key = "issue.key", summary = "issue.fields.summary" }
+```
+
+```toml
+# on a console: config/runspec_triggers.toml
+[triggers.incident-triage]
+source = "webhook"
+event  = "incident"        # the hook's name
+mode   = "agent"
+rules  = "Look at the incident, check the hosts it names, and post what you find."
+claim  = true              # one console takes it (see below)
+```
+
+- **Fields.** The hook's fields are the event's fields (`{{ key }}`,
+  `{{ summary }}` in a rule trigger's `map` or `match`; a field that is itself
+  a table is flattened to `a.b` keys). The event also carries `body` (the raw
+  request), `hook`, `host`, `venv`, `id` (the delivery) and `state` (what the
+  host did with it); a hook field with the same name wins. An agent-mode
+  trigger gets the request written out: the hook, where it came from, what the
+  host did with it, the fields and the body.
+- **Which consoles.** Every console that follows the venv (*Follow* on
+  **Automation → Webhooks**, or `hooks = [...]` on its host entry) gets every
+  delivery of the hooks it follows. One that wasn't running when a request
+  came in catches up on what arrived within its `[webhooks] replay` window
+  (default `15m`) when it reconnects; older ones are counted as missed, not
+  fired.
+- **The Triggers editor** offers `webhook` as a source and lists the hook names
+  of the venvs the console follows as events.
+
+### One console takes it: claim
+
+Without `claim`, every console following the venv runs the trigger, so three
+consoles mean three agents working on one request. With `claim = true` (the
+same switch shared-mailbox triggers use) a matched request parks as **Awaiting
+claim** with a **Claim** button on every console instead. Clicking it runs
+`runspec-scheduler hooks claim --id <delivery>` on the host as the venv owner:
+the first claim wins, the winning console runs the trigger, and the others turn
+to **claimed by `<name>`** as soon as the claim reaches their follow stream.
+The name is your login on the host (`SUDO_USER`), the same as for approvals.
+
+A claim only decides which console's trigger acts. It doesn't approve, run or
+settle anything on the host, and it works for any delivery, including ones
+the host ran itself. Claiming needs runspec-scheduler 0.13.0 or later on the
+host and runspec-console 0.445.0 or later; an older host says so on the card
+and the request stays parked. From the host:
+
+```bash
+bin/runspec-scheduler hooks claim --id 17 --note "mine"
+```
 
 ## Approving from the host
 

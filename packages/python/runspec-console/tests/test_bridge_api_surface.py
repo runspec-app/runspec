@@ -76,6 +76,7 @@ EXPECTED = {
     "check_api_key_command",
     "check_dir_exists",
     "check_for_update",
+    "claim_card",
     "claim_email",
     "clear_chat",
     "close_adhoc",

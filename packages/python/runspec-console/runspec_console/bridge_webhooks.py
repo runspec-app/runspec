@@ -101,9 +101,17 @@ class WebhooksMixin:
                 "presence": None,
                 "away": "",
                 "away_at": 0.0,
+                # Trigger cards this console is claiming right now: its own
+                # claim comes back in the follow stream and must not read as
+                # "claimed elsewhere".
+                "claiming": set(),
             }
             self._webhook_state = state
         return state
+
+    def _wh_claiming(self) -> set[str]:
+        claiming: set[str] = self._wh()["claiming"]
+        return claiming
 
     def _webhook_targets(self) -> list[tuple[str, str, str, list[str]]]:
         """``(host, venv, venv path, hooks)`` for each venv of each host entry
@@ -148,6 +156,7 @@ class WebhooksMixin:
                 self._webhook_opener(host, venv, rp),
                 on_change=self._on_webhook_change,
                 on_arrival=self._on_webhook_arrival,
+                on_claim=self._on_webhook_claim,
                 replay_s=replay_s,
             )
         # Venvs no longer followed are forgotten.
@@ -301,6 +310,44 @@ class WebhooksMixin:
             del cue
 
     # ── presence: Rota off shift / locked screen = muted ─────────────────────
+
+    def _webhook_hook_names(self) -> list[str]:
+        """Hook names a ``source = "webhook"`` trigger can name as its event:
+        the hooks on every followed venv, plus names a host entry follows."""
+        names: set[str] = set()
+        for vs in list(self._wh()["venvs"].values()):
+            for h in vs.hook_list:
+                if h.get("name"):
+                    names.add(str(h["name"]))
+        for entry in getattr(self, "_hosts", []) or []:
+            names.update(n for n in wh.followed_hooks(entry) if n and n != "*")
+        return sorted(names)
+
+    def _on_webhook_claim(self, state: wh.VenvHooks, delivery: dict[str, Any]) -> None:
+        """Someone claimed a delivery on its host: a card this console parked
+        for it (a ``claim = true`` webhook trigger) is resolved as "claimed by
+        X". The claim this console is making itself is left to
+        ``_claim_webhook_card``."""
+        engine = getattr(self, "_trigger_engine", None)
+        owner = str(delivery.get("claimed_by") or "")
+        did = delivery.get("id")
+        if engine is None or not owner or not isinstance(did, int):
+            return
+        claiming = self._wh_claiming()
+        for card_id in engine.parked_claim_ids():
+            if card_id in claiming:
+                continue
+            parked = engine.parked_claim(card_id)
+            if parked is None or parked[1].source != "webhook":
+                continue
+            meta = parked[1].payload.get("webhook")
+            meta = meta if isinstance(meta, dict) else {}
+            if (
+                meta.get("host") == state.host
+                and meta.get("venv") == state.venv
+                and meta.get("id") == did
+            ):
+                engine.mark_claimed_elsewhere(card_id, owner)
 
     def _webhook_away_reason(self) -> str:
         try:

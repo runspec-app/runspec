@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS delivery (
     mail TEXT NOT NULL DEFAULT '',
     output TEXT,
     output_truncated INTEGER NOT NULL DEFAULT 0,
+    claimed_by TEXT NOT NULL DEFAULT '',
+    claimed_ts REAL,
+    claim_note TEXT NOT NULL DEFAULT '',
     updated_ts REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS delivery_state ON delivery(state);
@@ -118,7 +121,13 @@ CREATE TABLE IF NOT EXISTS follower (
 """
 
 #: Columns a spool from an older runspec-scheduler gets on open.
-_ADDED_COLUMNS = (("output", "TEXT"), ("output_truncated", "INTEGER NOT NULL DEFAULT 0"))
+_ADDED_COLUMNS = (
+    ("output", "TEXT"),
+    ("output_truncated", "INTEGER NOT NULL DEFAULT 0"),
+    ("claimed_by", "TEXT NOT NULL DEFAULT ''"),
+    ("claimed_ts", "REAL"),
+    ("claim_note", "TEXT NOT NULL DEFAULT ''"),
+)
 
 #: A follower not seen for this long isn't following.
 FOLLOWER_STALE_SECONDS = 30.0
@@ -450,6 +459,9 @@ def snapshot(row: dict[str, Any], *, body: bool = False) -> dict[str, Any]:
         "exit_code": row["exit_code"],
         "emailed": _iso(row["emailed_ts"]),
         "mail": row.get("mail", ""),
+        "claimed_by": row.get("claimed_by") or "",
+        "claimed": _iso(row.get("claimed_ts")),
+        "claim_note": row.get("claim_note") or "",
         "item": row["item"],
         "request": row["request"],
         "content_type": row["content_type"],

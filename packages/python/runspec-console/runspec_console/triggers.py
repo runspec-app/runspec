@@ -278,12 +278,14 @@ class Trigger:
     # One model call, no runnable tools — it extracts, it does not act or branch.
     pre_turn: str = ""
     reply: ReplySettings = field(default_factory=ReplySettings)
-    # Shared-mailbox claim gate (outlook/new_mail only). When ``claim`` is true a
-    # matched mail does NOT auto-run: its card parks in ``awaiting_claim`` until an
-    # operator clicks Claim; the winning console moves the item into ``claim_folder``
-    # (which must already exist) and then runs the trigger's normal action. This
-    # coordinates several consoles watching one shared folder — exactly one wins.
-    # See docs/design/email-claim-move.md.
+    # Claim gate (outlook/new_mail and webhook). When ``claim`` is true a matched
+    # event does NOT auto-run: its card parks in ``awaiting_claim`` until an
+    # operator clicks Claim, and only the console that wins the claim runs the
+    # trigger's normal action. For mail the claim moves the item into
+    # ``claim_folder`` (which must already exist; see
+    # docs/design/email-claim-move.md); for a webhook it is ``runspec-scheduler
+    # hooks claim`` on the host, first console wins (docs/webhooks.md). This
+    # coordinates several consoles watching one shared mailbox / venv.
     claim: bool = False
     claim_folder: str = ""
     # Outlook categories showing this trigger's progress on the email (see
@@ -474,16 +476,18 @@ class Trigger:
             style=str(reply_raw.get("style") or ""),
         )
 
-        # Shared-mailbox claim gate. Only meaningful for the Outlook new_mail
-        # source; when on it needs a folder to scope to (match.folder) and a
-        # destination folder to move the claimed item into.
+        # Claim gate. For Outlook new_mail it needs a folder to scope to
+        # (match.folder) and a destination folder to move the claimed item into;
+        # a webhook's claim is held on its host, so it needs neither.
         claim = bool(data.get("claim", False))
         claim_folder = str(data.get("claim_folder") or "").strip()
-        if claim:
+        if claim and source == "webhook":
+            claim_folder = ""
+        elif claim:
             if source != "outlook" or event != "new_mail":
                 raise ValueError(
                     f"trigger '{name}': 'claim' is only supported for "
-                    "source='outlook', event='new_mail'."
+                    "source='outlook', event='new_mail' and source='webhook'."
                 )
             if not str(match.get("folder") or "").strip():
                 raise ValueError(
@@ -1064,14 +1068,26 @@ class TriggerEngine:
         # card sits in AWAITING_CLAIM and is not submitted to the executor.
         if claim_gate and trigger.claim and card.id not in self._claim_granted:
             self._parked_claims[card.id] = (card, trigger, event)
-            card.move(
-                Column.AWAITING_CLAIM,
-                claim=True,
-                claim_folder=trigger.claim_folder,
-                entry_id=str(event.payload.get("entry_id") or ""),
-                mailbox=str(event.payload.get("mailbox") or ""),
-                folder=str(event.payload.get("folder") or ""),
-            )
+            if event.source == "webhook":
+                meta = event.payload.get("webhook")
+                meta = meta if isinstance(meta, dict) else {}
+                card.move(
+                    Column.AWAITING_CLAIM,
+                    claim=True,
+                    hook=str(meta.get("hook") or event.type),
+                    host=str(meta.get("host") or ""),
+                    venv=str(meta.get("venv") or ""),
+                    delivery=meta.get("id"),
+                )
+            else:
+                card.move(
+                    Column.AWAITING_CLAIM,
+                    claim=True,
+                    claim_folder=trigger.claim_folder,
+                    entry_id=str(event.payload.get("entry_id") or ""),
+                    mailbox=str(event.payload.get("mailbox") or ""),
+                    folder=str(event.payload.get("folder") or ""),
+                )
             self._stage("awaiting_claim", trigger, event, card)
             return None
         self._stage("matched", trigger, event, card)
@@ -1092,7 +1108,7 @@ class TriggerEngine:
             if card.terminal:
                 self._stage(outcome_stage(card), trigger, event, card)
 
-    # -- claim gate (shared-mailbox coordination) --
+    # -- claim gate (shared mailbox / webhook coordination) --
 
     def parked_claim(self, card_id: str) -> tuple[Trigger, Event] | None:
         """The ``(trigger, event)`` of a card parked awaiting claim, or ``None``.

@@ -120,6 +120,7 @@ map from:
 - `outlook` `new_mail`: `from`, `to`, `subject`, `body`, `received`, `categories`, `entry_id`, `mailbox`, `folder`, `conversation_id` (`mailbox`/`folder` tag which watched folder the mail landed in — a claim trigger matches on `folder`)
 - `outlook` `reminder`: `subject`, `start`, `location`, `is_meeting`, `organizer`
 - `notifications` `toast`: `app`, `title`, `body`, `text`
+- `webhook` `<hook name>`: the hook's fields (flattened to `a.b` keys), plus `body`, `hook`, `host`, `venv`, `id`, `state` (a field with the same name wins; see [Webhooks in console triggers](webhooks.md#webhooks-in-console-triggers))
 
 A rule trigger can also run a **bounded list of runnables** (an `actions`
 array with `action_mode = "sequential"` or `"parallel"`, up to 10) behind one
@@ -180,8 +181,10 @@ flips to **"claimed by X"** and its Claim button disappears.
 
 - `claim_folder` **must already exist** — create it in Outlook first (a missing
   folder shows an error on the card and the mail stays parked).
-- `claim` needs `match.folder` (the scope) and applies only to `outlook`
-  `new_mail`.
+- `claim` needs `match.folder` (the scope) for `outlook` `new_mail`. It also
+  works for `webhook` triggers, with no folder: the host the webhook came in on
+  decides who claimed first (see [Webhooks in console
+  triggers](webhooks.md#webhooks-in-console-triggers)).
 - The Triggers editor exposes **Folder to match**, a **Claim-based system**
   switch, and the **Claim folder** field for this.
 

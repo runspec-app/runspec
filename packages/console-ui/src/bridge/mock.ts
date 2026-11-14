@@ -2761,6 +2761,10 @@ export const mockApi: BridgeApi = {
     console.log('mock: claim_email', cardId)
     return { claimed: true, owner: 'you' }
   },
+  claim_card: async (cardId: string) => {
+    console.log('mock: claim_card', cardId)
+    return { claimed: true, owner: 'you' }
+  },
   delete_trigger: async (name: string) => {
     console.log('mock: delete_trigger', name)
     return { ok: true }

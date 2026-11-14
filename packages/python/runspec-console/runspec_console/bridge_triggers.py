@@ -1634,6 +1634,9 @@ class TriggersMixin:
             event_types = src.event_types() if src is not None else []
             if sid == "schedule":
                 event_types = schedule_events
+            elif sid == "webhook":
+                names = getattr(self, "_webhook_hook_names", None)
+                event_types = names() if callable(names) else []
             sources_info.append(
                 {
                     "id": sid,
@@ -2023,6 +2026,8 @@ class TriggersMixin:
                 "error": "This card is no longer awaiting a claim.",
             }
         trigger, event = parked
+        if event.source == "webhook":
+            return self._claim_webhook_card(card_id, event)
         payload = event.payload
         entry_id = str(payload.get("entry_id") or "")
         mailbox = str(payload.get("mailbox") or "")
@@ -2069,6 +2074,63 @@ class TriggersMixin:
         engine.mark_claimed_elsewhere(card_id, other)
         return {"claimed": False, "owner": other}
 
+    def claim_card(self, card_id: str) -> dict[str, Any]:
+        """Claim the event parked behind trigger card ``card_id`` (the Claim
+        button), whatever its source: a shared-mailbox email (moved into the
+        trigger's claim folder) or a webhook delivery (``hooks claim`` on its
+        host). Only the console that wins runs the trigger. Returns
+        ``{claimed: bool, owner?: str, error?: str}``."""
+        return self.claim_email(card_id)
+
+    def _claim_webhook_card(self, card_id: str, event: Any) -> dict[str, Any]:
+        """Claim a webhook delivery on its host. The host's spool decides: the
+        first ``runspec-scheduler hooks claim`` wins, and every console
+        following the venv sees the claim in its follow stream (where
+        :meth:`_on_webhook_claim` resolves the losers' cards)."""
+        engine = self._trigger_engine
+        meta = event.payload.get("webhook")
+        meta = meta if isinstance(meta, dict) else {}
+        host = str(meta.get("host") or "")
+        venv = str(meta.get("venv") or "")
+        did = meta.get("id")
+        if not host or not venv or not isinstance(did, int):
+            return {
+                "claimed": False,
+                "error": "This webhook card doesn't say which delivery it is.",
+            }
+        claiming: set[str] = self._wh_claiming()  # type: ignore[attr-defined]
+        claiming.add(card_id)
+        try:
+            res = self._webhook_call(  # type: ignore[attr-defined]
+                host, venv, ["hooks", "claim", "--id", str(did)]
+            )
+        finally:
+            claiming.discard(card_id)
+        got = res.get("json") or {}
+        if not res.get("ok") or not got.get("ok", False):
+            error = str(res.get("error") or got.get("error") or "")
+            if "unknown command" in error.lower() and "claim" in error:
+                error = (
+                    f"{host} {venv} needs runspec-scheduler 0.13.0 or later to "
+                    "claim webhook deliveries."
+                )
+            return {"claimed": False, "error": error or "The claim failed."}
+        self._webhook_audit(  # type: ignore[attr-defined]
+            "webhook.claim",
+            {"host": host, "venv": venv},
+            id=did,
+            ok=bool(got.get("won")),
+        )
+        if engine is None:
+            return {"claimed": False, "error": "The trigger engine isn't running."}
+        if got.get("won"):
+            engine.resume_claim(card_id)
+            delivery = got.get("delivery") or {}
+            return {"claimed": True, "owner": str(delivery.get("claimed_by") or "")}
+        owner = str(got.get("owner") or "")
+        engine.mark_claimed_elsewhere(card_id, owner)
+        return {"claimed": False, "owner": owner}
+
     def _ensure_claim_poll(self) -> None:
         """Start the cross-console claim poll daemon once. It flips a parked card to
         "claimed by X" when another console wins the item (its source message moves
@@ -2100,6 +2162,8 @@ class TriggersMixin:
                     if parked is None:
                         continue
                     trigger, event = parked
+                    if event.source != "outlook":
+                        continue  # a webhook claim arrives in its follow stream
                     payload = event.payload
                     entry_id = str(payload.get("entry_id") or "")
                     if not entry_id:

@@ -3,7 +3,7 @@
 Read-only: ``list``, ``deliveries``, ``show``, ``check``, ``test``, ``follow``.
 Changes (run as the venv owner; runspec-console runs them with ``sudo -n -u``,
 so the person is ``SUDO_USER``): ``save``, ``remove``, ``token``,
-``settings``, ``approve``, ``deny``, ``mute``, ``unmute``.
+``settings``, ``approve``, ``deny``, ``claim``, ``mute``, ``unmute``.
 
 Every verb prints JSON for programs and text at a terminal (see
 :func:`runspec_scheduler.cli._emit`).
@@ -329,6 +329,30 @@ def decide(config_path: Path, delivery_id: int, verdict: str, note: str) -> dict
     else:
         why = f"it is {row['state']}"
     return {"ok": False, "won": False, "error": f"delivery {delivery_id} can't be {verdict}d: {why}", "delivery": snap}
+
+
+def claim(config_path: Path, delivery_id: int, note: str) -> dict[str, Any]:
+    """``hooks claim``: the first console to claim a delivery runs its trigger."""
+    spool = _spool(config_path)
+    try:
+        won, row = hookrun.claim(spool, delivery_id, hookrun.who_am_i(), note)
+    finally:
+        spool.close()
+    if row is None:
+        return {"ok": False, "won": False, "error": f"no delivery {delivery_id}"}
+    snap = sp.snapshot(row)
+    if won:
+        return {"ok": True, "won": True, "delivery": snap}
+    return {"ok": True, "won": False, "owner": row["claimed_by"], "delivery": snap}
+
+
+def render_claim(payload: dict[str, Any]) -> str:
+    if not payload.get("ok"):
+        return str(payload.get("error"))
+    d = payload["delivery"]
+    if payload.get("won"):
+        return f"Claimed delivery {d['id']} ({d['hook']}) for {d['claimed_by']}."
+    return f"Delivery {d['id']} is already claimed by {payload.get('owner') or 'someone else'}."
 
 
 def _daemon_alive(state: dict[str, Any]) -> bool:

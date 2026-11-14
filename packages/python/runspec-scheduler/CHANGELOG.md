@@ -2,6 +2,19 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.13.0] — 2026-11-14
+
+### Added
+
+- **`hooks claim --id N [--note]`: one console takes a delivery.** The first
+  claim wins (recorded with who, from `SUDO_USER`, and when); a later one
+  answers with who has it. Every console following the venv sees the claim as
+  a `claimed` event in `hooks follow`, so runspec-console 0.445.0 can let one
+  console run a claim-gated `webhook` trigger and show the others who took it.
+  A claim doesn't approve, run or settle anything on the host. Deliveries
+  carry `claimed_by`, `claimed` and `claim_note`; an older spool gets the
+  columns when it is opened. Audit event `hook.claimed`.
+
 ## [0.12.0] — 2026-11-14
 
 ### Changed

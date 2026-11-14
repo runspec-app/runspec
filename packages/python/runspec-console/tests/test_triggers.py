@@ -139,7 +139,7 @@ def test_from_config_full():
             "agent tool allowlist",
         ),
         (
-            # claim only applies to the Outlook new_mail source.
+            # claim only applies to the Outlook new_mail and webhook sources.
             {
                 "name": "t",
                 "source": "schedule",
@@ -1206,3 +1206,16 @@ def test_action_allow_parsed():
         }
     )
     assert t.action_allow == ["create_document", "outlook_draft"]
+
+
+def test_webhook_trigger_can_be_claim_gated_without_a_folder() -> None:
+    t = Trigger.from_config(
+        {
+            "name": "deploys",
+            "source": "webhook",
+            "event": "deploy",
+            "claim": True,
+            "claim_folder": "ignored",
+        }
+    )
+    assert t.claim and t.claim_folder == ""

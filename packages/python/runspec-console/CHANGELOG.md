@@ -9,6 +9,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.445.0] — 2026-11-14
+
+### Added
+
+- **One console takes a webhook: `claim = true` on webhook triggers.** The
+  per-trigger claim switch shared-mailbox triggers use now works for
+  `source = "webhook"` too, so a request several consoles follow isn't acted
+  on by every one of them. A matched request parks as *Awaiting claim* with a
+  *Claim* button; claiming runs `runspec-scheduler hooks claim` on the host as
+  the venv owner, the first console wins and runs the trigger, and the others
+  turn to *claimed by `<name>`* when the claim reaches their follow stream. No
+  claim folder is needed. Needs runspec-scheduler 0.13.0 on the host (an older
+  one says so on the card and the request stays parked). New JS API
+  `claim_card` (any source; `claim_email` still works).
+- **The Triggers editor knows webhooks.** The `webhook` source lists the hook
+  names of the venvs this console follows as events, and shows the
+  *Claim-based system* switch.
+
+### Changed
+
+- **Agent-mode triggers read a webhook request written out:** the hook, the
+  host and venv it came in on, the delivery id, what the host did with it, the
+  fields and the body, instead of every payload key in a list.
+
 ## [0.444.0] — 2026-11-14
 
 ### Changed

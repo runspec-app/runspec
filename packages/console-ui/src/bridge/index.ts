@@ -3438,6 +3438,10 @@ export interface BridgeApi {
   // button). Moves the item into the trigger's claim folder — the winning console
   // runs the action; a loser sees `owner`; a config error leaves it parked.
   claim_email: (cardId: string) => Promise<{ claimed: boolean; owner?: string; error?: string }>
+  // Claim the event parked behind a trigger card, whatever its source: a
+  // shared-mailbox email (moved to the claim folder) or a webhook delivery
+  // (`hooks claim` on its host, first console wins).
+  claim_card: (cardId: string) => Promise<{ claimed: boolean; owner?: string; error?: string }>
   // Schedules mirror the trigger run inbox + event log with their own feeds.
   get_schedule_board: () => Promise<RunCard[]>
   get_schedule_events: () => Promise<TriggerEvent[]>
