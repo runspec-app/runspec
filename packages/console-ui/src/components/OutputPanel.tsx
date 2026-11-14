@@ -1653,14 +1653,15 @@ function ToolCallBlock({
               })}
             </div>
           ) : approveArgs.length > 0 ? (
-            <div style={{ margin: '0 0 10px' }}>
             // The header preview ellipsises; show the full args here, wrapped, so
             // the operator can see exactly what they're approving — a many-arg
             // runnable used to push this (and the buttons) off-screen. This is the
             // path hit when a sandboxed code call arrives via search-mode use_tool
             // (unwrapped, so not editable): render string / line-array values with
             // their REAL newlines (not JSON-escaped \n) so the code is readable,
-            // and auto-grow to a generous cap before scrolling.
+            // and auto-grow to a generous cap before scrolling. (This comment sits
+            // before the <div>: inside JSX children a // line renders as text.)
+            <div style={{ margin: '0 0 10px' }}>
             <pre style={{
               margin: 0, padding: '8px 10px',
               background: c.codeBg, borderRadius: 10,

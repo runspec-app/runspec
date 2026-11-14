@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.430.0] — 2026-11-13
+
+### Fixed
+
+- **The approval card no longer prints a code comment.** Since 0.428.0 a card
+  whose arguments are shown read-only began with the text "// The header
+  preview ellipsises; show the full args here…" above the arguments, because
+  a source comment had ended up inside the rendered markup. A test now checks
+  the card shows no comment text, read-only or while editing.
+- **The page itself has themed text and background colours.** Anything drawn
+  outside a styled container used the browser's black on white; it now uses
+  the theme's text and surface colours in both themes.
+
 ## [0.429.0] — 2026-11-13
 
 ### Changed
