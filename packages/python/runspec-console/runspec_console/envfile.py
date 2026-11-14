@@ -25,7 +25,7 @@ from typing import Any
 FILE_NAME = ".runspec_env"
 #: runspec-scheduler's schedule-only env file: only scheduled fires load it
 #: (``runspec exec --env-file``), on top of ``.runspec_env``.
-SCHEDULES_FILE_NAME = "runspec_schedules.env"
+SCHEDULES_FILE_NAME = ".runspec_scheduler_env"
 #: The console's names for the files it edits (``""`` = ``.runspec_env``).
 FILES = {"": FILE_NAME, "runspec_env": FILE_NAME, "schedules": SCHEDULES_FILE_NAME}
 

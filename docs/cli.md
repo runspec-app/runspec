@@ -856,7 +856,7 @@ runspec exec cron -- list                            # subcommands pass through 
 runspec exec --label nightly --trigger schedule backup
 runspec exec --lock ~/.cache/nightly.lock backup     # recorded 'skipped' if the lock is held
 runspec exec --skip-if-running --timeout 600 report  # skip if already running; kill after 10 min
-runspec exec --env-file /opt/venvs/ops/runspec_schedules.env backup  # add a schedule-only env file
+runspec exec --env-file /opt/venvs/ops/.runspec_scheduler_env backup  # add a schedule-only env file
 ```
 
 What it adds over running the binary directly:
@@ -878,7 +878,7 @@ What it adds over running the binary directly:
   variables to the run's environment: under anything already set (the caller's
   own environment wins) and over the venv's `.runspec_env`, which the runnable
   still loads for the rest. `runspec-scheduler` passes
-  `{venv}/runspec_schedules.env` on every fire, so credentials a schedule needs
+  `{venv}/.runspec_scheduler_env` on every fire, so credentials a schedule needs
   reach its fires and not the interactive runs in the venv. A missing file
   adds nothing. A file that isn't a regular file, is writable by group or
   others, or is owned by another account (not this one or root) is refused:

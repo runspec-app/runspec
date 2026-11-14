@@ -285,7 +285,7 @@ the local venvs and every venv on the hosts that are connected right now (in
 the active profile).
 
 A switch at the top picks the file: `.runspec_env`, or
-`runspec_schedules.env`, the venv's **schedule-only** file. Only
+`.runspec_scheduler_env`, the venv's **schedule-only** file. Only
 runspec-scheduler's fires load the schedules file (on top of `.runspec_env`), so
 credentials a host schedule needs go there rather than in `.runspec_env`, where
 every console, agent and hand-run run in the venv would pick them up. Both

@@ -2,7 +2,7 @@
  * HostScheduleEnv — in the host schedule dialog, the credentials the chosen
  * runnable reads from the environment and where a fire gets them. A host
  * schedule never carries credentials (the fire runs unattended on the host);
- * its fires load the venv's schedule-only `runspec_schedules.env` on top of
+ * its fires load the venv's schedule-only `.runspec_scheduler_env` on top of
  * `.runspec_env`, and interactive runs (console, agent, by hand) load only
  * `.runspec_env`. So a credential belongs in the schedules file: the panel says
  * which are set there, which only sit in `.runspec_env` (every run in the venv
@@ -101,7 +101,7 @@ export function HostScheduleEnv({ host, venv, runnable, command, args, values }:
   const type = !check.ok || missing.length || shared.length ? 'warning' : rows.every(r => r.state === 'file' || r.state === 'schedule') ? 'success' : 'info'
   const plural = (n: number) => `${n} credential${n === 1 ? '' : 's'}`
   const title = !check.ok
-    ? "Couldn't check the venv's runspec_schedules.env"
+    ? "Couldn't check the venv's .runspec_scheduler_env"
     : missing.length
       ? `${plural(missing.length)} not set on the host`
       : shared.length
@@ -125,14 +125,14 @@ export function HostScheduleEnv({ host, venv, runnable, command, args, values }:
         <div style={{ fontSize: 13 }}>
           <div style={{ marginBottom: 6 }}>
             A host schedule never carries credentials: each fire reads them on the host from{' '}
-            <Text code style={{ fontSize: 12 }}>{check.path || 'runspec_schedules.env'}</Text>
+            <Text code style={{ fontSize: 12 }}>{check.path || '.runspec_scheduler_env'}</Text>
             {check.ok && !check.exists && ' (no such file yet)'}, which only scheduled fires load. Console, agent and hand-run
             runs in the venv only load <Text code style={{ fontSize: 12 }}>.runspec_env</Text>.
           </div>
           {!check.ok && <div><Text type="secondary">{check.error}</Text></div>}
           {check.override && (
             <div style={{ marginBottom: 6 }}>
-              <Text type="secondary">This runnable names its own env file in runspec.toml (<Text code style={{ fontSize: 12 }}>{check.override}</Text>), which it reads instead of .runspec_env; runspec_schedules.env still applies to its fires.</Text>
+              <Text type="secondary">This runnable names its own env file in runspec.toml (<Text code style={{ fontSize: 12 }}>{check.override}</Text>), which it reads instead of .runspec_env; .runspec_scheduler_env still applies to its fires.</Text>
             </div>
           )}
           {rows.map(({ n, state }) => (
@@ -144,7 +144,7 @@ export function HostScheduleEnv({ host, venv, runnable, command, args, values }:
                 {': '}
                 {state === 'file' && <>set by <Text code style={{ fontSize: 12 }}>{n.set_by}</Text></>}
                 {state === 'schedule' && <>set in this schedule</>}
-                {state === 'shared' && <>set by <Text code style={{ fontSize: 12 }}>{n.shared_by}</Text> in .runspec_env, which every run in this venv loads; move it to runspec_schedules.env</>}
+                {state === 'shared' && <>set by <Text code style={{ fontSize: 12 }}>{n.shared_by}</Text> in .runspec_env, which every run in this venv loads; move it to .runspec_scheduler_env</>}
                 {(state === 'missing' || state === 'optional') && (
                   <>{state === 'optional' ? 'optional, not set. To set it, add ' : 'add '}<Keys keys={suggestKeys(n)} /></>
                 )}

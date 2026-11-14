@@ -1,5 +1,13 @@
 # runspec-tui Changelog
 
+## [0.2.1] — 2026-11-14
+
+### Changed
+
+- A secret arg in schedule mode now points at the venv's
+  `.runspec_scheduler_env` (runspec-scheduler 0.11.0 renamed the
+  schedule-only credentials file from `runspec_schedules.env`).
+
 ## [0.2.0] — 2026-11-09
 
 ### Added

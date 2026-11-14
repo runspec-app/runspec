@@ -10,7 +10,7 @@ arrive as one JSON object on standard input.
 Ops (the result is one JSON line after :data:`MARKER` on stdout):
 
 The file is ``.runspec_env`` (every run in the venv loads it) or, with a third
-argument ``schedules``, ``runspec_schedules.env`` (only runspec-scheduler's fires
+argument ``schedules``, ``.runspec_scheduler_env`` (only runspec-scheduler's fires
 load it). No other name is accepted.
 
 * ``read`` — ``{ok, path, user, owner, exists, symlink, readable, writable,
@@ -31,7 +31,7 @@ import tempfile
 
 MARKER = "=====RSENV "
 NAME = ".runspec_env"
-SCHEDULES_NAME = "runspec_schedules.env"
+SCHEDULES_NAME = ".runspec_scheduler_env"
 #: The files the worker may touch, by the console's name for them.
 NAMES = {"": NAME, "runspec_env": NAME, "schedules": SCHEDULES_NAME}
 ABSENT = "absent"

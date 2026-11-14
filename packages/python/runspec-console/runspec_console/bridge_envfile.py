@@ -255,7 +255,7 @@ class EnvFileMixin:
         them. ``payload``: ``{host, venv, runnable, command}``.
 
         A host schedule carries no credentials. Its fires load the venv's
-        schedule-only ``runspec_schedules.env`` (runspec-scheduler 0.7.0) on top
+        schedule-only ``.runspec_scheduler_env`` (runspec-scheduler 0.7.0) on top
         of ``.runspec_env``; interactive runs load only ``.runspec_env``. So a
         credential belongs in the schedules file, and one found only in
         ``.runspec_env`` is flagged (every run in the venv would use it).

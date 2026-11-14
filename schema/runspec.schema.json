@@ -369,7 +369,7 @@
         "cron": { "type": "string", "description": "A 5-field cron expression, or @hourly / @daily / @weekly / @monthly / @yearly." },
         "timezone": { "type": "string", "default": "local", "description": "\"local\" (default: the venv's [scheduler] timezone, else the host's), \"UTC\", or an IANA name like Europe/London." },
         "spread": { "type": ["string", "integer"], "description": "With at: each host fires at a fixed offset inside this window, e.g. \"30m\" (at most 12h; never past midnight)." },
-        "args": { "type": "object", "description": "Arguments for the runnable, checked against its spec. Leave site values and secrets to the venv's runspec_schedules.env." },
+        "args": { "type": "object", "description": "Arguments for the runnable, checked against its spec. Leave site values and secrets to the venv's .runspec_scheduler_env." },
         "command": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "The subcommand path for a runnable with verbs." },
         "timeout": { "type": ["string", "integer"], "description": "Kill a fire still running after this long (seconds, or 90m / 6h / 1d; 0 = no limit)." },
         "catch_up": { "type": "boolean", "description": "Daemon backend: run once on start when fires were missed while it was down." }

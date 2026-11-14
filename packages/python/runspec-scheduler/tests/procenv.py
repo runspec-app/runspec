@@ -27,6 +27,7 @@ from typing import Any
 DEMO_TOML = """\
 [config]
 run_as = ""
+autonomy-default = "autonomous"
 
 [demo]
 description = "Test runnable for the scheduler's process tests"
@@ -35,6 +36,8 @@ description = "Test runnable for the scheduler's process tests"
 mode    = {options = ["ok", "fail", "sleep", "hang", "bigout", "badutf8", "bgchild"], default = "ok"}
 seconds = {type = "int", default = 0}
 marker  = {type = "str", default = ""}
+careful = {type = "str", default = "", autonomy = "confirm", description = "Any value makes a call need an approval (webhook tests)."}
+reckless = {type = "str", default = "", autonomy = "manual", description = "Any value makes a call manual (webhook tests)."}
 """
 
 # A plain script (no rs.parse): fast, and exec records it either way.
@@ -46,7 +49,8 @@ def _opt(name, default=""):
     for i, tok in enumerate(argv):
         if tok == "--" + name and i + 1 < len(argv):
             return argv[i + 1]
-    return default
+    # webhook runs pass values the way runspec does: RUNSPEC_DEMO_ARG_<NAME>
+    return os.environ.get("RUNSPEC_DEMO_ARG_" + name.upper().replace("-", "_"), default)
 
 def main():
     mode = _opt("mode", "ok")
