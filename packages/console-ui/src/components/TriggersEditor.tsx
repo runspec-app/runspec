@@ -156,10 +156,11 @@ export const formToTrigger = (v: TriggerForm): Record<string, unknown> => {
   else if (v.once_per_thread === 'off') base.once_per_thread = false
   if (v.categories === 'on') base.categories = true
   else if (v.categories === 'off') base.categories = false
-  // Shared-mailbox claim gate (only meaningful for outlook/new_mail).
+  // Claim gate (outlook/new_mail moves the mail to claim_folder; a webhook's
+  // claim is held on its host, so it has no folder).
   if (v.claim) {
     base.claim = true
-    base.claim_folder = (v.claim_folder ?? '').trim()
+    if (v.source !== 'webhook') base.claim_folder = (v.claim_folder ?? '').trim()
   }
   if (v.mode === 'rule') {
     base.pre_turn = (v.pre_turn ?? '').trim()
@@ -594,6 +595,8 @@ export function TriggersEditor({
   const ruleKind = Form.useWatch('rule_kind', form)
   // The shared-mailbox claim gate only applies to Outlook new_mail triggers.
   const isMailNew = source === 'outlook' && event === 'new_mail'
+  // A webhook trigger can be claim-gated too (the host decides who wins).
+  const isWebhook = source === 'webhook'
   // The single-run target + the action-list rows, watched so the arg editor can
   // resolve the chosen runnable's declared args live.
   const runVal = Form.useWatch('run', form)
@@ -801,6 +804,13 @@ export function TriggersEditor({
                 <Segmented options={[{ label: 'Mailbox default', value: 'default' }, { label: 'On', value: 'on' }, { label: 'Off', value: 'off' }]} />
               </Form.Item>
             </>
+          )}
+          {isWebhook && (
+            <Form.Item name="claim" valuePropName="checked" label="Claim-based system"
+              style={{ marginBottom: 10 }}
+              help="Several consoles follow this venv: park each matched request behind a Claim button so exactly one operator takes it. The host decides who claimed first; the other consoles show who has it. Off = every console following the venv runs this trigger.">
+              <Switch size="small" />
+            </Form.Item>
           )}
 
           {threaded && (

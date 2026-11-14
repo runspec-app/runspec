@@ -139,6 +139,18 @@ describe('TriggersEditor form mapping', () => {
     expect(out.claim).toBeUndefined()
     expect(out.claim_folder).toBeUndefined()
   })
+
+  it('writes a webhook claim without a claim folder', () => {
+    const out = formToTrigger({
+      name: 'w', source: 'webhook', event: 'deploy', mode: 'agent',
+      autonomy: 'confirm', enabled: true, match: [], once_per_thread: 'default',
+      map: [], reply_draft: false, rule_kind: 'single', action_mode: 'sequential',
+      actions: [], rules: 'deploy it', runnables: [], action_allow: [],
+      claim: true, claim_folder: 'left over',
+    })
+    expect(out.claim).toBe(true)
+    expect(out.claim_folder).toBeUndefined()
+  })
 })
 
 describe('literalFromPattern (Trigger-now folder/mailbox pre-seed)', () => {

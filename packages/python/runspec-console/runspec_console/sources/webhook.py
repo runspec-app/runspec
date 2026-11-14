@@ -187,7 +187,9 @@ class WebhookFollower:
     resumes from the last event id. ``open_stream(argv_cursor)`` opens a
     :class:`Stream` running ``hooks follow``; ``on_change(state)`` runs after
     every line (from this thread), ``on_arrival(state, delivery)`` for each fresh
-    delivery that should fire console triggers."""
+    delivery that should fire console triggers, and ``on_claim(state,
+    delivery)`` when someone claims a delivery for their console
+    (``hooks claim``)."""
 
     def __init__(
         self,
@@ -196,6 +198,7 @@ class WebhookFollower:
         *,
         on_change: Callable[[VenvHooks], None],
         on_arrival: Callable[[VenvHooks, dict[str, Any]], None],
+        on_claim: Callable[[VenvHooks, dict[str, Any]], None] | None = None,
         replay_s: int = 900,
         sleep: Callable[[float], bool] | None = None,
     ) -> None:
@@ -203,6 +206,7 @@ class WebhookFollower:
         self._open = open_stream
         self._on_change = on_change
         self._on_arrival = on_arrival
+        self._on_claim = on_claim
         self._replay_s = replay_s
         self._stop = threading.Event()
         self._sleep = sleep or self._stop.wait
@@ -264,6 +268,15 @@ class WebhookFollower:
                         self._on_arrival(self.state, fresh)
                     except Exception:
                         logger.exception("webhooks: on_arrival failed")
+                if (
+                    msg.get("kind") == "claimed"
+                    and msg.get("claimed_by")
+                    and self._on_claim is not None
+                ):
+                    try:
+                        self._on_claim(self.state, msg)
+                    except Exception:
+                        logger.exception("webhooks: on_claim failed")
             return ""
         finally:
             with self._lock:

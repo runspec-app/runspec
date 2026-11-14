@@ -16,7 +16,7 @@ vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
     get: (_t, p) => {
       if (p === 'get_trigger_board') return () => Promise.resolve([])
-      if (p === 'claim_email') return claimEmail
+      if (p === 'claim_card') return claimEmail
       return vi.fn()
     },
   }),
@@ -48,6 +48,20 @@ describe('HelpdeskPanel', () => {
     await waitFor(() => expect(claimEmail).toHaveBeenCalledWith('k1'))
     // The claim note points the operator to the Console tab for approvals.
     expect(screen.getByText(/Approve\/deny of the resulting run happens in the Console tab/)).toBeTruthy()
+  })
+
+  it('claims a webhook card and says where the request came from', async () => {
+    claimEmail.mockResolvedValue({ claimed: false, owner: 'bob' })
+    render(<HelpdeskPanel />)
+    emitCard(card({
+      card_id: 'w1', source: 'webhook', event_type: 'deploy', column: 'awaiting_claim',
+      summary: 'deploy request', detail: { hook: 'deploy', host: 'web-01', venv: 'ops' },
+    }))
+    expect(await screen.findByText('deploy')).toBeTruthy()
+    expect(screen.getByText(/first console to claim runs this trigger/)).toBeTruthy()
+    expect(screen.queryByText(/claim folder/)).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /^Claim$/ }))
+    await waitFor(() => expect(claimEmail).toHaveBeenCalledWith('w1'))
   })
 
   it('renders a portal request with its runnable and args', async () => {

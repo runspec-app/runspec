@@ -172,14 +172,16 @@ def test_old_spool_gets_the_output_columns(tmp_path: Path) -> None:
     path.parent.mkdir()
     old = sqlite3.connect(path)
     # 0.11.0's spool: today's schema without the output columns
-    schema = sp._SCHEMA.replace("    output TEXT,\n", "").replace("    output_truncated INTEGER NOT NULL DEFAULT 0,\n", "")
-    assert "output" not in schema
+    schema = sp._SCHEMA
+    for line in ("output TEXT", "output_truncated INTEGER NOT NULL DEFAULT 0", "claimed_by TEXT NOT NULL DEFAULT ''", "claimed_ts REAL", "claim_note TEXT NOT NULL DEFAULT ''"):
+        schema = schema.replace(f"    {line},\n", "")
+    assert "output" not in schema and "claim" not in schema
     old.executescript(schema)
     old.commit()
     old.close()
     spool = sp.Spool(path)
     d = spool.add_delivery("h", source="x", content_type="", headers={}, body=b"")
-    assert spool.update(d, output="hi", output_truncated=0)
+    assert spool.update(d, output="hi", output_truncated=0, claimed_by="ann")
     row = spool.get(d)
-    assert row and row["output"] == "hi"
+    assert row and row["output"] == "hi" and row["claimed_by"] == "ann"
     spool.close()

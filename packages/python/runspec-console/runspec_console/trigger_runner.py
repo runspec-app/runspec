@@ -161,8 +161,65 @@ class BridgeOps(Protocol):
         ...
 
 
+_WEBHOOK_STATE_WORDS = {
+    "event": "nothing ran on the host (this request is for consoles)",
+    "ran": "the host ran {runnable}",
+    "running": "the host is running {runnable}",
+    "waiting": "the host is about to run {runnable}",
+    "pending": "{runnable} is waiting for someone to approve it on the host",
+    "refused": "the host refused to run {runnable} (manual autonomy)",
+    "no_match": "no rule matched on the host, so nothing ran there",
+    "duplicate": "the host treated it as a repeat of an earlier request",
+    "error": "the host couldn't read the request",
+}
+
+
+def render_webhook_event(event: Event) -> str:
+    """A webhook request for an agent: what sent it where, what the host
+    already did with it, the fields the hook read out, and the body."""
+    payload = event.payload
+    meta = payload.get("webhook")
+    meta = meta if isinstance(meta, dict) else {}
+    hook = str(meta.get("hook") or event.type)
+    where = " ".join(str(meta.get(k) or "") for k in ("host", "venv")).strip()
+    lines = [
+        f"A webhook request arrived on hook '{hook}'"
+        + (f" ({where})" if where else "")
+        + ". Follow your rules and use the available tools as needed.",
+        "",
+    ]
+    if meta.get("id") is not None:
+        lines.append(f"- delivery: {meta.get('id')}")
+    if meta.get("received"):
+        lines.append(f"- received: {meta.get('received')}")
+    state = str(meta.get("state") or "")
+    runnable = str(meta.get("runnable") or "a runnable")
+    words = _WEBHOOK_STATE_WORDS.get(state)
+    if words:
+        lines.append("- on the host: " + words.format(runnable=runnable))
+    elif state:
+        lines.append(f"- on the host: {state}")
+    if meta.get("rule"):
+        lines.append(f"- matched rule: {meta.get('rule')}")
+    fields = {
+        k: v
+        for k, v in payload.items()
+        if k != "webhook" and (k not in meta or v != meta.get(k))
+    }
+    if fields:
+        lines += ["", "Fields:"]
+        for key, value in fields.items():
+            lines.append(f"- {key}: {value}")
+    body = str(meta.get("body") or "")
+    if body:
+        lines += ["", "Body:", body]
+    return "\n".join(lines)
+
+
 def render_event(event: Event) -> str:
     """A readable rendering of an event for the agent's first user turn."""
+    if event.source == "webhook":
+        return render_webhook_event(event)
     lines = [
         f"A '{event.type}' event arrived from the '{event.source}' source. "
         "Follow your rules and use the available tools as needed.",

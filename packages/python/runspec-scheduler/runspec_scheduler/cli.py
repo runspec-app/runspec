@@ -665,6 +665,8 @@ def _cmd_hooks(spec: rs.RunSpec, verb: str) -> None:
         run(lambda: h.settings(path, list(_opt(spec.set) or []), list(_opt(spec.smtp) or [])), lambda p: json.dumps({k: v for k, v in p.items() if k != "ok"}, indent=2))
     elif verb in ("approve", "deny"):
         run(lambda: h.decide(path, int(spec.id.value), verb, str(_opt(spec.note) or "")), h.render_decision)
+    elif verb == "claim":
+        run(lambda: h.claim(path, int(spec.id.value), str(_opt(spec.note) or "")), h.render_claim)
     elif verb == "mute":
 
         def muted(p: dict[str, Any]) -> str:
@@ -678,7 +680,7 @@ def _cmd_hooks(spec: rs.RunSpec, verb: str) -> None:
         since = _opt(spec.since)
         sys.exit(h.follow(path, since=int(since) if since is not None else None, replay=str(spec.replay.value), who=_opt(spec.who), once=bool(spec.once.value)))
     else:  # pragma: no cover - require-command makes this unreachable
-        _emit({"error": "hooks needs a command — try: list, deliveries, show, check, test, token, save, remove, settings, approve, deny, mute, unmute, follow"})
+        _emit({"error": "hooks needs a command — try: list, deliveries, show, check, test, token, save, remove, settings, approve, deny, claim, mute, unmute, follow"})
         sys.exit(2)
 
 

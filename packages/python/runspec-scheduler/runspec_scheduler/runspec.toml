@@ -229,7 +229,7 @@ system  = {type = "flag", default = false, description = "With --manager supervi
 # runspec_scheduler.toml ([[hook]], written by `hooks save`) and in
 # {config dir}/hooks.d/*.toml (deployed, e.g. by Ansible; those win).
 [runspec-scheduler.commands.hooks]
-description     = "Webhooks into this venv: list hooks and the listener, test a hook against a body, approve or deny runs waiting for a person, mute hooks, follow events, and set hooks up."
+description     = "Webhooks into this venv: list hooks and the listener, test a hook against a body, approve or deny runs waiting for a person, claim a delivery for one console, mute hooks, follow events, and set hooks up."
 require-command = true
 
 [runspec-scheduler.commands.hooks.commands.list]
@@ -320,6 +320,15 @@ autonomy    = "manual"
 [runspec-scheduler.commands.hooks.commands.deny.args]
 id   = {type = "int", required = true, description = "Delivery id."}
 note = {type = "str", required = false, description = "A note kept with the decision."}
+
+[runspec-scheduler.commands.hooks.commands.claim]
+description = "Take a delivery for one console: the first claim wins. Consoles whose trigger has claim = true wait for a Claim and only the winner runs its trigger; the others see who has it. A claim doesn't approve, run or settle anything on this host."
+output      = "json"
+autonomy    = "manual"
+
+[runspec-scheduler.commands.hooks.commands.claim.args]
+id   = {type = "int", required = true, description = "Delivery id."}
+note = {type = "str", required = false, description = "A note kept with the claim."}
 
 [runspec-scheduler.commands.hooks.commands.mute]
 description = "Stop counting yourself as watching a hook (or all hooks) for a while: other consoles see who muted what until when, and a waiting approval is mailed straight away when everyone following has muted it."

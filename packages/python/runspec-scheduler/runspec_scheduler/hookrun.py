@@ -844,6 +844,19 @@ def approve(spool: sp.Spool, delivery_id: int, who: str, note: str = "") -> tupl
     return won, row
 
 
+def claim(spool: sp.Spool, delivery_id: int, who: str, note: str = "") -> tuple[bool, dict[str, Any] | None]:
+    """Take a delivery for one console: the first claim wins. Consoles whose
+    trigger has ``claim = true`` park a delivery behind a Claim button and only
+    the winner runs its trigger; the others see who has it in the follow
+    stream. A claim doesn't approve, run or settle anything on this host.
+    Returns (won, the delivery as it is now)."""
+    won = spool.update(delivery_id, kind="claimed", when="claimed_by = ''", claimed_by=who, claimed_ts=time.time(), claim_note=note)
+    row = spool.get(delivery_id)
+    if won and row:
+        audit("hook.claimed", "succeeded", target={"hook": row["hook"], "delivery": delivery_id}, detail={"by": who, "note": note or None})
+    return won, row
+
+
 def deny(spool: sp.Spool, delivery_id: int, who: str, note: str = "") -> tuple[bool, dict[str, Any] | None]:
     """Deny settles it for everyone. Returns (won, the delivery as it is now)."""
     won = spool.update(delivery_id, kind="denied", when=f"state = '{sp.PENDING}'", state=sp.DENIED, decided_by=who, decided_ts=time.time(), note=note)

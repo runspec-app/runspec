@@ -613,3 +613,180 @@ def test_arrival_feeds_the_trigger_engine() -> None:
         and fed[0].type == "alerts"
         and fed[0].payload["alertname"] == "Disk"
     )
+
+
+# ── claim-gated webhook triggers (one console runs it) ──────────────────────
+
+
+class _Inline:
+    def submit(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        fn(*args, **kwargs)
+
+    def shutdown(self, wait: bool = True, **_: Any) -> None:
+        pass
+
+
+def _claim_setup() -> tuple[Any, Any, list[str], list[Any]]:
+    from runspec_console.bridge_triggers import TriggersMixin
+    from runspec_console.triggers import Trigger, TriggerEngine
+
+    class ClaimBridge(TriggersMixin, FakeBridge):
+        pass
+
+    ran: list[str] = []
+    cards: list[Any] = []
+    trig = Trigger.from_config(
+        {
+            "name": "deploys",
+            "source": "webhook",
+            "event": "deploy",
+            "mode": "rule",
+            "run": "web-01__deploy",
+            "claim": True,
+        }
+    )
+    engine = TriggerEngine(
+        [trig],
+        handler=lambda card, t, e: ran.append(card.id),
+        on_card=cards.append,
+        executor=_Inline(),  # type: ignore[arg-type]
+        external_sources={"webhook"},
+    )
+    b = ClaimBridge()
+    b._trigger_engine = engine  # type: ignore[attr-defined]
+    vs = wh.VenvHooks("web-01", "ops", hooks=["*"])
+    b._on_webhook_arrival(
+        vs,
+        delivery(7, hook="deploy", state="event") | {"fields": {"version": "1.2"}},
+    )
+    return b, vs, ran, cards
+
+
+def test_claim_trigger_parks_until_this_console_wins() -> None:
+    b, _vs, ran, cards = _claim_setup()
+    engine = b._trigger_engine
+    [card_id] = engine.parked_claim_ids()
+    assert ran == [] and cards[-1].column == "awaiting_claim"
+    assert cards[-1].detail["host"] == "web-01" and cards[-1].detail["delivery"] == 7
+    b.answers = [
+        {
+            "ok": True,
+            "error": "",
+            "json": {
+                "ok": True,
+                "won": True,
+                "delivery": {"id": 7, "claimed_by": "ann"},
+            },
+        }
+    ]
+    assert b.claim_card(card_id) == {"claimed": True, "owner": "ann"}
+    assert b.calls[-1][0] == ["hooks", "claim", "--id", "7"]
+    assert ran == [card_id] and engine.parked_claim_ids() == []
+    assert "webhook.claim" in b.audits
+
+
+def test_claim_lost_says_who_has_it() -> None:
+    b, _vs, ran, cards = _claim_setup()
+    [card_id] = b._trigger_engine.parked_claim_ids()
+    b.answers = [
+        {"ok": True, "error": "", "json": {"ok": True, "won": False, "owner": "bob"}}
+    ]
+    assert b.claim_card(card_id) == {"claimed": False, "owner": "bob"}
+    assert ran == [] and cards[-1].column == "done"
+    assert cards[-1].detail["claimed_by"] == "bob"
+
+
+def test_claim_on_an_old_scheduler_explains_and_stays_parked() -> None:
+    b, _vs, ran, _cards = _claim_setup()
+    [card_id] = b._trigger_engine.parked_claim_ids()
+    b.answers = [
+        {
+            "ok": False,
+            "error": "✗  Unknown command for 'runspec-scheduler hooks': 'claim'",
+            "json": None,
+        }
+    ]
+    out = b.claim_card(card_id)
+    assert not out["claimed"] and "0.13.0" in out["error"]
+    assert b._trigger_engine.parked_claim_ids() == [card_id] and ran == []
+
+
+def test_a_claim_in_the_follow_stream_resolves_other_consoles_cards() -> None:
+    b, vs, ran, cards = _claim_setup()
+    engine = b._trigger_engine
+    [card_id] = engine.parked_claim_ids()
+    # another venv's delivery 7 is a different request
+    b._on_webhook_claim(wh.VenvHooks("web-02", "ops"), {"id": 7, "claimed_by": "bob"})
+    assert engine.parked_claim_ids() == [card_id]
+    # this console's own claim in flight is left alone
+    b._wh_claiming().add(card_id)
+    b._on_webhook_claim(vs, {"id": 7, "claimed_by": "ann"})
+    assert engine.parked_claim_ids() == [card_id]
+    b._wh_claiming().discard(card_id)
+    b._on_webhook_claim(vs, {"id": 7, "claimed_by": "bob"})
+    assert engine.parked_claim_ids() == [] and ran == []
+    assert cards[-1].detail["note"] == "claimed by bob"
+
+
+def test_follower_passes_claims_on() -> None:
+    vs = wh.VenvHooks("web-01", "ops", hooks=["*"])
+    claims: list[tuple[int, str]] = []
+
+    def open_stream(cursor: int | None) -> src.LineStream:
+        return src.LineStream(
+            FakeChannel(
+                [
+                    lines(
+                        hello(),
+                        delivery(1, state="event") | {"claimed_by": "", "event": 12},
+                        delivery(1, state="event", kind="claimed", event=13)
+                        | {"claimed_by": "bob"},
+                    )
+                ]
+            )
+        )
+
+    f = src.WebhookFollower(
+        vs,
+        open_stream,
+        on_change=lambda s: None,
+        on_arrival=lambda s, d: None,
+        on_claim=lambda s, d: claims.append((d["id"], d["claimed_by"])),
+    )
+    assert f.run_once() == ""
+    assert claims == [(1, "bob")] and vs.recent[0]["claimed_by"] == "bob"
+
+
+def test_hook_names_for_the_triggers_editor() -> None:
+    b = FakeBridge(
+        [
+            {
+                "name": "web-01",
+                "ssh": "web-01",
+                "runspec_paths": ["/srv/ops/bin/runspec"],
+                "hooks": ["alerts", "*"],
+            }
+        ]
+    )
+    vs = wh.VenvHooks("web-01", "ops", hooks=["*"])
+    vs.hook_list = [{"name": "deploy"}, {"name": "alerts"}]
+    b._wh()["venvs"][vs.key] = vs
+    assert b._webhook_hook_names() == ["alerts", "deploy"]
+
+
+def test_agent_sees_a_readable_webhook_request() -> None:
+    from runspec_console.events import Event
+    from runspec_console.trigger_runner import render_event
+
+    payload = wh.trigger_payload(
+        "web-01",
+        "ops",
+        delivery(9, hook="deploy", state="event")
+        | {"fields": {"version": "1.2"}, "body": '{"version": "1.2"}'},
+    )
+    text = render_event(Event.new("webhook", "deploy", payload))
+    assert text.startswith("A webhook request arrived on hook 'deploy' (web-01 ops)")
+    assert "- delivery: 9" in text
+    assert "nothing ran on the host" in text
+    assert "- version: 1.2" in text and 'Body:\n{"version": "1.2"}' in text
+    assert "webhook:" not in text and "- venv:" not in text

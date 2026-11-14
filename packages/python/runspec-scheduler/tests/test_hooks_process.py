@@ -193,11 +193,18 @@ def test_webhook_end_to_end(venv: Any) -> None:
     pe.wait_for(lambda: (path / "marks" / "careful").exists(), 30, what="the approved run")
     assert verb(path, "hooks", "deny", "--id", str(pending_id), env={"SUDO_USER": "bob"})["ok"] is False
 
+    # one console claims a delivery for its trigger; the next one hears who has it
+    claimed_id = str(by_rule["resolved"]["id"])
+    first = verb(path, "hooks", "claim", "--id", claimed_id, env={"SUDO_USER": "ann"})
+    assert first["won"] and first["delivery"]["claimed_by"] == "ann"
+    second = verb(path, "hooks", "claim", "--id", claimed_id, env={"SUDO_USER": "bob"})
+    assert second["ok"] and not second["won"] and second["owner"] == "ann"
+
     # a follower sees the whole story
     argv = [str(path / "bin" / "runspec-scheduler"), "hooks", "follow", "--since", "0", "--once", "--who", "ann"]
     follow = subprocess.run(argv, capture_output=True, text=True, cwd=str(path), timeout=60, check=False)
     kinds = [json.loads(line)["kind"] for line in follow.stdout.splitlines()]
-    assert kinds[0] == "hello" and "approved" in kinds and "split" in kinds
+    assert kinds[0] == "hello" and "approved" in kinds and "split" in kinds and "claimed" in kinds
 
     # a respond = "output" hook answers with the run's exit code and stdout
     status, text = post(port, {"go": True}, hook="reply")

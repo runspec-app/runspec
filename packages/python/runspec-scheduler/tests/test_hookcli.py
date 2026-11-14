@@ -211,6 +211,30 @@ def test_decide(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert "approved by ann" in hookcli.render_decision(out)
 
 
+def test_claim_first_wins_and_reaches_followers(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spool = sp.Spool(sp.spool_path_for(config))
+    try:
+        d = spool.add_delivery("alerts", source="x", content_type="", headers={}, body=b"{}")
+        spool.update(d, state=sp.EVENT)
+        cursor = spool.last_event_id()
+    finally:
+        spool.close()
+    monkeypatch.setenv("SUDO_USER", "ann")
+    won = hookcli.claim(config, d, "on it")
+    assert won["ok"] and won["won"] and won["delivery"]["claimed_by"] == "ann"
+    assert won["delivery"]["claim_note"] == "on it" and won["delivery"]["state"] == sp.EVENT
+    assert "Claimed delivery" in hookcli.render_claim(won)
+    monkeypatch.setenv("SUDO_USER", "bob")
+    lost = hookcli.claim(config, d, "")
+    assert lost["ok"] and not lost["won"] and lost["owner"] == "ann"
+    assert "already claimed by ann" in hookcli.render_claim(lost)
+    assert not hookcli.claim(config, 999, "")["ok"]
+    buf = io.StringIO()
+    hookcli.follow(config, since=cursor, replay="15m", who="bob", once=True, out=buf)
+    events = [json.loads(line) for line in buf.getvalue().splitlines()[1:]]
+    assert [(e["kind"], e["id"], e["claimed_by"]) for e in events] == [("claimed", d, "ann")]
+
+
 def test_mute_follow_once(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SUDO_USER", "ann")
     pending_delivery(config)

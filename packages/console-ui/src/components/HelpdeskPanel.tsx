@@ -12,7 +12,7 @@ import { fmtClock } from '../when'
  *
  * When the console staffs a room queue (`room_queue` on a host), a trigger fire
  * can need queue-level handling the generic run stream doesn't cover: claiming a
- * shared-mailbox email, a runnables-portal request routed from the hub, an
+ * shared-mailbox email or a webhook request several consoles follow, a runnables-portal request routed from the hub, an
  * agent-drafted reply awaiting Send, and the live visitor conversation. Those
  * used to live in the Triggers tab's RunInbox drawer render-props; with the run
  * activity + Approve/Deny gate now in the Console tab, this panel keeps just the
@@ -108,13 +108,13 @@ export function HelpdeskPanel() {
     if (claiming[cardId]) return
     setClaiming(prev => ({ ...prev, [cardId]: true }))
     try {
-      const res = await bridge.claim_email(cardId)
+      const res = await bridge.claim_card(cardId)
       if (res.claimed) message.success('Claimed — running now.')
       else if (res.error) message.error(res.error)
       else message.info(res.owner ? `Already claimed by ${res.owner}.` : 'Already claimed on another console.')
     } catch (err) {
       console.error(err)
-      message.error('Could not claim this email.')
+      message.error('Could not claim this.')
     } finally {
       setClaiming(prev => { const next = { ...prev }; delete next[cardId]; return next })
     }
@@ -236,7 +236,15 @@ export function HelpdeskPanel() {
                     Draft reply saved to Outlook{draft.to ? ` · to ${draft.to}` : ''} — review it in Outlook, then send (or send from here).
                   </div>
                 )}
-                {card.column === 'awaiting_claim' && (
+                {card.column === 'awaiting_claim' && card.source === 'webhook' && (
+                  <div style={{ marginTop: 6, color: dim, fontSize: 13 }}>
+                    Webhook <code>{String(card.detail?.hook ?? card.event_type ?? '')}</code>
+                    {card.detail?.host ? <> on {String(card.detail.host)} {String(card.detail?.venv ?? '')}</> : null}.
+                    {' '}Claim to take it — the first console to claim runs this trigger; the others show who has it.
+                    Approve/deny of the resulting run happens in the Console tab.
+                  </div>
+                )}
+                {card.column === 'awaiting_claim' && card.source !== 'webhook' && (
                   <div style={{ marginTop: 6, color: dim, fontSize: 13 }}>
                     Claim to take this email — it moves to{' '}
                     <code>{String(card.detail?.claim_folder ?? 'the claim folder')}</code>{' '}
