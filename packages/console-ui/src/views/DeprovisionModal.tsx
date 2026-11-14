@@ -134,7 +134,8 @@ export function DeprovisionModal({
       consequence: keepLogs
         ? 'The venv and its runnables are gone; its logs/ folder stays for History.'
         : 'The venv, its runnables and its run history are gone.',
-      typeToConfirm: name,
+      // The whole path, not just the venv's name: "ops" is typed by reflex.
+      typeToConfirm: root,
       okText: 'Delete',
     })
     if (!a.ok) return

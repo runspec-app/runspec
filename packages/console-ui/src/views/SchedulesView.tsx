@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Table, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Collapse, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type SharedSchedulesVenv, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
-import { useIsDark, useAccent, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
+import { useIsDark, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
+import { askRemembered, consentKey, useRiskConfirm } from '../components/risk'
 import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
@@ -959,7 +960,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
     return () => clearTimeout(t)
   }, [readHosts, targetKey])
   const isDark = useIsDark()
-  const accent = useAccent()
+  const [askRisk, riskHolder] = useRiskConfirm()
 
   const reload = () => bridge.get_schedules().then(setSchedules)
 
@@ -1024,7 +1025,19 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
     }
   }
 
+  // Running a schedule now is what it would do at its time, done by you: it
+  // asks first (naming it), unless you ticked "don't ask again" for it.
   const handleRunNow = async (s: Schedule) => {
+    const where = s.host ? [s.host] : s.group ? [`group ${s.group}`] : (s.hosts?.length ? s.hosts : s.selected_hosts ?? [])
+    const go = await askRemembered(askRisk, consentKey(`schedule-now:${s.id}`, where), {
+      level: where.length === 1 && where[0] === 'local' ? 'local' : 'fleet',
+      title: `Run ${s.name ? `"${s.name}"` : 'this schedule'} now?`,
+      action: scheduleSummary(s), targets: where,
+      consequence: "It runs once, now, as it would at its next time. Its timetable doesn't change.",
+      okText: 'Run now', danger: false,
+      rememberLabel: "Don't ask again for this schedule",
+    })
+    if (!go) return
     try {
       const res = await bridge.run_schedule_now(s.id)
       if (res.action === 'event') message.success(`Emitted event “${res.event}”`)
@@ -1039,7 +1052,8 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
   }
 
   const dimCol = textMuted(isDark)
-  const keyCol = accent
+  // Argument names in the neutral secondary text: the brand marks identity only.
+  const keyCol = textSecondary(isDark)
   const whereStyle = { fontFamily: MONO_FONT, fontSize: 13 }
   const whenText = (w: ScheduleWhen) => {
     const base = w.every ? `every ${w.every}` : (w.cron ?? '')
@@ -1257,6 +1271,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
 
   return (
     <div>
+      {riskHolder}
       {scopeToggle}
       {/* Schedules — collapsible table, mirroring the Triggers tab. Schedules are
           gated by the same working-hours rota (set on the Rota tab); fires outside

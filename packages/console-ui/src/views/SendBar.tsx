@@ -12,7 +12,7 @@
  * ↑/↓ recall earlier lines (kept in memory only, never saved). The lock button
  * switches to a hidden field for a password: typed the same way, never shown,
  * kept or audited. Confirmation follows the risk ladder (components/risk.tsx,
- * planSend): more than 10 windows asks, showing the line; a line or key that
+ * planSend): more than one window asks, showing the line; a line or key that
  * stops or removes something asks every time it goes to more than one window.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'

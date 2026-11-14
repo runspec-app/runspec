@@ -206,3 +206,65 @@ export function AskFirst({ ask, onConfirm, disabled, children }: {
     </>
   )
 }
+
+// ── Remembered consent ─────────────────────────────────────────────────────
+// The one way to skip a confirmation: you answer once and tick "don't ask
+// again", which holds for that exact action on that exact set of targets. A
+// different target set asks again. Kept per viewer in localStorage (a
+// convenience; losing it only means being asked again). Settings → Notifications has
+// "Forget remembered answers".
+
+const CONSENT_STORE = 'runspec.consent'
+
+/** The key for one action on one set of targets: order-independent. Pure. */
+export function consentKey(kind: string, targets: string[]): string {
+  return `${kind}:${[...new Set(targets)].sort().join(',')}`
+}
+
+function readConsents(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(CONSENT_STORE) ?? '[]')
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch { return [] }
+}
+
+export function hasConsent(key: string): boolean { return readConsents().includes(key) }
+
+export function rememberConsent(key: string): void {
+  try {
+    const all = readConsents().filter(k => k !== key)
+    localStorage.setItem(CONSENT_STORE, JSON.stringify([...all, key].slice(-200)))
+  } catch { /* storage unavailable: it will just ask again */ }
+}
+
+/** How many answers are remembered; Settings shows it beside Forget. */
+export function consentCount(): number { return readConsents().length }
+
+export function forgetConsents(): void {
+  try { localStorage.removeItem(CONSENT_STORE) } catch { /* nothing to forget */ }
+}
+
+/** Ask unless this exact action on these targets was remembered; offer
+ *  "don't ask again" and remember a ticked OK. Destructive asks are never
+ *  remembered. Resolves true to go ahead. */
+export async function askRemembered(
+  ask: (a: RiskAsk) => Promise<RiskAnswer>, key: string, a: RiskAsk,
+): Promise<boolean> {
+  const rememberable = a.level !== 'destructive'
+  if (rememberable && hasConsent(key)) return true
+  const r = await ask(rememberable ? { ...a, rememberLabel: a.rememberLabel ?? "Don't ask again for this" } : a)
+  if (r.ok && r.remember && rememberable) rememberConsent(key)
+  return r.ok
+}
+
+/** Settings row: how many confirmations are remembered, and a way to start
+ *  asking again. */
+export function RememberedAnswers() {
+  const [n, setN] = useState(() => consentCount())
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, margin: '4px 0 12px' }}>
+      <span>{n ? `${n} confirmation${n === 1 ? '' : 's'} set to "don't ask again".` : 'Every confirmation asks.'}</span>
+      {n > 0 && <Button size="small" onClick={() => { forgetConsents(); setN(0) }}>Ask every time again</Button>}
+    </div>
+  )
+}

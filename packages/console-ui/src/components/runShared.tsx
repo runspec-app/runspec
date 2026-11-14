@@ -3,6 +3,7 @@ import { CopyOutlined, LoadingOutlined } from '@ant-design/icons'
 import { RADIUS, useAccent, useIsDark } from '../ThemeContext'
 import { statusTone, type StatusTone } from './kit'
 import { fmtClock } from '../when'
+import type { SavedRun } from '../bridge'
 
 // Shared run-inbox primitives used by both the Triggers and Schedules tabs (their
 // run inbox + detail drawer + event log). Kept in one module so the two views
@@ -81,4 +82,15 @@ export function CopyButton({ text, title = 'Copy' }: { text: string; title?: str
 export function fmtTime(epochSeconds: number): string {
   if (!epochSeconds) return ''
   return fmtClock(epochSeconds * 1000)
+}
+
+/** Where a saved run goes, as the confirmation lists it: its host, its group,
+ *  its picked hosts, its failover candidates or its profile. Pure. */
+export function savedRunTargets(s: Pick<SavedRun, 'host' | 'group' | 'hosts' | 'selected_hosts' | 'profile'>): string[] {
+  if (s.host) return [s.host]
+  if (s.group) return [`group ${s.group}`]
+  if (s.selected_hosts?.length) return s.selected_hosts
+  if (s.hosts?.length) return [`first connected of ${s.hosts.join(', ')}`]
+  if (s.profile) return [`profile ${s.profile}`]
+  return []
 }

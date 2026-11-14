@@ -35,7 +35,7 @@ import {
   bridge, type EnvFileKind, type EnvFileReader, type EnvFileRef, type EnvFileTarget, type EnvFileVenvChange, type EnvFileView, type Host,
 } from '../bridge'
 import { MONO_FONT, statusText, useIsDark, withAlpha } from '../ThemeContext'
-import { EmptyState, StatusTag } from '../components/kit'
+import { EmptyState, HowItWorks, StatusTag } from '../components/kit'
 import { AskFirst, useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
@@ -178,14 +178,16 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
       destroyOnHidden
     >
       {modalHolder}
-      <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
+      <HowItWorks summary={<>
+        {file === 'schedules' ? 'Variables only scheduled fires see, per venv.' : 'Variables loaded into every run, per venv.'}
+        {' '}Listed: the local venvs
+        {hosts.length > 0 && <> and the venvs of the {hosts.length} connected host{hosts.length === 1 ? '' : 's'} in the active profile</>}.
+      </>}>
         {file === 'schedules'
           ? <>Each venv's <Text code>.runspec_scheduler_env</Text> is loaded only by runspec-scheduler's fires (cron, the daemon and Run now), on top of <Text code>.runspec_env</Text>. Put a schedule's service-account credentials here: console, agent and hand-run runs in the venv never see them. It needs runspec 0.82.0 and runspec-scheduler 0.7.1 in the venv, and should be owned by the account the fires run as.</>
           : <>Each venv's <Text code>.runspec_env</Text> is loaded into the environment before every run in that venv
             (a variable already set in the environment wins), including the console's and the agent's. Credentials only scheduled fires should use belong in <Text code>.runspec_scheduler_env</Text>.</>}
-        {' '}Listed: the local venvs
-        {hosts.length > 0 && <> and the venvs of the {hosts.length} connected host{hosts.length === 1 ? '' : 's'} in the active profile</>}.
-      </Text>
+      </HowItWorks>
       <Space wrap style={{ marginBottom: 12 }}>
         <Segmented
           aria-label="View"

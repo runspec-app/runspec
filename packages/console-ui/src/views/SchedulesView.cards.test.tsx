@@ -187,3 +187,19 @@ describe('who is handling a failing host schedule', () => {
     await waitFor(() => expect(api.host_schedule_note).toHaveBeenCalledWith(expect.objectContaining({ verb: 'resolve', note: 'quota raised' })))
   })
 })
+
+describe('Run now on this console', () => {
+  it('asks first, naming where it runs, and can be told not to ask again', async () => {
+    api.run_schedule_now = vi.fn(() => Promise.resolve({ action: 'runnable', runnable: 'disk-usage', host: 'web-1' }))
+    await renderView()
+    fireEvent.click(card('console'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Run schedule now' }))
+    expect((await screen.findByTestId('risk-action')).textContent).toContain('/disk-usage')
+    expect(api.run_schedule_now).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('checkbox', { name: "Don't ask again for this schedule" }))
+    fireEvent.click(screen.getByTestId('risk-ok'))
+    await waitFor(() => expect(api.run_schedule_now).toHaveBeenCalledWith('rs-1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Run schedule now' }))
+    await waitFor(() => expect(api.run_schedule_now).toHaveBeenCalledTimes(2))
+  })
+})

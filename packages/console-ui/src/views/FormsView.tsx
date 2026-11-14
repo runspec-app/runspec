@@ -3,9 +3,10 @@ import { Button, Checkbox, Collapse, Input, Modal, Segmented, Select, Tag, Toolt
 import { SearchOutlined, RightOutlined, ArrowLeftOutlined, AppstoreOutlined, EditOutlined, PlusOutlined, DownOutlined, InfoCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ArgDef, Host, Runnable, Runbook, SavedRun } from '../bridge'
 import { bridge } from '../bridge'
-import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textSecondary, MONO_FONT } from '../ThemeContext'
+import { useIsDark, surfaces, RADIUS, textSecondary, MONO_FONT } from '../ThemeContext'
 import { runnableHidden } from '../toolVisibility'
 import { selectForms, loadFormsScope, saveFormsScope, needsFanoutConfirm, targetsForRun, type FormsEntry, type FormsScope } from './formsSearch'
+import { askRemembered, consentKey, useRiskConfirm } from '../components/risk'
 import { useFeatures } from '../features'
 import {
   RUNBOOKS_SECTION,
@@ -757,7 +758,6 @@ function RunnableCard({ entry, hosts, onPick }: {
   onPick: (entry: FormsEntry) => void
 }) {
   const isDark = useIsDark()
-  const accent = useAccent()
   const [hovered, setHovered] = useState(false)
 
   const runnable = entry.records[0]
@@ -771,10 +771,9 @@ function RunnableCard({ entry, hosts, onPick }: {
   const isInstant = argCount === 0 && subCount === 0
 
   const sf = surfaces(isDark)
-  const border = hovered ? withAlpha(accent, 0.6) : sf.border
-  const bg = hovered
-    ? withAlpha(accent, isDark ? 0.05 : 0.03)
-    : sf.raised
+  // Hover is the neutral field outline: the brand marks identity only.
+  const border = hovered ? 'var(--rs-field)' : sf.border
+  const bg = sf.raised
 
   const card = (
     <div
@@ -790,12 +789,13 @@ function RunnableCard({ entry, hosts, onPick }: {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: 9, color: connected ? 'var(--rs-ok)' : 'var(--rs-text-faint)', flexShrink: 0 }}>●</span>
+        <span role="img" aria-label={connected ? 'connected' : 'not connected'} title={connected ? 'Connected' : 'Not connected'}
+          style={{ fontSize: 9, color: connected ? 'var(--rs-ok)' : 'var(--rs-text-faint)', flexShrink: 0 }}>●</span>
         <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600 }}>{runnable.name}</Text>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           {isInstant && (
-            <Tooltip title="No arguments — runs immediately on click">
-              <StatusTag tone="info" icon={<ThunderboltOutlined />}>instant</StatusTag>
+            <Tooltip title="Nothing to fill in: click, confirm, and it runs">
+              <StatusTag tone="neutral" icon={<ThunderboltOutlined />}>no args</StatusTag>
             </Tooltip>
           )}
           {isAuto && (
@@ -865,9 +865,8 @@ function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: 
   const requiredCount = (runbook.args ?? []).filter(a => a.required).length
 
   const sf = surfaces(isDark)
-  const accent = isDark ? '#bd93f9' : '#722ed1'
-  const border = hovered ? withAlpha(accent, 0.6) : sf.border
-  const bg = hovered ? withAlpha(accent, isDark ? 0.05 : 0.03) : sf.raised
+  const border = hovered ? 'var(--rs-field)' : sf.border
+  const bg = sf.raised
 
   return (
     <div
@@ -882,7 +881,7 @@ function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: 
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600, color: accent }}>
+        <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600 }}>
           ${runbook.id}
         </Text>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -913,7 +912,7 @@ function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: 
 
 // A saved run — a deterministic preset — rendered as a launchable card. Clicking
 // opens the params-only run dialog (App owns the SavedRunRunModal); a preset with
-// no open params runs immediately (the App-level handler decides).
+// no open params asks first, naming its targets (the App-level handler decides).
 function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onClick: () => void; onEdit?: () => void }) {
   const isDark = useIsDark()
   const [hovered, setHovered] = useState(false)
@@ -922,9 +921,8 @@ function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onCli
   const requiredCount = (savedRun.params ?? []).filter(a => a.required).length
 
   const sf = surfaces(isDark)
-  const accent = isDark ? '#8be9fd' : '#0958d9'
-  const border = hovered ? withAlpha(accent, 0.6) : sf.border
-  const bg = hovered ? withAlpha(accent, isDark ? 0.05 : 0.03) : sf.raised
+  const border = hovered ? 'var(--rs-field)' : sf.border
+  const bg = sf.raised
 
   return (
     <div
@@ -939,7 +937,7 @@ function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onCli
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600, color: accent }}>
+        <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600 }}>
           {savedRun.title || savedRun.id}
         </Text>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -961,7 +959,7 @@ function SavedRunCard({ savedRun, onClick, onEdit }: { savedRun: SavedRun; onCli
             {paramCount} param{paramCount !== 1 ? 's' : ''}{requiredCount > 0 ? ` · ${requiredCount} required` : ''}
           </StatusTag>
         ) : (
-          <Tag style={{ fontSize: 11, margin: 0 }}>runs immediately</Tag>
+          <Tag style={{ fontSize: 11, margin: 0 }}>nothing to fill in</Tag>
         )}
         {savedRun.argsError && (
           <StatusTag tone="failed">misconfigured</StatusTag>
@@ -1119,6 +1117,7 @@ export function FormsView({
     })
   }
 
+  const [askRisk, riskHolder] = useRiskConfirm()
   const handleCardClick = (entry: FormsEntry) => {
     const runnable = entry.records[0]
     if (entry.records.length > 1) {
@@ -1129,8 +1128,24 @@ export function FormsView({
     const hasSubcommands = Object.keys(runnable.commands ?? {}).length > 0
     const hasAnyArgs = (runnable.args ?? []).length > 0
     if (!hasSubcommands && !hasAnyArgs) {
-      // Zero args, zero subcommands — run immediately
-      onRunRunnable(runnable, {}, [])
+      // Nothing to fill in. An autonomous runnable (its author says it's safe
+      // to run unasked) goes at once; anything else asks, naming the host,
+      // unless you ticked "don't ask again" for it there.
+      void (async () => {
+        if (runnable.autonomy !== 'autonomous') {
+          const go = await askRemembered(askRisk, consentKey(`run:${runnable.name}`, [runnable.host]), {
+            level: runnable.host === 'local' ? 'local' : 'fleet',
+            title: `Run ${runnable.name}?`,
+            action: runnable.name,
+            targets: [runnable.host],
+            consequence: runnable.description || 'It has nothing to fill in, so it starts as soon as you confirm.',
+            okText: 'Run', danger: false,
+            rememberLabel: `Don't ask again for ${runnable.name} on ${runnable.host}`,
+          })
+          if (!go) return
+        }
+        onRunRunnable(runnable, {}, [])
+      })()
       return
     }
     openModal(runnable)
@@ -1192,6 +1207,7 @@ export function FormsView({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {riskHolder}
       <div style={{ marginBottom: 16, flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Input
           prefix={<SearchOutlined />}

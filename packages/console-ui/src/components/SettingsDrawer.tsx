@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
-import { EmptyState, OnceHint, SaveBar, StatusTag, withLabel, type StatusTone } from './kit'
+import { EmptyState, OnceHint, RowActions, SaveBar, StatusTag, withLabel, type StatusTone } from './kit'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo, type OwnMcpClaudePlugin } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -28,7 +28,7 @@ import {
 import { useFeatures, visibleSettingsTabs } from '../features'
 import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
 import { MemorySyncTab } from './MemorySyncTab'
-import { useRiskConfirm } from './risk'
+import { RememberedAnswers, useRiskConfirm } from './risk'
 import { SettingsColumns } from './SettingsColumns'
 import { CredentialFeatureProblems, CredentialMatchPreview, CredentialNeedsPanel, CredentialUsageLine, type CredentialPrefill } from './CredentialGuide'
 import { TokenCommandInput } from './TokenCommandInput'
@@ -305,6 +305,7 @@ export function SoundsTab() {
             the <code>notifications</code> extra; the taskbar flash and sounds don't. A flapping host chimes at most once
             per half minute, and the waiting ping repeats until whatever needs you is cleared.
           </OnceHint>
+          <RememberedAnswers />
 
           {row('Enable sounds', <Switch checked={enabled} onChange={setEnabled} />)}
           {row('Volume (synthesized + file cues)', (
@@ -1273,14 +1274,8 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
           </div>
 
           {ageDays !== null && ageDays >= 75 && (
-            <div style={{
-              padding: '6px 10px', borderRadius: RADIUS.sm, marginBottom: 10,
-              background: ageDays >= 90 ? 'rgba(250,140,22,0.1)' : 'rgba(250,219,20,0.08)',
-              border: `1px solid ${ageDays >= 90 ? 'rgba(250,140,22,0.3)' : 'rgba(250,219,20,0.3)'}`,
-              fontSize: 13, color: 'var(--rs-warn)',
-            }}>
-              {ageDays >= 90 ? `Key is ${ageDays} days old — rotation recommended.` : `Key is ${ageDays} days old — consider rotating soon.`}
-            </div>
+            <Alert type="warning" showIcon style={{ marginBottom: 10, padding: '4px 10px', fontSize: 13 }}
+              message={ageDays >= 90 ? `Key is ${ageDays} days old — rotation recommended.` : `Key is ${ageDays} days old — consider rotating soon.`} />
           )}
 
           {keyPath && (
@@ -1303,10 +1298,14 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
                 Generate key
               </Button>
             ) : (
+              // Quieter than Rotate key: it can lock this machine out, and
+              // Rotate is the one you usually want.
               <Button
                 size="small"
+                type="text"
                 icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
                 disabled={generating}
+                style={{ color: 'var(--rs-text-muted)' }}
                 onClick={async () => {
                   const a = await askRisk({
                     level: 'destructive',
@@ -2373,14 +2372,21 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
         <Text type="secondary" style={{ fontSize: 13 }}>
           Saved to <code>runspec_hosts.toml</code>. Hosts are probed on startup.
         </Text>
-        <Space size={6}>
-          <Button size="small" icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()} disabled={isEditing}>Import</Button>
-          <Button size="small" icon={<DownloadOutlined />} onClick={() => { downloadToml(toToml(hosts)); message.success('Exported') }} disabled={isEditing || hosts.length === 0}>Export</Button>
-          <Button size="small" icon={<CloudServerOutlined />} onClick={() => setProvisionHosts([])} disabled={isEditing || hosts.length === 0}>Provision venv…</Button>
-          <Button size="small" icon={<SyncOutlined />} onClick={() => setUpdateTargets([])} disabled={isEditing || hosts.length === 0}>Update venv…</Button>
-          <Button size="small" icon={<DeleteOutlined />} onClick={() => setDeprovisionTargets([])} disabled={isEditing || hosts.length === 0}>Deprovision…</Button>
-          <Button size="small" icon={<PlusOutlined />} onClick={startAdd} disabled={isEditing}>Add host</Button>
-        </Space>
+        {/* Add host leads; venv jobs beside it; Import/Export and Deprovision
+            (which deletes) wait behind More, never the same weight as Add. */}
+        <RowActions
+          testId="hosts-toolbar"
+          primary={{ key: 'add', label: 'Add host', icon: <PlusOutlined />, onClick: startAdd, disabled: isEditing }}
+          secondary={[
+            { key: 'provision', label: 'Provision venv…', icon: <CloudServerOutlined />, onClick: () => setProvisionHosts([]), disabled: isEditing || hosts.length === 0 },
+            { key: 'update', label: 'Update venv…', icon: <SyncOutlined />, onClick: () => setUpdateTargets([]), disabled: isEditing || hosts.length === 0 },
+          ]}
+          more={[
+            { key: 'import', label: 'Import…', icon: <UploadOutlined />, onClick: () => fileInputRef.current?.click(), disabled: isEditing },
+            { key: 'export', label: 'Export', icon: <DownloadOutlined />, onClick: () => { downloadToml(toToml(hosts)); message.success('Exported') }, disabled: isEditing || hosts.length === 0 },
+            { key: 'deprovision', label: 'Deprovision venv…', icon: <DeleteOutlined />, danger: true, onClick: () => setDeprovisionTargets([]), disabled: isEditing || hosts.length === 0 },
+          ]}
+        />
       </div>
       {hosts.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -3269,12 +3275,8 @@ export function ReposTab() {
           message="Large codebase? A code-graph MCP can speed the agent up"
           description={
             <span style={{ fontSize: 13 }}>
-              On a big repo the agent explores by grep&nbsp;+&nbsp;read — many round-trips and a lot of tokens for structural
-              questions (“who calls X”, “what does this service look like”). A <strong>local code-graph MCP</strong> server
-              (e.g.&nbsp;<a href="https://pypi.org/project/codebase-memory-mcp/" target="_blank" rel="noreferrer">codebase-memory-mcp</a>)
-              indexes the repo once into a persisted local index and answers those from pre-computed edges — no network,
-              opt-in. Wire one up under <strong>Settings&nbsp;→&nbsp;MCP</strong>. See <code>docs/console-mcp.md</code> →
-              “Code-graph MCP for large repos”.
+              It answers "who calls X" from a local index instead of many grep-and-read steps. Add one under
+              {' '}<strong>Settings&nbsp;→&nbsp;MCP</strong>.
             </span>
           } />
       )}
@@ -3344,9 +3346,15 @@ export function ReposTab() {
             <Button aria-label={`Edit ${r.name}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Button aria-label={`Remove ${r.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger
               onClick={async () => {
-                const a = await askRisk({
+                // The app-data checkout goes with it, and the assistant's edits
+                // there are local only (never pushed): that's destructive.
+                const a = await askRisk(r.path ? {
                   level: 'local', title: `Remove ${r.name}?`, action: r.name, okText: 'Remove',
-                  consequence: r.path ? 'Your custom dev-folder checkout is left untouched.' : 'The app-data checkout on disk is also deleted.',
+                  consequence: 'Your custom dev-folder checkout is left untouched.',
+                } : {
+                  level: 'destructive', title: `Remove ${r.name} and delete its checkout?`, action: r.name,
+                  targets: [r.name], okText: 'Remove and delete',
+                  consequence: "Its checkout in the app's data folder is deleted, with any edits the assistant made there. They're never pushed, so they can't be got back.",
                 })
                 if (a.ok) remove(r.name)
               }} />
@@ -6972,7 +6980,7 @@ const ELSEWHERE: { words: string[]; where: string }[] = [
   { words: ['denylist', 'deny', 'kill switch', 'block', 'disable all'], where: 'The denylist (kill switch) is the ⊘ button under the hosts list, or Ctrl+K → Denylist.' },
   { words: ['env', 'env file', 'runspec_env', 'environment'], where: 'Env files is the button under the hosts list.' },
   { words: ['terminal', 'putty', 'send to terminals'], where: 'Open SSH terminals is on a host’s right-click menu; Send to terminals is in Ctrl+K.' },
-  { words: ['log cleanup', 'retention', 'prune', 'runs index'], where: 'Log cleanup and the runs index are in History → Log files.' },
+  { words: ['log cleanup', 'retention', 'prune', 'compact', 'clean up', 'runs index'], where: 'Log cleanup, Clean up now and the runs index are on each venv in History → Log files.' },
 ]
 
 /** Where a feature lives when it isn't in Settings, or null. Pure, for tests. */

@@ -1,7 +1,7 @@
 /**
  * The Files tab: panes load this computer (workspace) and the selected host,
  * dragging a file across opens the drop dialog with the saved filters, Copy
- * starts the right transfer, Shift-drop skips the dialog, and a finished copy
+ * starts the right transfer, only a remembered plain copy skips the dialog, and a finished copy
  * refreshes the destination pane.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -155,12 +155,21 @@ describe('FilesView', () => {
     expect(copy.disabled).toBe(false)
   })
 
-  it('Shift-drop copies the whole file with no dialog', async () => {
+  it("Shift-drop still asks; a ticked don't-ask-again skips the dialog next time", async () => {
     render(<FilesView hosts={HOSTS} selectedHost="app-01" active />)
     await dragFile('gc.log', 'left', true)
-    await waitFor(() => expect(m.startTransfer).toHaveBeenCalledWith(
-      'app-01', ['/var/log/app/gc.log'], 'local', '/ws', undefined, undefined, undefined, undefined,
-    ))
+    const dialog = await screen.findByRole('dialog')
+    expect(m.startTransfer).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: /Don't ask again for plain copies/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy' }))
+    await waitFor(() => expect(m.startTransfer).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await dragFile('app.log', 'left')
+    await waitFor(() => expect(m.startTransfer).toHaveBeenCalledTimes(2))
+    expect(m.startTransfer).toHaveBeenLastCalledWith(
+      'app-01', ['/var/log/app/app.log'], 'local', '/ws', undefined, undefined, undefined, undefined,
+    )
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 

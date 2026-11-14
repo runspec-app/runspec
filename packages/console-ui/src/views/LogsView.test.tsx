@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
-import { LogsView } from './LogsView'
+import { LogsView, cleanupPlan } from './LogsView'
 
 const { logsStatus, logsPrune, shareVenvLogs, venvOwner } = vi.hoisted(() => ({
   logsStatus: vi.fn(),
@@ -85,13 +85,13 @@ describe('LogsView', () => {
     render(<LogsView {...PROPS} />)
     await screen.findByText('ops-tools')
 
-    // Open the prune modal for the venv entry (Prune… is behind More actions).
-    await openVenvAction('ops-tools', 'Prune…')
-    expect(await screen.findByText('Prune logs')).toBeTruthy()
+    // Open the one-off cleanup for the venv entry (behind More actions).
+    await openVenvAction('ops-tools', 'Clean up now…')
+    expect(await screen.findByText(/Clean up now ·/)).toBeTruthy()
 
-    // Set a policy so Preview enables, then run the dry-run.
-    fireEvent.change(screen.getByPlaceholderText('7d'), { target: { value: '90d' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Preview (dry-run)' }))
+    // Set a delete age so Preview enables, then run the dry-run.
+    fireEvent.change(screen.getByLabelText('Delete after'), { target: { value: '90d' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
 
     // The error is shown in the modal (an Alert), not swallowed into a toast.
     expect(await screen.findByText(/upgrade runspec to 0\.56/)).toBeTruthy()
@@ -105,7 +105,7 @@ describe('LogsView', () => {
     // The action is on the venv entry only — never the per-user ~/logs home entry
     // (which is always writable by its owner, so there's nothing to share).
     fireEvent.click(within(screen.getByTestId('venv-actions-~/logs')).getByRole('button', { name: 'More actions' }))
-    expect(await screen.findByText('Prune…')).toBeTruthy()
+    expect(await screen.findByText('Clean up now…')).toBeTruthy()
     expect(screen.queryByText('Make shared…')).toBeNull()
 
     await openVenvAction('ops-tools', 'Make shared…')
@@ -152,5 +152,15 @@ describe('LogsView', () => {
     // operator can act on it.
     expect(await screen.findByText(/still log to ~\/logs/)).toBeTruthy()
     expect(screen.getByText('Make logs shared')).toBeTruthy()
+  })
+})
+
+describe('cleanupPlan', () => {
+  it('compresses and/or deletes from the same words as the policy', () => {
+    const blank = { compressAfter: '', deleteAfter: '', keepFiles: null, keepSize: '' }
+    expect(cleanupPlan(blank)).toEqual({ compress: false, delete: false, any: false })
+    expect(cleanupPlan({ ...blank, compressAfter: '7d' })).toEqual({ compress: true, delete: false, any: true })
+    expect(cleanupPlan({ ...blank, keepFiles: 50 })).toEqual({ compress: false, delete: true, any: true })
+    expect(cleanupPlan({ ...blank, compressAfter: '7d', keepSize: '5GB' })).toEqual({ compress: true, delete: true, any: true })
   })
 })

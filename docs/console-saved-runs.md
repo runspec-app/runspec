@@ -59,7 +59,8 @@ the secret env channel.
 - **Forms tab** — saved runs appear as their own section (collapsed by
   default, with a count; click the header to open it). Clicking one opens a
   dialog showing what is baked in (target, fixed args, credentials) and a field
-  per open param; a preset with no params runs immediately. Multi-host presets
+  per open param; a preset with no params asks first, naming where it runs
+  (tick "don't ask again" to skip that next time). Multi-host presets
   render one Console run block per host.
 - **Agent** — the chat agent sees your saved runs and fires them with its
   `run_saved_run` tool. The autonomy gate reflects the **underlying runnable**:

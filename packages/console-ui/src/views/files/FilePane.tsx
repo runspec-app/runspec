@@ -96,7 +96,7 @@ export function FilePane({
   // other pane lights up as a drop target.
   dragFrom: Side | null
   onDragFrom: (side: Side | null) => void
-  onDrop: (payload: DragPayload, shift: boolean) => void
+  onDrop: (payload: DragPayload) => void
   onView: (path: string) => void
   onFocus: () => void
   focused: boolean
@@ -212,7 +212,7 @@ export function FilePane({
     }
     try {
       const payload = JSON.parse(raw) as DragPayload
-      if (payload.side !== side && payload.paths.length) onDrop(payload, ev.shiftKey)
+      if (payload.side !== side && payload.paths.length) onDrop(payload)
     } catch { /* not ours */ }
   }
 

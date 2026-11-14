@@ -103,7 +103,7 @@ The sweep only ever runs **as the owner** (root is dropped to the owner first):
 - **Automatically** at the end of each of the owner's own runs — at most once a
   minute, and for at most 2 seconds, so it never slows a run down noticeably.
 - **On demand** with `runspec history sweep` (as the owner, or as root).
-- **From the console**: Logs → Runs index… → **Sweep inbox**.
+- **From the console**: Logs → Runs index… → Maintenance → **File other accounts' runs**.
 - **From cron**, if the owner is a service account that never runs anything
   itself (see [below](#a-service-account-that-never-runs-anything)).
 

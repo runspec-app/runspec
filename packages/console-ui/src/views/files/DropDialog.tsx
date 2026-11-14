@@ -18,6 +18,8 @@ export interface DropChoice {
   destName: string
   alsoTo: string[]      // extra hosts for a fan-out upload
   saveAsTransfer: boolean
+  /** Copy whole files between these two places without this dialog next time. */
+  remember?: boolean
 }
 
 // The dialog a drop opens: where from / where to, copy whole or through one of
@@ -42,6 +44,7 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, srcAs, dst
   const [destName, setDestName] = useState('')
   const [alsoTo, setAlsoTo] = useState<string[]>([])
   const [save, setSave] = useState(false)
+  const [remember, setRemember] = useState(false)
   const [manage, setManage] = useState(false)
   const [checks, setChecks] = useState<Record<string, { exists: boolean; error?: string | null }> | null>(null)
 
@@ -93,7 +96,10 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, srcAs, dst
   const title = `Copy ${one ? baseName(paths[0]) : `${paths.length} files`} to ${targetLabel(dst)}`
   const canCopy = !plan.error && (!needsArg || !!filterArg.trim())
 
-  const copy = () => onCopy({ filter, filterArg: filterArg.trim(), destName: one ? destName.trim() : '', alsoTo: keptAlso, saveAsTransfer: save })
+  // Remembering only makes sense for a plain copy: no filter, no rename, no
+  // extra hosts. Those are what the dialog is for.
+  const plain = !filter && !(one && destName.trim() && destName.trim() !== baseName(paths[0])) && !keptAlso.length
+  const copy = () => onCopy({ filter, filterArg: filterArg.trim(), destName: one ? destName.trim() : '', alsoTo: keptAlso, saveAsTransfer: save, remember: plain && remember })
 
   return (
     <Modal
@@ -103,7 +109,12 @@ export function DropDialog({ src, dst, paths, srcDir, destDir, hosts, srcAs, dst
       onCancel={onCancel}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-          <Checkbox checked={save} onChange={e => setSave(e.target.checked)} disabled={!!plan.error}>Save as a saved transfer</Checkbox>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Checkbox checked={save} onChange={e => setSave(e.target.checked)} disabled={!!plan.error}>Save as a saved transfer</Checkbox>
+            <Checkbox checked={plain && remember} onChange={e => setRemember(e.target.checked)} disabled={!plain || !!plan.error}>
+              Don't ask again for plain copies {targetLabel(src)} → {targetLabel(dst)}
+            </Checkbox>
+          </div>
           <Space>
             <Button onClick={onCancel}>Cancel</Button>
             <Button type="primary" disabled={!canCopy} onClick={copy}>{copyButtonLabel(plan.kind, keptAlso.length + 1)}</Button>

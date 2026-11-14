@@ -88,7 +88,9 @@ const SavedRunEditor = React.lazy(() => import('./components/SettingsDrawer').th
 const MarketplaceSettings = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.MarketplaceTab })))
 import { CommandInput } from './components/CommandInput'
 import { DisclaimerGate } from './components/DisclaimerGate'
-import { RUNNING_STATUSES } from './components/runShared'
+import { RUNNING_STATUSES, savedRunTargets } from './components/runShared'
+import { askRemembered, consentKey, useRiskConfirm } from './components/risk'
+import { useAntA11yLabels } from './a11yLabels'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type OtherHost, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning, dangerColors, inkColors, statusText, controlAccent, isRedBrand } from './ThemeContext'
@@ -820,11 +822,24 @@ export default function App() {
   const [savedRunEditReq, setSavedRunEditReq] = useState<{ id: string; nonce: number } | null>(null)
   const [marketplaceSettingsOpen, setMarketplaceSettingsOpen] = useState(false)
 
-  // A saved run with open params opens the params-only dialog; one with none
-  // runs immediately (the "runs immediately" card affordance).
-  const handleOpenSavedRun = (savedRun: SavedRun) => {
+  // A saved run with open params opens the params-only dialog. One with none
+  // asks first, naming where it runs, unless you ticked "don't ask again" for
+  // it on those targets.
+  const [askRisk, riskHolder] = useRiskConfirm()
+  useAntA11yLabels()
+  const handleOpenSavedRun = async (savedRun: SavedRun) => {
     if ((savedRun.params ?? []).length === 0 && !savedRun.argsError) {
-      handleRunSavedRun(savedRun.id, {})
+      const targets = savedRunTargets(savedRun)
+      const go = await askRemembered(askRisk, consentKey(`saved-run:${savedRun.id}`, targets), {
+        level: targets.length === 1 && targets[0] === 'local' ? 'local' : 'fleet',
+        title: `Run "${savedRun.title || savedRun.id}"?`,
+        action: [savedRun.runnable, ...(savedRun.command ?? [])].join(' '),
+        targets,
+        consequence: 'It has nothing to fill in, so it starts as soon as you confirm.',
+        okText: 'Run', danger: false,
+        rememberLabel: "Don't ask again for this saved run on these hosts",
+      })
+      if (go) handleRunSavedRun(savedRun.id, {})
       return
     }
     setPendingSavedRun(savedRun)
@@ -1031,9 +1046,17 @@ export default function App() {
     root.setProperty('--rs-shadow-lg', s.shadowLg)
   }, [isDark, titleCol, ctrlCol, danger.text])
 
+  // What a tab's badge says, in words: part of its accessible name (the icon
+  // and the badge number are hidden from screen readers).
+  const runsStatus = inFlight.length > 0 ? `${inFlight.length} run${inFlight.length === 1 ? '' : 's'} in progress` : ''
+  const updatesStatus = marketplaceUpdates > 0 ? `${marketplaceUpdates} package update${marketplaceUpdates === 1 ? '' : 's'} available` : ''
+  const automationStatus = triggerAwaiting > 0 ? `${triggerAwaiting} waiting for you`
+    : scheduleRunning > 0 ? `${scheduleRunning} scheduled run${scheduleRunning === 1 ? '' : 's'} in progress`
+      : triggerUnseen ? 'new trigger activity' : ''
   const viewTabs = visibleNavTabs([
     {
       key: 'console' as ViewKey,
+      status: runsStatus,
       label: 'Console',
       icon: inFlight.length > 0
         ? <Badge count={inFlight.length} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${inFlight.length} run${inFlight.length === 1 ? '' : 's'} in progress`}><ThunderboltOutlined /></Badge>
@@ -1049,6 +1072,7 @@ export default function App() {
     { key: 'forms'     as ViewKey, label: 'Forms',     icon: <FormOutlined /> },
     {
       key: 'marketplace' as ViewKey,
+      status: updatesStatus,
       label: 'Marketplace',
       icon: marketplaceUpdates > 0
         ? <Badge count={marketplaceUpdates} size="small" offset={[2, -1]} style={ATTENTION_BADGE} title={`${marketplaceUpdates} package update${marketplaceUpdates === 1 ? '' : 's'} available`}><AppstoreAddOutlined /></Badge>
@@ -1082,16 +1106,19 @@ export default function App() {
     : scheduleRunning > 0
       ? <Badge count={scheduleRunning} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${scheduleRunning} scheduled run${scheduleRunning === 1 ? '' : 's'} in progress`}><ControlOutlined /></Badge>
       : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><ControlOutlined /></Badge>
-  const PARENT_META: Record<string, { label: string; icon: React.ReactNode }> = {
+  const PARENT_META: Record<string, { label: string; icon: React.ReactNode; status?: string }> = {
     forms: { label: 'Forms', icon: <FormOutlined /> },
     history: { label: 'History', icon: <HistoryOutlined /> },
-    automation: { label: 'Automation', icon: automationIcon },
+    automation: { label: 'Automation', icon: automationIcon, status: automationStatus },
     quality: { label: 'Quality', icon: <ExperimentOutlined /> },
   }
   const navTabs = groupViews(viewTabs.map(t => t.key)).map(g => {
     const meta = PARENT_META[g.key]
-    if (!meta) return { ...viewTabs.find(t => t.key === g.key)!, sections: [] as { key: string; label: string }[] }
-    return { key: g.key as ViewKey, label: meta.label, icon: meta.icon, sections: g.sections }
+    if (!meta) {
+      const t = viewTabs.find(v => v.key === g.key)!
+      return { ...t, status: (t as { status?: string }).status ?? '', sections: [] as { key: string; label: string }[] }
+    }
+    return { key: g.key as ViewKey, label: meta.label, icon: meta.icon, status: meta.status ?? '', sections: g.sections }
   })
   // Grouped tab bar + More menu (navGroups.ts); Ctrl+1…9 follows this order.
   const navLayout = layoutNavTabs(navTabs)
@@ -1725,6 +1752,7 @@ export default function App() {
                         className="rs-nav-tab"
                         title={n < 9 ? `${tab.label} (Ctrl+${n + 1})` : undefined}
                         aria-current={currentTab === tab.key ? 'page' : undefined}
+                        aria-label={tab.status ? `${tab.label}, ${tab.status}` : tab.label}
                         onClick={() => openTab(tab.key)}
                         style={{
                           display: 'flex', alignItems: 'center', gap: 6,
@@ -1737,7 +1765,7 @@ export default function App() {
                           borderBottom: currentTab === tab.key ? `2px solid ${titleCol}` : '2px solid transparent',
                         }}
                       >
-                        {tab.icon}
+                        <span aria-hidden style={{ display: 'inline-flex' }}>{tab.icon}</span>
                         {tab.label}
                       </button>
                     )
@@ -2281,6 +2309,7 @@ export default function App() {
             their open state trips, so their JS stays out of the startup bundle.
             fallback={null} — nothing to show until the (usually cached) chunk
             resolves on first open. */}
+        {riskHolder}
         <Suspense fallback={null}>
           {shortcutsOpen && <ShortcutsHelp open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />}
           {paletteOpen && <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />}

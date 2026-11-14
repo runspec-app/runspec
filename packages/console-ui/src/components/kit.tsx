@@ -392,3 +392,21 @@ export function EmptyState({ message, action, style }: {
     </div>
   )
 }
+
+// ── HowItWorks ───────────────────────────────────────────────────────────────
+
+/** A window's one-line summary, with the longer explanation folded away under
+ *  "How this works": the people who need it can open it, and everyone else
+ *  doesn't scroll past it on every visit. */
+export function HowItWorks({ summary, children, style }: { summary: ReactNode; children: ReactNode; style?: CSSProperties }) {
+  const isDark = useIsDark()
+  return (
+    <div data-testid="how-it-works" style={{ fontSize: 13, color: textSecondary(isDark), marginBottom: 10, ...style }}>
+      <div>{summary}</div>
+      <details style={{ marginTop: 4 }}>
+        <summary style={{ cursor: 'pointer', color: textMuted(isDark), fontSize: 12 }}>How this works</summary>
+        <div style={{ marginTop: 4 }}>{children}</div>
+      </details>
+    </div>
+  )
+}

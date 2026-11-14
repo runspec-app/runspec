@@ -204,6 +204,30 @@ describe('DenylistModal per-rule actions and host globs', () => {
     expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'enable', targets: ['prod-2'], venv: 'app' })
   })
 
+  it('"Re-enable all" undoes Disable all only; the rules stay', async () => {
+    render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
+    const user = userEvent.setup()
+    await screen.findByText('little-girl')
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Re-enable all/ })) })
+    expect((await screen.findByTestId('risk-action')).textContent).toContain('Other deny rules stay')
+    await act(async () => { await user.click(screen.getByTestId('risk-ok')) })
+    await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
+    expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'enable', targets: SCOPE })
+  })
+
+  it('"Clear every rule…" lists the rules and needs "clear" typed', async () => {
+    render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
+    const user = userEvent.setup()
+    await screen.findByText('little-girl')
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Clear every rule/ })) })
+    expect((await screen.findByTestId('risk-action')).textContent).toContain('prod-1/app: deploy')
+    expect((screen.getByTestId('risk-ok') as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => { await user.type(screen.getByLabelText('Type clear to confirm'), 'clear') })
+    await act(async () => { await user.click(screen.getByTestId('risk-ok')) })
+    await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
+    expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'clear', targets: SCOPE })
+  })
+
   it('shows a path with no runspec as "not installed", not an error', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
     expect(await screen.findByText('not installed')).toBeTruthy()
