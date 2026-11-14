@@ -4,7 +4,7 @@ import { isScheduled } from '../runBy'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { timeoutLabel } from './allSchedules'
 import { StatusTag, type StatusTone } from '../components/kit'
-import { fmtWhen } from '../when'
+import { When, fmtWhen } from '../when'
 
 const { Text } = Typography
 
@@ -62,7 +62,7 @@ export function ScheduleDetail({ s, daemon = false }: { s: SharedSchedule; daemo
           {s.runs.map(r => (
             <div key={r.run_id} style={{ display: 'contents' }}>
               <RunTag run={r} />
-              <Tooltip title={r.start_ts}><span style={{ color: textSecondary(isDark) }}>{relTime(r.start_ts)}</span></Tooltip>
+              <When t={r.start_ts} style={{ color: textSecondary(isDark) }} />
               <span style={{ color: textMuted(isDark) }}>{r.duration_ms != null ? `${(r.duration_ms / 1000).toFixed(1)}s` : '—'}</span>
               <span style={{ color: textMuted(isDark), fontFamily: MONO_FONT, fontSize: 12 }}>{r.trigger === 'schedule:run-now' ? 'run now' : isScheduled(r.trigger) ? '' : r.trigger}</span>
             </div>

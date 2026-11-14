@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons'
 import { pressable, StatusTag, type StatusTone } from './kit'
 import { approvalConsequence, useConsoleInfo } from '../consoleInfo'
+import { Clock } from '../when'
 
 const { Text } = Typography
 
@@ -1365,9 +1366,13 @@ function ToolCallBlock({
   runsAs,
   host,
   editable,
+  requester,
   onAnswer,
 }: {
   entry: ToolCallEntry
+  // Who asked for this call when it wasn't the operator's own chat: "trigger
+  // vip-outage-triage", "schedule nightly", "an outside agent (MCP)".
+  requester?: string
   // non-null = this call is parked at the autonomy gate; value is the level
   awaiting?: string | null
   // When parked at the gate, the human-readable view of what's being approved —
@@ -1585,7 +1590,7 @@ function ToolCallBlock({
         <div style={{ padding: '2px 14px 14px' }}>
           <div style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
             The assistant wants to {v}{' '}
-            {resolved ? <Text code style={{ fontSize: 12 }}>{resolved.name.replace(/^[^_]+__/, '')}</Text> : 'this'}
+            <Text code style={{ fontSize: 12 }}>{(resolved?.name ?? entry.name).replace(/^[^_]+__/, '')}</Text>
             {targetHost && <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{targetHost}</Text></>}
             {consequence && consequence.fanout > 0 && (
               <Text data-testid="confirm-fanout" style={{ fontWeight: 600, color: textColor(c.isDark) }}>
@@ -1603,7 +1608,10 @@ function ToolCallBlock({
             </div>
           )}
           <div data-testid="confirm-meta" style={{ fontSize: 12, color: textMuted(c.isDark), marginBottom: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span>Set to ask first (autonomy <Text code style={{ fontSize: 11 }}>{awaiting}</Text>)</span>
+            <Tooltip title={`Its approval level is “${awaiting}”: it never runs without your go-ahead.`}>
+              <span>{approvalPolicyText(awaiting)}</span>
+            </Tooltip>
+            {requester && <span data-testid="confirm-requester">· requested by {requester}</span>}
             {runsAs && (
               <span data-testid="confirm-runs-as">· runs as <Text code style={{ fontSize: 12 }}>{runsAs}</Text></span>
             )}
@@ -1849,7 +1857,9 @@ export function ChatTranscript({
   replyThinking,
   pendingConfirm,
   onAnswerConfirm,
+  requester,
 }: {
+  requester?: string
   segments: BlockSegment[]
   currentText: string
   done: boolean
@@ -1878,6 +1888,7 @@ export function ChatTranscript({
                 runsAs={pc ? pc.runs_as : undefined}
                 host={pc ? confirmHost(pc.display_input, pc.tool_input) : undefined}
                 editable={!!pc && (pc.display_name ?? pc.tool_name) === pc.tool_name}
+                requester={requester}
                 onAnswer={onAnswerConfirm}
               />
             )
@@ -2350,7 +2361,7 @@ const BlockCard = memo(function BlockCard({
           </Tooltip>
         )}
         <Text style={{ color: c.dim, fontSize: 12 }}>
-          {new Date(block.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          <Clock t={block.startedAt} />
         </Text>
         {/* Live elapsed clock while the turn runs (chat turns have no InFlightStrip row). */}
         {!block.done && pendingConfirm && (
@@ -2505,6 +2516,7 @@ const BlockCard = memo(function BlockCard({
                 runsAs={cardGate.runs_as}
                 host={confirmHost(cardGate.display_input, cardGate.tool_input)}
                 editable={(cardGate.display_name ?? cardGate.tool_name) === cardGate.tool_name}
+                requester={requesterOf(block.trigger)}
                 onAnswer={answerThis}
               />
             </div>
@@ -2627,6 +2639,7 @@ const BlockCard = memo(function BlockCard({
                 replyThinking={block.replyThinking}
                 pendingConfirm={pendingConfirm}
                 onAnswerConfirm={answerThis}
+                requester={requesterOf(block.trigger)}
               />
             )}
           </div>
@@ -2635,6 +2648,19 @@ const BlockCard = memo(function BlockCard({
     </div>
   )
 })
+
+/** The approval card's policy line, in words rather than the level's name. */
+export function approvalPolicyText(level: string): string {
+  return level === 'supervised' ? 'Asks before running, and you review what it does' : 'Asks before running'
+}
+
+/** Who asked for a gated call, for the approval card: the trigger, schedule or
+ *  outside agent behind the block. Nothing for the operator's own chat. */
+export function requesterOf(trigger?: { name: string; source: string }): string | undefined {
+  if (!trigger?.name) return undefined
+  if (trigger.source === 'mcp') return 'an outside agent (MCP)'
+  return trigger.source === 'schedule' ? `schedule ${trigger.name}` : `trigger ${trigger.name}`
+}
 
 // The first line of an "Ask the assistant" message: what ran and where (the
 // label is "/runnable on host"), who started it, and whether it failed — so

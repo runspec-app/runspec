@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
-import { EmptyState, OnceHint, StatusTag, withLabel, type StatusTone } from './kit'
+import { EmptyState, OnceHint, SaveBar, StatusTag, withLabel, type StatusTone } from './kit'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo, type OwnMcpClaudePlugin } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -33,6 +33,7 @@ import { CredentialFeatureProblems, CredentialMatchPreview, CredentialNeedsPanel
 import { TokenCommandInput } from './TokenCommandInput'
 import { TerminalLook } from './TerminalLook'
 import { PuttySync } from './PuttySync'
+import { plural } from '../when'
 
 const { Text, Link } = Typography
 
@@ -429,11 +430,11 @@ export function SoundsTab() {
         </div>
       </SettingsColumns>
 
-      <Space style={{ marginTop: 8 }}>
+      <SaveBar>
         <Button type="primary" onClick={handleSave} loading={saving}>Save</Button>
         {saved && <Typography.Text type="success"><CheckOutlined /> Saved</Typography.Text>}
         <Button onClick={runTest} loading={testing}>Test notification &amp; sound</Button>
-      </Space>
+      </SaveBar>
 
       {test && (
         <pre style={{ marginTop: 12, fontSize: 13, background: 'rgba(127,127,127,0.12)', padding: 10, borderRadius: RADIUS.sm, whiteSpace: 'pre-wrap' }}>
@@ -874,10 +875,10 @@ export function LlmTab() {
           </div>
         )}
       </SettingsColumns>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-        <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
+      <SaveBar>
+        <Button type="primary" loading={saving} onClick={handleSave}>Save</Button>
         {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
-      </div>
+      </SaveBar>
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
         Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
       </Text>
@@ -1247,15 +1248,6 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
             </Button>
           </div>
 
-          <Divider />
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Button type="primary" size="small" loading={saving} onClick={handleSave}>Save</Button>
-            {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
-          </div>
-          <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
-            Settings are saved to <code>{configDir || '%APPDATA%/runspec-console'}</code>
-          </Text>
         </div>
         <div>
           {/* SSH key section */}
@@ -1485,6 +1477,11 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
           )}
         </div>
       </SettingsColumns>
+
+      <SaveBar hint={<>Saved to <code>{configDir || '%APPDATA%/runspec-console'}</code></>}>
+        <Button type="primary" loading={saving} onClick={handleSave}>Save</Button>
+        {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
+      </SaveBar>
 
       <CopyKeyAllModal
         open={copyAllOpen}
@@ -1930,8 +1927,9 @@ function LocalVenvsTab() {
         </div>
       </SettingsColumns>
 
-      <Divider style={{ margin: '16px 0' }} />
-      <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+      <SaveBar>
+        <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+      </SaveBar>
     </div>
   )
 }
@@ -2139,8 +2137,9 @@ function AgentToolsTab() {
         }]}
       />
 
-      <Divider style={{ margin: '16px 0' }} />
-      <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+      <SaveBar>
+        <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+      </SaveBar>
     </div>
   )
 }
@@ -4068,10 +4067,10 @@ export function MailboxesTab() {
         </div>
       </SettingsColumns>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
-        <Button type="primary" size="small" loading={saving} onClick={save}>Save</Button>
+      <SaveBar>
+        <Button type="primary" loading={saving} onClick={save}>Save</Button>
         {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
-      </div>
+      </SaveBar>
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 10 }}>
         Saved to <code>config.toml</code> in <code>{configDir || '%APPDATA%/runspec-console'}</code>. Changes restart the trigger engine.
       </Text>
@@ -4275,7 +4274,7 @@ export function ConfigSyncTab() {
       const r = await bridge.sync_pull(preview.ref, preview.commit)
       setResult(r)
       if (r.ok) {
-        message.success(`Pulled ${r.written?.length ?? 0} file(s) at ${r.ref}`)
+        message.success(`Pulled ${plural(r.written?.length ?? 0, 'file')} at ${r.ref}`)
         setPreviewOpen(false)
         window.dispatchEvent(new CustomEvent('runspec:config_sync_changed'))
       } else message.error(r.error || 'Pull failed')
@@ -4299,7 +4298,7 @@ export function ConfigSyncTab() {
       const r = await bridge.seed_apply(true)
       setSeedResult(r)
       if (!r.ok) message.error(r.error || 'Seed apply failed')
-      else if (r.applied) message.success(`Applied seed (${r.written?.length ?? 0} file(s))`)
+      else if (r.applied) message.success(`Applied seed (${plural(r.written?.length ?? 0, 'file')})`)
       else message.info('Seed already up to date')
       loadSeed()
     } finally { setSeedBusy(false) }
@@ -4316,7 +4315,7 @@ export function ConfigSyncTab() {
       await bridge.save_docs_config(docsDir.trim())
       const r = await bridge.generate_docs(docsDir.trim())
       setDocsResult(r)
-      if (r.ok) message.success(`Wrote ${r.written?.length ?? 0} doc file(s)`)
+      if (r.ok) message.success(`Wrote ${plural(r.written?.length ?? 0, 'doc file')}`)
       else message.error(r.error || 'Doc generation failed')
     } finally { setDocsBusy(false) }
   }
@@ -4450,7 +4449,7 @@ export function ConfigSyncTab() {
           description={<span style={{ fontSize: 13 }}>
             Wrote: {result.written?.length ? <code>{result.written.join(', ')}</code> : 'nothing'}.
             {result.skipped?.length ? <> Skipped (not in repo): <code>{result.skipped.join(', ')}</code>.</> : null}
-            {result.backups?.length ? <> Backed up {result.backups.length} file(s).</> : null}
+            {result.backups?.length ? <> Backed up {plural(result.backups.length, 'file')}.</> : null}
             {result.pruned?.length ? <> Pruned {result.pruned.length} old backup(s).</> : null}
             {' '}Hosts and triggers reloaded — no restart needed.
           </span>} />
@@ -4546,7 +4545,7 @@ export function ConfigSyncTab() {
                   message="Seed applied"
                   description={<span style={{ fontSize: 13 }}>
                     Wrote: {seedResult.written?.length ? <code>{seedResult.written.join(', ')}</code> : 'nothing'}.
-                    {seedResult.backups?.length ? <> Backed up {seedResult.backups.length} file(s).</> : null}
+                    {seedResult.backups?.length ? <> Backed up {plural(seedResult.backups.length, 'file')}.</> : null}
                     {' '}Hosts and triggers reloaded — no restart needed.
                   </span>} />
               )}
@@ -4574,7 +4573,7 @@ export function ConfigSyncTab() {
           </Space.Compact>
           {docsResult && docsResult.ok && (
             <Alert type="success" showIcon style={{ marginTop: 10 }}
-              message={`Wrote ${docsResult.written?.length ?? 0} file(s)`}
+              message={`Wrote ${plural(docsResult.written?.length ?? 0, 'file')}`}
               description={<span style={{ fontSize: 13 }}>Into <code>{docsResult.dir}</code>. Commit them from your repo clone to share with the team.</span>} />
           )}
           {docsResult && !docsResult.ok && (
@@ -5873,16 +5872,9 @@ export function TelemetryTab() {
 
       {/* One Save for the whole tab, pinned to the bottom of the scrolling
           Settings content so it reads as saving traces and metrics together. */}
-      <div style={{
-        position: 'sticky', bottom: 0, zIndex: 1, marginTop: 18, padding: '12px 0',
-        display: 'flex', alignItems: 'center', gap: 12,
-        background: token.colorBgElevated, borderTop: `1px solid ${token.colorBorderSecondary}`,
-      }}>
+      <SaveBar hint={ai ? 'Saves the trace and metrics settings together.' : 'Saves the settings above.'}>
         <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save telemetry settings'}</Button>
-        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-          {ai ? 'Saves the trace and metrics settings together.' : 'Saves the settings above.'}
-        </Typography.Text>
-      </div>
+      </SaveBar>
     </div>
   )
 }
@@ -5958,7 +5950,9 @@ function ChatHistoryTab() {
           </Typography.Paragraph>
         </div>
       </SettingsColumns>
-      <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+      <SaveBar>
+        <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+      </SaveBar>
     </div>
   )
 }
@@ -6648,7 +6642,7 @@ export function McpServerTab() {
           {status?.running ? (
             <Space direction="vertical" size={2}>
               <Space><StatusTag tone="ok">running</StatusTag><Typography.Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{status.url}</Typography.Text></Space>
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>{status.tools} tool(s){status.builtins ? ` + ${status.builtins} built-in(s)` : ''} · auth {status.auth ? 'on' : 'off'}</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>{plural(status.tools, 'tool')}{status.builtins ? ` + ${status.builtins} built-in` : ''} · auth {status.auth ? 'on' : 'off'}</Typography.Text>
               <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 0 }}>
                 Connect Claude Code:&nbsp;
                 <code>claude mcp add --transport http runspec {status.url}{status.auth ? ' --header "Authorization: Bearer <token>"' : ''}</code>
@@ -6669,8 +6663,9 @@ export function McpServerTab() {
           )}
         </div>
       </SettingsColumns>
-      <Divider style={{ margin: '14px 0' }} />
-      <Button type="primary" onClick={handleSave} loading={saving}>Save</Button>
+      <SaveBar>
+        <Button type="primary" onClick={handleSave} loading={saving}>Save</Button>
+      </SaveBar>
     </div>
   )
 }
@@ -6827,8 +6822,9 @@ export function VoiceTab() {
         </div>
       </SettingsColumns>
 
-      <Divider style={{ margin: '16px 0' }} />
-      <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+      <SaveBar>
+        <Button type="primary" loading={saving} onClick={handleSave}>{saved ? 'Saved' : 'Save'}</Button>
+      </SaveBar>
     </div>
   )
 }
@@ -6860,6 +6856,39 @@ export function groupSettingsTabs<T extends { key: string }>(items: T[]): { labe
   return groups.filter(g => g.items.length > 0)
 }
 
+// What each section holds, so the search finds "proxy" or "api key" under the
+// section that has it, not only by the section's name.
+const SETTINGS_KEYWORDS: Record<string, string> = {
+  ssh: 'key rotate rotation known_hosts putty jump proxy concurrent retries ssh key copy',
+  llm: 'model provider api key anthropic bedrock effort tokens system prompt claude',
+  terminal: 'putty font theme colour color cursor scrollback',
+  jumpHosts: 'hosts groups profiles fleet servers provision venv deprovision import',
+  localVenvs: 'venv globs local discovery',
+  network: 'proxy ca bundle tls certificate web fetch',
+  agentTools: 'hide hidden tools visibility agent catalog',
+  selfService: 'helpdesk rooms catalogue teams queue',
+  repos: 'git repository checkout clone',
+  credentials: 'passwords tokens keychain secrets pat username',
+  mcp: 'mcp servers client external tools stdio http sse',
+  mcpServer: 'mcp server claude code cursor token port',
+  configSync: 'git sync seed tag pull config repository',
+  memorySync: 'wiki knowledge team branch push pull',
+  mailbox: 'outlook email mail folders watch claim',
+  sounds: 'sound notifications toast alert audio',
+  voice: 'dictation microphone speech',
+  chatHistory: 'conversations retention resume compaction',
+  telemetry: 'opentelemetry otel traces metrics langsmith phoenix grafana',
+}
+
+/** Whether a Settings section matches a search: its name or what it holds,
+ *  every word. Pure, for tests. */
+export function matchSettingsTab(item: { key: string; label: ReactNode }, query: string): boolean {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return true
+  const hay = `${typeof item.label === 'string' ? item.label : ''} ${item.key} ${SETTINGS_KEYWORDS[item.key] ?? ''}`.toLowerCase()
+  return words.every(w => hay.includes(w))
+}
+
 export function SettingsTabBar({ items, activeKey, onSelect }: {
   items: { key: string; label: ReactNode }[]
   activeKey: string
@@ -6867,9 +6896,21 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
 }) {
   const isDark = useIsDark()
   const accent = useAccent()
+  const [query, setQuery] = useState('')
+  const shown = items.filter(i => matchSettingsTab(i, query))
   return (
-    <div role="tablist" aria-label="Settings sections" aria-orientation="vertical" className="rs-settings-tabbar">
-      {groupSettingsTabs(items).map(group => (
+    <div className="rs-settings-tabbar">
+      <Input
+        size="small" allowClear placeholder="Search settings" aria-label="Search settings sections"
+        prefix={<SearchOutlined />} value={query}
+        onChange={e => setQuery(e.target.value)}
+        onPressEnter={() => { if (shown[0]) onSelect(shown[0].key) }}
+      />
+      {shown.length === 0 && (
+        <div style={{ fontSize: 13, color: textMuted(isDark) }}>No section matches.</div>
+      )}
+      <div role="tablist" aria-label="Settings sections" aria-orientation="vertical" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {groupSettingsTabs(shown).map(group => (
         <div key={group.label} className="rs-settings-group">
           <div aria-hidden className="rs-settings-group-label" style={{ color: textMuted(isDark) }}>{group.label}</div>
           {group.items.map(item => {
@@ -6899,6 +6940,7 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
           })}
         </div>
       ))}
+      </div>
     </div>
   )
 }

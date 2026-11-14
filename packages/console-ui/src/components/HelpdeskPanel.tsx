@@ -5,6 +5,7 @@ import { bridge, type TriggerCard } from '../bridge'
 import { useFeatures } from '../features'
 import { useIsDark, textColor, textMuted, MONO_FONT, RADIUS } from '../ThemeContext'
 import { COLUMN_COLOR } from './runShared'
+import { fmtClock } from '../when'
 
 /**
  * HelpdeskPanel — the helpdesk / queue side of the Triggers tab.
@@ -27,7 +28,7 @@ const visitorOf = (room: string) => room.split('/').slice(2).join('/') || room
 
 function fmtTime(epochSeconds: number): string {
   if (!epochSeconds) return ''
-  return new Date(epochSeconds * 1000).toLocaleTimeString()
+  return fmtClock(epochSeconds * 1000)
 }
 
 type Draft = { entry_id: string; to: string; subject: string; sent?: boolean; sending?: boolean }

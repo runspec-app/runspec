@@ -106,7 +106,7 @@ describe('McpServerTab', () => {
     statusFn.mockResolvedValue({ ...OFF, running: true, url: 'http://127.0.0.1:8765/mcp', tools: 7 })
     await act(async () => { render(<McpServerTab />) })
     expect(await screen.findByText('http://127.0.0.1:8765/mcp')).toBeTruthy()
-    expect(screen.getByText(/7 tool\(s\)/)).toBeTruthy()
+    expect(screen.getByText(/7 tools/)).toBeTruthy()
   })
 
   it('surfaces dropped-tool warnings from status (not a silent log-only failure)', async () => {

@@ -9,6 +9,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.431.0] — 2026-11-14
+
+### Changed
+
+- **The approval card says who asked, in plain words.** The policy line reads
+  "Asks before running" (supervised adds "and you review what it does")
+  instead of "Set to ask first (autonomy confirm)", and a call from a
+  trigger, a schedule or an outside agent over MCP says so: "· requested by
+  trigger vip-outage-triage". The card always names the tool, even before it
+  has resolved what the call will run ("wants to run `outlook_send`", not
+  "wants to run this").
+- **Schedules is less crowded.** The four filter dropdowns and the Only
+  problems switch are one **Filter** button; active filters show as chips
+  under the bar, each with a ×, plus **Show all**. The first time there are
+  problems, the list opens on just those. Two or more scheduler daemons fold
+  to one status line (plus any that need a look). The When and Next fire
+  columns are one column.
+- **Settings has a search and a pinned Save.** A search box over the section
+  list finds a section by its name or what it holds ("proxy", "keychain",
+  "otel"); Enter opens the first match. Each section's Save sits in a bar
+  pinned to the bottom of the section, so it is always in reach; SSH's Save
+  is no longer halfway down the left column.
+- **Dates and times read the same everywhere.** Console card times, event-log
+  and log-line clocks, working hours and the Knowledge sync time use the
+  shared 24-hour format; Improve, Evals, log clean-up and schedule runs use
+  the shared "5m ago / 13 Nov 19:53" form; Runs index and Charts show date
+  ranges the same way ("6 Nov – 13 Nov"). Counts say "1 file" / "3 files"
+  instead of "file(s)".
+- **Charts' summary numbers are readable on the light theme.** Success rate
+  uses the theme's status colours (the fixed hues were 1.6:1 on white), and
+  total runs and p95 use the normal text colour. The success, failure and p95
+  chart marks use the same status colours.
+
 ## [0.430.0] — 2026-11-13
 
 ### Fixed

@@ -9,6 +9,7 @@ import {
   type HistoryDbAction, type HistoryDbInbox, type HistoryDbStats,
 } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
+import { fmtDayRange } from '../when'
 
 const { Text } = Typography
 
@@ -188,7 +189,7 @@ export function RunsIndexModal({ target, onClose }: {
             </Descriptions.Item>
             <Descriptions.Item label="Size">{humanBytes(s.size_bytes)} (incl. WAL)</Descriptions.Item>
             <Descriptions.Item label="Span">
-              {s.oldest ? `${s.oldest.slice(0, 10)} → ${(s.newest || '').slice(0, 10)}` : '—'}
+              {s.oldest ? fmtDayRange(s.oldest, s.newest) : '—'}
             </Descriptions.Item>
             {(s.stale_running ?? 0) > 0 && (
               <Descriptions.Item label="Stale">

@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { OutputPanel, approvalAnnouncement, blockOutcome, type PendingConfirm } from './OutputPanel'
+import { OutputPanel, approvalAnnouncement, approvalPolicyText, blockOutcome, requesterOf, type PendingConfirm } from './OutputPanel'
 import { ConsoleInfoContext } from '../consoleInfo'
 import type { InvocationBlock } from './OutputPanel'
 
@@ -250,8 +250,11 @@ describe('OutputPanel autonomy-gate confirm', () => {
       autonomy: 'confirm',
     })
     expect(screen.getByTestId('confirm-runs-as').textContent).toBe('· runs as svc-ops')
-    // The autonomy level is on the card, not behind a tooltip.
-    expect(screen.getByTestId('confirm-meta').textContent).toContain('Set to ask first (autonomy confirm)')
+    // The policy is said in words, not as the level's name.
+    expect(screen.getByTestId('confirm-meta').textContent).toContain('Asks before running')
+    expect(screen.getByTestId('confirm-meta').textContent).not.toMatch(/autonomy/)
+    // The operator's own chat names no requester.
+    expect(screen.queryByTestId('confirm-requester')).toBeNull()
   })
 
   it('omits the runs-as line when the call runs as the login account', () => {
@@ -536,6 +539,34 @@ describe('approvals in other chats', () => {
     fireConfirm({ id: 'gone', request_id: 'req-g', tool_name: 'restart-service', tool_input: {}, autonomy: 'confirm' })
     expect(screen.getByTestId('approval-announce').textContent).toBe('')
     expect(screen.queryByTestId('approval-elsewhere')).toBeNull()
+  })
+})
+
+describe('approval card wording', () => {
+  it('names the trigger that asked, on a rule-mode card gate', () => {
+    render(<OutputPanel blocks={[ruleRunBlock('trig1')]} />)
+    fireConfirm({
+      id: 'trig1', request_id: 'req-rq', tool_name: 'drain-node', tool_input: { host: 'web-1' },
+      display_name: 'drain-node', display_input: { host: 'web-1' }, autonomy: 'confirm',
+    })
+    expect(screen.getByTestId('confirm-requester').textContent).toBe('· requested by trigger nightly')
+  })
+
+  it('always names the tool, even with no resolved view', () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('outlook_send')]} />)
+    fireConfirm({ id: 'chat1', request_id: 'req-nm', tool_name: 'outlook_send', tool_input: {}, autonomy: 'confirm' })
+    const card = document.querySelector('[data-rs-confirm-gate]')!.textContent ?? ''
+    expect(card).toContain('outlook_send')
+    expect(card).not.toMatch(/wants to \w+ this\b/)
+  })
+
+  it('says each requester and policy in words', () => {
+    expect(requesterOf(undefined)).toBeUndefined()
+    expect(requesterOf({ name: 'vip', source: 'outlook' })).toBe('trigger vip')
+    expect(requesterOf({ name: 'nightly', source: 'schedule' })).toBe('schedule nightly')
+    expect(requesterOf({ name: 'claude', source: 'mcp' })).toBe('an outside agent (MCP)')
+    expect(approvalPolicyText('confirm')).toBe('Asks before running')
+    expect(approvalPolicyText('supervised')).toMatch(/review/)
   })
 })
 

@@ -19,6 +19,7 @@ import {
   RunnableArgsBlock, runnableSelectOptions, TargetFormItems, runnablesForTarget,
   type Target,
 } from './RunnableAction'
+import { fullWhen } from '../when'
 
 const { Text } = Typography
 
@@ -1153,7 +1154,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
         if (s.enabled === false) return <StatusTag tone="neutral">paused</StatusTag>
         if (!v) return <span style={{ color: dimCol }}>—</span>
         return (
-          <Tooltip title={new Date(v).toLocaleString()}>
+          <Tooltip title={fullWhen(v)}>
             <span style={{ color: dimCol }}>{relativeWhen(v)}</span>
           </Tooltip>
         )

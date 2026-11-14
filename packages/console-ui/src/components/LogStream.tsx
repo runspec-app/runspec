@@ -5,6 +5,7 @@
 // once.
 
 import { MONO_FONT, RADIUS } from '../ThemeContext'
+import { fmtClock } from '../when'
 
 const LOG_LEVEL_COLOUR: Record<string, string> = {
   INFO: '#4fc1ff',
@@ -29,7 +30,7 @@ export function LogStream({ records }: { records: Record<string, unknown>[] }) {
         const colour = LOG_LEVEL_COLOUR[r.level ?? ''] ?? '#d4d4d4'
         return (
           <div key={i}>
-            <span style={{ color: '#555', marginRight: 8 }}>{r.ts ? new Date(r.ts).toLocaleTimeString() : '—'}</span>
+            <span style={{ color: 'var(--rs-text-muted)', marginRight: 8 }}>{r.ts ? fmtClock(r.ts) : '—'}</span>
             <span style={{ color: colour, marginRight: 8, minWidth: 56, display: 'inline-block' }}>{r.level ?? ''}</span>
             {r.extra?.run_id && <span style={{ color: '#7a6', marginRight: 8 }}>{String(r.extra.run_id).slice(0, 8)}</span>}
             <span style={{ color: '#d4d4d4' }}>{r.message ?? ''}</span>

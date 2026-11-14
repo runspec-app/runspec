@@ -43,7 +43,7 @@ beforeEach(() => {
 describe('AnalyticsView', () => {
   it('reads a 30-day window and offers no range beyond it', async () => {
     render(<AnalyticsView {...PROPS} />)
-    expect(await screen.findByText('2026-08-30 → 2026-09-28')).toBeTruthy()
+    expect(await screen.findByText('30 Aug – 28 Sep')).toBeTruthy()
     expect(getAnalytics).toHaveBeenCalledWith(['web-01'], 30, undefined)
     expect(screen.getByText('30d')).toBeTruthy()
     expect(screen.queryByText('90d')).toBeNull()
@@ -58,7 +58,7 @@ describe('AnalyticsView', () => {
 
   it('shows no note when every host is complete', async () => {
     render(<AnalyticsView {...PROPS} />)
-    await screen.findByText('2026-08-30 → 2026-09-28')
+    await screen.findByText('30 Aug – 28 Sep')
     expect(screen.queryByText(/incomplete for some hosts/)).toBeNull()
   })
 })

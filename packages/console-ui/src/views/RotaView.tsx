@@ -3,12 +3,13 @@ import { Switch, Button, Collapse, Segmented, Input, InputNumber, message } from
 import { ClockCircleOutlined, CoffeeOutlined, LockOutlined, UnlockOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { bridge, type Rota, type RotaDay, type LockState } from '../bridge'
 import { useIsDark, textColor, textMuted, MONO_FONT } from '../ThemeContext'
+import { fmtClock } from '../when'
 
 // JS Date.getDay() (0=Sun) → rota day key.
 const DOW_KEY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
 function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return fmtClock(iso, false)
 }
 
 // Live screen-lock indicator for the lock auto-suspend control — polls the cheap

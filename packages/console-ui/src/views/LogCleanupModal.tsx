@@ -14,6 +14,7 @@ import { bridge, type LogRetentionPolicy, type LogRetentionResult } from '../bri
 import { MONO_FONT } from '../ThemeContext'
 import { retentionOff, retentionProblem } from './ProvisionModal'
 import { humanBytes } from './RunsIndexModal'
+import { fmtWhen, plural } from '../when'
 
 const { Text } = Typography
 
@@ -105,7 +106,7 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
       if (!r.ok) { setError(r.error || 'The cleanup pass failed.'); return }
       if (r.skipped) { setPreview(r.error || `Nothing to do (${r.skipped}).`); return }
       const line = dryRun
-        ? `Right now it would compress ${r.compacted ?? 0} run file(s) and delete ${r.deleted ?? 0} (${humanBytes(r.freed_bytes)} freed).`
+        ? `Right now it would compress ${plural(r.compacted ?? 0, 'run file')} and delete ${r.deleted ?? 0} (${humanBytes(r.freed_bytes)} freed).`
         : `Compressed ${r.compacted ?? 0} run file(s), deleted ${r.deleted ?? 0} (${humanBytes(r.freed_bytes)} freed).`
       if (dryRun) setPreview(line)
       else { message.success(line); load(target) }
@@ -150,7 +151,7 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
             </Descriptions.Item>
             <Descriptions.Item label="Last pass">
               {last
-                ? <span>{(last.ts ?? '').replace('T', ' ').slice(0, 16)}: compressed {last.compacted ?? 0}, deleted {last.deleted ?? 0} ({humanBytes(last.freed_bytes)} freed){last.error ? <Text type="danger">, failed: {last.error}</Text> : null}</span>
+                ? <span>{fmtWhen(last.ts)}: compressed {last.compacted ?? 0}, deleted {last.deleted ?? 0} ({humanBytes(last.freed_bytes)} freed){last.error ? <Text type="danger">, failed: {last.error}</Text> : null}</span>
                 : <Text type="secondary">{hasPolicy ? 'not yet (the owner\'s next run applies it)' : '—'}</Text>}
             </Descriptions.Item>
             {info.file && (
