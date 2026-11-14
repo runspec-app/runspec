@@ -1,4 +1,4 @@
-"""webhooks.py — the pure half of following a venv's webhooks (console 0.437.0).
+"""webhooks.py — the pure half of following a venv's webhooks (console 0.438.0).
 
 A venv's runspec-scheduler daemon (0.11.0+) receives webhooks, keeps them in a
 spool and streams every change with ``runspec-scheduler hooks follow``: first a

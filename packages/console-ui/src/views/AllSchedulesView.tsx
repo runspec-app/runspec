@@ -26,6 +26,8 @@ import {
   DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, PACKAGE_POLICY, STATE_TONE, claimStale, daemonNeedsAttention, daemonSummary, filterRows, noteBatches, noteText, noteVerbs, noteable, packageOverridden, settingText, settingsForm, shortDuration, supportsPackages, venvSettingsChanges,
   type Collected, type VenvSettingsForm, type NoteVerb, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
 } from './allSchedules'
+import { WebhooksSection } from './WebhooksSection'
+import { useWebhooks } from '../webhooks'
 import { RUN_TONE, ScheduleDetail, relTime } from './sharedSchedules'
 import { EmptyState, IconAction, StatusTag, type StatusTone } from '../components/kit'
 import { describeCron } from '../cronText'
@@ -388,6 +390,7 @@ function report(what: string, res: HostScheduleResult) {
 export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory, runnables }: AllSchedulesViewProps) {
   const isDark = useIsDark()
   const { token } = theme.useToken()
+  const webhooks = useWebhooks()
   const [filters, setFiltersState] = useState<RowFilters>(readFilters)
   const setFilters = (patch: Partial<RowFilters>) => setFiltersState(prev => {
     const next = { ...prev, ...patch }
@@ -840,6 +843,8 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           ))}
         </div>
       )}
+
+      {scope !== 'console' && <WebhooksSection status={webhooks.status} venvs={collected.venvs} editable={editable} />}
 
       {notes.map(n => (
         <Alert key={n.key} type="error" showIcon style={{ marginBottom: 8 }}

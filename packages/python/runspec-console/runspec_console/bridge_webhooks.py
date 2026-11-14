@@ -1,4 +1,4 @@
-"""bridge_webhooks.py — following hosts' webhooks (console 0.437.0).
+"""bridge_webhooks.py — following hosts' webhooks (console 0.438.0).
 
 A venv's runspec-scheduler (0.11.0+) receives webhooks and keeps them in its
 spool. This console follows the hooks a host entry names (``hooks = ["…"]`` or

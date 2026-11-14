@@ -34,6 +34,9 @@ class _StubBridge:
     def restart_chat(self) -> None:  # save_jump_hosts re-joins rooms
         pass
 
+    def restart_webhooks(self) -> None:  # and re-follows webhooks
+        pass
+
     def _kick_refresh(self, *, force: bool = False) -> None:  # spawned by save
         pass
 

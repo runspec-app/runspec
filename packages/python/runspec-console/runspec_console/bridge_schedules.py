@@ -1609,8 +1609,9 @@ class SchedulesMixin:
         else:
             binary = str(Path(rp).with_name(program))
         owner, _ = self._scheduler_owner(host, venv, remote)
+        extra: dict[str, Any] = {"data": data} if data else {}
         code, stdout, stderr = self._run_scheduler_as(
-            host, binary, argv, owner, remote, env=env, timeout=timeout, data=data
+            host, binary, argv, owner, remote, env=env, timeout=timeout, **extra
         )
         got = hs.last_json(stdout)
         if code == 0 and not (got and got.get("error")):

@@ -9,6 +9,51 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.438.0] — 2026-11-14
+
+### Added
+
+- **Follow webhooks from your hosts.** runspec-scheduler 0.11.0 can take
+  webhooks into a venv; the console now follows them live. Name the hooks to
+  follow on a host entry (`hooks = ["*"]` or `hooks = ["alerts"]` in
+  `runspec_hosts.toml`, or *Follow* on the Schedules tab) and the console keeps
+  a `runspec-scheduler hooks follow` stream open to each of that host's venvs,
+  as the venv owner, over the host's pooled SSH connection (Linux locally).
+  It reconnects with backoff and catches up on what it missed
+  (`[webhooks] replay`, default `15m`).
+  - **Approval cards on the Console.** A delivery the host holds for a person
+    shows as an amber card above the chat: the hook, host and venv, when and
+    where it came from, what it wants to run and the fields it was sent, with
+    Approve / Deny and an optional note for the record. The first decision on
+    any console wins; a card decided elsewhere turns into "approved by …"
+    until the run ends. *Hide on this console* hides one card here only, with
+    Undo. Works with AI off.
+  - **Status bar.** Waiting webhooks count in "N waiting for you" (with AI
+    off too) and keep the waiting cue playing.
+  - **Schedules tab.** One strip per followed venv: connection, waiting count,
+    mutes (click × to unmute), *Mute* every hook for 1/4/12/24 hours, recent
+    deliveries, *Stop following*. Hosts whose venvs take webhooks but aren't
+    followed get a *Follow* button; *Set up webhooks on…* opens the editor for
+    any venv with runspec-scheduler 0.11.0.
+  - **Hook editor** (*Hooks…*): every hook in the venv, console-made ones
+    edited as TOML, tried against a body or the hook's last one without
+    running anything, saved with a new token or basic-auth password (made by
+    the console, sent on stdin, shown once; the host keeps only a hash) and
+    removed. Hooks deployed into `hooks.d` are read-only. *Listener & mail*
+    edits `[hooks]` and `[smtp]`, sending only what changed.
+  - **Away = muted.** While the screen is locked, or outside working hours
+    when the rota is on, the console mutes every hook for itself (renewed
+    every few minutes) and unmutes when you're back, so the host mails someone
+    instead of waiting on an empty desk.
+  - **Triggers.** Each delivery is also a `webhook` event (`event` = the hook
+    name; fields flattened to `a.b` keys), so a trigger can react to it.
+  - Audit events `webhook.approve`, `webhook.deny`, `webhook.hook_saved`,
+    `webhook.hook_removed`, `webhook.settings`.
+  - JS API: `webhooks_status`, `webhook_decide`, `webhook_dismiss`,
+    `webhook_mute`, `webhook_unmute`, `webhook_follow`, `webhook_hooks`,
+    `webhook_deliveries`, `webhook_hook_save`, `webhook_hook_remove`,
+    `webhook_hook_test`, `webhook_settings`; event `runspec:webhooks`.
+
 ## [0.436.1] — 2026-11-14
 
 ### Changed
