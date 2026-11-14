@@ -279,6 +279,26 @@ function HooksTab({ target, list, onChanged }: { target: WebhookTarget; list: We
 
 type SettingsForm = WebhookSettings & { smtp: WebhookSmtp }
 
+/** Where a venv's listener port starts when none is set (the docs' example). */
+export const DEFAULT_WEBHOOK_PORT = 8977
+
+/** The first port from {@link DEFAULT_WEBHOOK_PORT} up that no other venv on
+ *  the host uses. */
+export function suggestPort(taken: number[]): number {
+  const used = new Set(taken)
+  let port = DEFAULT_WEBHOOK_PORT
+  while (used.has(port) && port < 65535) port++
+  return port
+}
+
+/** The line under the Port field. */
+export function portHint(taken: number[], clash: boolean): string {
+  if (clash) return 'Another venv on this host uses this port: each venv needs its own.'
+  if (!taken.length) return 'Each venv on a host needs its own port.'
+  const list = [...new Set(taken)].sort((a, b) => a - b)
+  return `Other venvs on this host use ${list.join(', ')}.`
+}
+
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   const isDark = useIsDark()
   return (
@@ -290,19 +310,25 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function SettingsTab({ target, list, onChanged }: { target: WebhookTarget; list: WebhookHooksList; onChanged: () => void }) {
+function SettingsTab({ target, list, onChanged, takenPorts = [], turnOn = false }: {
+  target: WebhookTarget; list: WebhookHooksList; onChanged: () => void; takenPorts?: number[]; turnOn?: boolean
+}) {
   const isDark = useIsDark()
   const before: SettingsForm = useMemo(() => ({ ...(list.settings ?? {}), smtp: { ...(list.smtp ?? {}) } }), [list])
-  const [form, setForm] = useState<SettingsForm>(before)
+  const suggested = suggestPort(takenPorts)
+  const start = useCallback((b: SettingsForm): SettingsForm => (turnOn && !b.enabled ? { ...b, enabled: true, port: b.port || suggested } : b), [turnOn, suggested])
+  const [form, setForm] = useState<SettingsForm>(() => start(before))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  useEffect(() => setForm(before), [before])
+  useEffect(() => setForm(start(before)), [before, start])
   const set = (patch: Partial<WebhookSettings>) => setForm(f => ({ ...f, ...patch }))
   const setSmtp = (patch: Partial<WebhookSmtp>) => setForm(f => ({ ...f, smtp: { ...f.smtp, ...patch } }))
   const hooks = changed(before as Record<string, unknown>, form as Record<string, unknown>, HOOK_KEYS)
   const smtp = changed((before.smtp ?? {}) as Record<string, unknown>, (form.smtp ?? {}) as Record<string, unknown>, SMTP_KEYS)
   const dirty = Object.keys(hooks).length + Object.keys(smtp).length > 0
+  const clash = !!form.port && takenPorts.includes(form.port)
   const save = async () => {
+    if (form.enabled && !form.port) { setError('Pick a port for the listener first.'); return }
     setSaving(true); setError('')
     try {
       const r = await bridge.webhook_settings({ ...target, hooks, smtp })
@@ -316,10 +342,13 @@ function SettingsTab({ target, list, onChanged }: { target: WebhookTarget; list:
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {list.settings?.problem && <Alert type="warning" showIcon message={list.settings.problem} />}
-      <Switch checked={!!form.enabled} onChange={on => set({ enabled: on })} checkedChildren="Taking webhooks" unCheckedChildren="Off" style={{ alignSelf: 'flex-start' }} />
+      <Switch checked={!!form.enabled} onChange={on => set(on && !form.port ? { enabled: on, port: suggested } : { enabled: on })} checkedChildren="Taking webhooks" unCheckedChildren="Off" style={{ alignSelf: 'flex-start' }} />
       {h('Listener')}
       <div style={grid}>
-        <Field label="Port"><InputNumber min={1} max={65535} value={form.port} onChange={v => set({ port: v ?? undefined })} style={{ width: '100%' }} /></Field>
+        <Field label="Port" hint={portHint(takenPorts, clash)}>
+          <InputNumber min={1} max={65535} precision={0} value={form.port || null} placeholder={String(suggested)}
+            status={clash ? 'warning' : undefined} onChange={v => set({ port: v ?? undefined })} style={{ width: '100%' }} />
+        </Field>
         <Field label="Bind address" hint="127.0.0.1 = this host only; plain HTTP is only allowed there"><Input value={form.bind} onChange={e => set({ bind: e.target.value })} /></Field>
         <Field label="Path prefix" hint="Behind a reverse proxy, e.g. /runspec"><Input value={form.base_path} onChange={e => set({ base_path: e.target.value })} /></Field>
         <Field label="TLS certificate"><Input value={form.cert} onChange={e => set({ cert: e.target.value })} style={{ fontFamily: MONO_FONT }} /></Field>
@@ -354,14 +383,21 @@ function SettingsTab({ target, list, onChanged }: { target: WebhookTarget; list:
   )
 }
 
-export function WebhookHooksModal({ target, onClose, startTab = 'hooks' }: {
+export function WebhookHooksModal({ target, onClose, startTab = 'hooks', takenPorts = [], turnOn = false }: {
   target: WebhookTarget; onClose: () => void; startTab?: 'hooks' | 'settings'
+  /** Ports other venvs on this host listen on (or are set to), so a new one is picked clear of them. */
+  takenPorts?: number[]
+  /** Opened from Turn on: start the listener form switched on, with a free port filled in. */
+  turnOn?: boolean
 }) {
   const [list, setList] = useState<WebhookHooksList | null>(null)
   const [tab, setTab] = useState<string>(startTab)
+  const { host, venv } = target
+  // Keyed on the names, not the object: the parent builds a fresh target on
+  // every render, and re-reading the host each time reset the form mid-typing.
   const load = useCallback(() => {
-    bridge.webhook_hooks(target).then(setList, (e: unknown) => setList({ ok: false, error: String(e) }))
-  }, [target])
+    bridge.webhook_hooks({ host, venv }).then(setList, (e: unknown) => setList({ ok: false, error: String(e) }))
+  }, [host, venv])
   useEffect(() => { load() }, [load])
   return (
     <Modal
@@ -376,7 +412,7 @@ export function WebhookHooksModal({ target, onClose, startTab = 'hooks' }: {
       ) : (
         <Tabs activeKey={tab} onChange={setTab} items={[
           { key: 'hooks', label: `Hooks (${list.hooks?.length ?? 0})`, children: <HooksTab target={target} list={list} onChanged={load} /> },
-          { key: 'settings', label: 'Listener & mail', children: <SettingsTab target={target} list={list} onChanged={load} /> },
+          { key: 'settings', label: 'Listener & mail', children: <SettingsTab target={target} list={list} onChanged={load} takenPorts={takenPorts} turnOn={turnOn} /> },
         ]} />
       )}
     </Modal>

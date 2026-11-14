@@ -66,6 +66,11 @@ bin/runspec-scheduler hooks settings --set enabled=true --set port=8977
 bin/runspec-scheduler hooks list
 ```
 
+Each venv on a host needs its own port. In runspec-console, *Turn on…* on a
+followed venv (Automation → Webhooks, under *Followed, not listening*) opens
+these settings already switched on with a free port filled in: the first from
+8977 up that no other venv on that host uses.
+
 Plain HTTP is only allowed on `127.0.0.1`, behind a reverse proxy that does
 TLS. Anywhere else give it a certificate:
 
