@@ -47,3 +47,18 @@ describe('ActivityControl', () => {
     expect(onOpen).toHaveBeenCalledWith('s2')
   })
 })
+
+describe('ActivityControl counts', () => {
+  it('counts chats working with runs, and uses the footer’s waiting number', async () => {
+    const onOpenWebhooks = vi.fn()
+    render(<ActivityControl inFlight={[RUN]} working={[{ id: 's1', label: 'restart nginx' }]} waiting={[]}
+      waitingTotal={2} webhookWaiting={2} onOpenWebhooks={onOpenWebhooks} onOpen={() => {}} />)
+    const btn = screen.getByTestId('activity-control')
+    expect(btn.getAttribute('aria-label')).toBe('Activity: 2 running · 2 waiting')
+    fireEvent.click(btn)
+    expect(await screen.findByText('restart nginx')).toBeTruthy()
+    expect(screen.getByText('2 webhooks')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }))
+    expect(onOpenWebhooks).toHaveBeenCalled()
+  })
+})

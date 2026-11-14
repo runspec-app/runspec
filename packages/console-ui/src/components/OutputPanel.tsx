@@ -16,6 +16,7 @@ import {
 import { pressable, StatusTag, type StatusTone } from './kit'
 import { approvalConsequence, useConsoleInfo } from '../consoleInfo'
 import { APPROVAL_BG, APPROVAL_BORDER, ApprovalActions, QueueMark, useGatePosition } from './approval'
+import { AskFirst } from './risk'
 import { Clock } from '../when'
 
 const { Text } = Typography
@@ -1457,6 +1458,11 @@ function ToolCallBlock({
   const seedText = Object.fromEntries(approveArgs.map(([k, val]) => [k, jsonValue(val)]))
   const changedKeys = editable && edits ? Object.keys(edits).filter(k => edits[k] !== seedText[k]) : []
   const edited = changedKeys.length > 0
+  // The header shows what will run: your edits as you make them, not the
+  // assistant's proposal (which only the "was" lines under the fields keep).
+  const headerArgs: [string, unknown][] = awaiting && editable && edits && edited
+    ? Object.entries(edits).map(([k, v]) => [k, parseEdited(v)])
+    : display.args
   const deny = () => {
     const r = reason.trim()
     if (r) onAnswer?.(false, undefined, r)
@@ -1528,9 +1534,9 @@ function ToolCallBlock({
             </Text>
           </Tooltip>
         )}
-        {display.args.length > 0 && (
-          <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 12 }}>
-            {display.args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
+        {headerArgs.length > 0 && (
+          <Text ellipsis data-testid="tool-header-args" style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 12 }}>
+            {headerArgs.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}
           </Text>
         )}
         {entry.thinking && (
@@ -2345,10 +2351,15 @@ const BlockCard = memo(function BlockCard({
             <Tag bordered={false} style={{ fontSize: 12, marginLeft: 4 }}><ApiOutlined style={{ fontSize: 11 }} /> {toolCount}</Tag>
           </Tooltip>
         )}
+        {/* Stop is neutral, outlined, with a stop mark: red is for what
+            destroys, and a red Stop on every running card sat next to a red
+            brand and read as an alarm. Stopping a run asks first, like the
+            Activity list's Stop; stopping the assistant doesn't (nothing it
+            already did is undone, and it can be asked again). */}
         {block.type === 'chat' && !block.done && (
-          <Tooltip title="Stop — halt the assistant; no further steps or tool runs">
+          <Tooltip title="Stop the assistant: no further steps or tool runs">
             <Button
-              size="small" danger icon={<StopOutlined />}
+              size="small" icon={<StopOutlined />}
               style={{ marginLeft: 4 }}
               onClick={(e) => { e.stopPropagation(); bridge.cancel_chat(block.id) }}
             >
@@ -2357,15 +2368,18 @@ const BlockCard = memo(function BlockCard({
           </Tooltip>
         )}
         {block.type === 'run' && !block.done && (
-          <Tooltip title="Stop — cancel this run">
-            <Button
-              size="small" danger icon={<StopOutlined />}
-              style={{ marginLeft: 4 }}
-              onClick={(e) => { e.stopPropagation(); bridge.cancel_invocation(block.id) }}
+          <span onClick={e => e.stopPropagation()} style={{ marginLeft: 4 }}>
+            <AskFirst
+              ask={{
+                level: 'local', title: 'Stop this run?', action: block.label,
+                consequence: 'It stops where it is; anything it already changed stays changed.',
+                okText: 'Stop run', cancelText: 'Keep running',
+              }}
+              onConfirm={() => { bridge.cancel_invocation(block.id) }}
             >
-              Stop
-            </Button>
-          </Tooltip>
+              <Button size="small" icon={<StopOutlined />} aria-label={`Stop ${block.label}`}>Stop</Button>
+            </AskFirst>
+          </span>
         )}
         {block.done && block.durationMs !== undefined && (() => {
           const o = blockOutcome(block)

@@ -109,3 +109,14 @@ describe('Forms → search across the profile', () => {
     await waitFor(() => expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ host: 'local' }), {}, []))
   })
 })
+
+describe('autonomyMark', () => {
+  it('marks what asks, not what runs at once', async () => {
+    const { autonomyMark } = await import('./FormsView')
+    expect(autonomyMark('autonomous')).toBeNull()
+    expect(autonomyMark('confirm')?.text).toBe('asks first')
+    expect(autonomyMark(undefined)?.text).toBe('asks first')
+    expect(autonomyMark('supervised')?.text).toBe('asks first')
+    expect(autonomyMark('manual')?.text).toBe('manual')
+  })
+})

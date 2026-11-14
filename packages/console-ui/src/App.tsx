@@ -90,7 +90,8 @@ const SavedRunEditor = React.lazy(() => import('./components/SettingsDrawer').th
 const MarketplaceSettings = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.MarketplaceTab })))
 import { CommandInput } from './components/CommandInput'
 import { DisclaimerGate } from './components/DisclaimerGate'
-import { RUNNING_STATUSES, savedRunTargets } from './components/runShared'
+import { RUNNING_STATUSES, savedRunMembers, savedRunTargets } from './components/runShared'
+import { needsFanoutConfirm } from './views/formsSearch'
 import { askRemembered, consentKey, useRiskConfirm } from './components/risk'
 import { useAntA11yLabels } from './a11yLabels'
 import { useInFlight } from './bridge/useInFlight'
@@ -837,7 +838,8 @@ export default function App() {
         handleRunSavedRun(savedRun.id, {})
         return
       }
-      const targets = savedRunTargets(savedRun)
+      const members = savedRunMembers(savedRun, hosts)
+      const targets = members.length ? members : savedRunTargets(savedRun)
       const go = await askRemembered(askRisk, consentKey(`saved-run:${savedRun.id}`, targets), {
         level: targets.length === 1 && targets[0] === 'local' ? 'local' : 'fleet',
         title: `Run "${savedRun.title || savedRun.id}"?`,
@@ -855,6 +857,31 @@ export default function App() {
 
   // The run modal collected values; hand off to ConsoleView (it owns the
   // bridge.run_saved_run call + one run block per target host).
+  // The saved-run dialog's Run: a run that reaches several hosts asks first,
+  // naming each one (as a Forms run on several hosts does, and a saved
+  // transfer to a group does). One host runs at once: Run was the approval.
+  const runSavedRunChecked = async (id: string, values: Record<string, unknown>): Promise<boolean> => {
+    const s = savedRuns.find(x => x.id === id)
+    if (s) {
+      const members = savedRunMembers(s, hosts)
+      const autonomy = runnables.find(r => r.name === s.runnable)?.autonomy
+      const unresolved = members.length === 0 && !!(s.group || s.profile)
+      if (needsFanoutConfirm(members.length, autonomy) || unresolved) {
+        const a = await askRisk({
+          level: 'fleet',
+          title: `Run "${s.title || s.id}" on ${members.length || 'every'} host${members.length === 1 ? '' : 's'}?`,
+          action: [s.runnable, ...(s.command ?? [])].join(' '),
+          targets: members.length ? members : savedRunTargets(s),
+          consequence: s.group ? `Every host in group ${s.group} runs it.` : s.profile ? `Every host in profile ${s.profile} runs it.` : 'Each of these hosts runs it.',
+          okText: `Run on ${members.length || 'all'}`, danger: false,
+        })
+        if (!a.ok) return false
+      }
+    }
+    handleRunSavedRun(id, values)
+    return true
+  }
+
   const handleRunSavedRun = (id: string, values: Record<string, unknown>) => {
     setInputHistory(h => [...h, `»${id}`])
     setView('console')
@@ -1156,6 +1183,9 @@ export default function App() {
   // operator can see. From another tab the first press just brings the
   // Console up with the card flashing; a card scrolled off screen is scrolled
   // into view first. A second press answers it (via the card's own button).
+  // Everything waiting for a person, counted once: the footer and the
+  // Console's Activity control show this same number.
+  const waitingTotal = (aiEnabled ? triggerAwaiting + pendingConfirms.size : 0) + webhookWaiting
   // A tab switch shows or hides approval cards: let each recount its place.
   useEffect(() => { window.dispatchEvent(new Event('runspec:gates_changed')) }, [view])
   const confirmByKey = (action: 'approve' | 'deny') => {
@@ -1361,7 +1391,9 @@ export default function App() {
             // A focused field's border is Ant's colorPrimary, the raw brand: a
             // deep brand on the dark surface was 1.2:1. Use the readable accent
             // for the focus border everywhere a field takes focus.
-            Input: { activeShadow: `0 0 0 3px ${withAlpha(ctrlCol, 0.18)}`, activeBorderColor: ctrlCol, hoverBorderColor: ctrlCol },
+            // A focused field: the 2px ring in the focus colour (an 18% halo
+            // was 1.3:1 against the page).
+            Input: { activeShadow: `0 0 0 2px ${ctrlCol}`, activeBorderColor: ctrlCol, hoverBorderColor: ctrlCol },
             InputNumber: { activeShadow: `0 0 0 3px ${withAlpha(ctrlCol, 0.18)}`, activeBorderColor: ctrlCol, hoverBorderColor: ctrlCol },
             DatePicker: { activeShadow: `0 0 0 3px ${withAlpha(ctrlCol, 0.18)}`, activeBorderColor: ctrlCol, hoverBorderColor: ctrlCol },
             Select: {
@@ -1884,7 +1916,8 @@ export default function App() {
                       only points there, so each one is in one place. */}
                   {webhookWaiting > 0 && <WebhookPointer count={webhookWaiting} onReview={() => setView('webhooks')} />}
                   <ConsoleInfoContext.Provider value={consoleInfo}>
-                    <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
+                    <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)}
+                      waitingTotal={waitingTotal} webhookWaiting={webhookWaiting} onOpenWebhooks={() => setView('webhooks')} />
                   </ConsoleInfoContext.Provider>
                 </div>
                 {/* Triggers stays mounted (display toggle) so a pending approval's
@@ -2036,7 +2069,7 @@ export default function App() {
                   </Tooltip>
                 )
               })()}
-              {((aiEnabled ? triggerAwaiting + pendingConfirms.size : 0) + webhookWaiting) > 0 && (
+              {waitingTotal > 0 && (
                 <span
                   role="button"
                   tabIndex={0}
@@ -2052,7 +2085,7 @@ export default function App() {
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: textColor(isDark), fontWeight: 600 }}
                 >
                   <BellOutlined aria-hidden style={{ fontSize: 12, color: textWarning(isDark) }} />
-                  {(aiEnabled ? triggerAwaiting + pendingConfirms.size : 0) + webhookWaiting} waiting for you
+                  {waitingTotal} waiting for you
                 </span>
               )}
               {/* Rooms: live connection state for every configured chat/helpdesk
@@ -2365,7 +2398,7 @@ export default function App() {
               savedRun={pendingSavedRun}
               hostNames={hosts.map(h => h.name)}
               onClose={() => setPendingSavedRun(null)}
-              onRun={handleRunSavedRun}
+              onRun={runSavedRunChecked}
             />
           )}
 
