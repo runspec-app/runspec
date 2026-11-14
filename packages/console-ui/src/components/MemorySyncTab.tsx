@@ -16,6 +16,7 @@ import {
 } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
 import { SettingsColumns } from './SettingsColumns'
+import { plural } from '../when'
 
 const { Text, Paragraph } = Typography
 
@@ -217,7 +218,7 @@ export function refreshText(r: WikiRefreshResult): SyncResult {
   if (!r.ok) return { ok: false, text: r.error || 'Could not refresh the runspec pages.' }
   if (!r.pages) return { ok: true, text: 'The runspec pages are already up to date.' }
   if (r.changed === false) return { ok: true, text: `${r.branch} already has these changes; merge it to publish them.` }
-  return { ok: true, text: `Pushed ${r.pages} changed page(s) to ${r.branch}. Merge it into the team branch to publish them.` }
+  return { ok: true, text: `Pushed ${plural(r.pages, 'changed page')} to ${r.branch}. Merge it into the team branch to publish them.` }
 }
 
 /** Create a new wiki repo from the OKF template, or refresh its runspec/ pages.

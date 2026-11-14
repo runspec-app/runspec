@@ -9,7 +9,7 @@ import { bridge, type HistoryRecord, type HistoryLogLine, type HistorySyncState,
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT, RADIUS, statusText, textColor, useAccent, useIsDark, withAlpha } from '../ThemeContext'
 import { EmptyState, IconAction, OnceHint, PageToolbar, RowActions, StatusTag, type RowAction, type StatusTone } from '../components/kit'
-import { When, fmtClock, fmtDay, fullWhen } from '../when'
+import { When, fmtClock, fmtDay, fullWhen, plural } from '../when'
 
 // History shows real runnable runs only, with who initiated each (operator vs the
 // assistant). Whole agent turns and individual built-in tool calls are agent
@@ -897,8 +897,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
             : cache?.stale ? cache.note : `slow · ${fmtMs(s?.ms)}`
           const tip = st === 'error' ? (s?.error || 'fetch failed')
             : st === 'loading' ? 'fetching…'
-            : cache ? `${s?.count ?? 0} run(s) — ${cache.tip}`
-            : `${s?.count ?? 0} run(s) in ${fmtMs(s?.ms)}${slowMs(s?.ms) ? ' — slow' : ''}`
+            : cache ? `${plural(s?.count ?? 0, 'run')} — ${cache.tip}`
+            : `${plural(s?.count ?? 0, 'run')} in ${fmtMs(s?.ms)}${slowMs(s?.ms) ? ' — slow' : ''}`
           return { name, tone, detail, tip, count: s?.count ?? 0 }
         })
         const issues = chips.filter(c => c.tone !== 'ok')

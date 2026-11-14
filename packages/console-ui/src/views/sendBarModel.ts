@@ -44,6 +44,13 @@ export function signature(ids: string[]): string {
   return [...ids].sort().join(',')
 }
 
+/** Windows that appeared after the bar's first list, so they join unticked
+ *  instead of silently receiving the next line. Pure, for tests. */
+export function lateArrivals(windows: TerminalWindow[], seen: Set<string>, firstLoad: boolean): string[] {
+  if (firstLoad) return []
+  return windows.filter(w => !seen.has(w.id)).map(w => w.id)
+}
+
 /** The ids to send to: windows listed now that aren't unticked. */
 export function tickedIds(windows: TerminalWindow[], unticked: Set<string>): string[] {
   return windows.filter(w => !unticked.has(w.id)).map(w => w.id)

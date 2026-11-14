@@ -787,10 +787,11 @@ the bottom of the sidebar, grouped like the rest. A **hollow ring** marks them:
 the console doesn't probe them or keep a connection open, and their runnables
 aren't loaded into Forms or the chat. Click or right-click one for:
 
-- **Open SSH terminal** / **Open SSH terminals…** / **Copy SSH public key…** —
-  PuTTY and the key copy make their own connection, so these work without
-  switching profile. Right-click a group header there to open terminals on the
-  whole group.
+- **Open SSH terminal here** / **Open SSH terminals on several hosts…** /
+  **Copy SSH public key…** — PuTTY and the key copy make their own connection,
+  so these work without switching profile. Right-click a group header there to
+  open terminals on the whole group; a group of more than 16 hosts opens the
+  terminals dialog instead, which asks before opening that many windows.
 - **Add to *profile*** — tags the host into the loaded profile (it moves up into
   the profile list and is probed). A host in the profile has **Remove from
   *profile*** in its menu.
@@ -811,14 +812,19 @@ It types into the PuTTY windows the way PuTTY Command Sender does, so each
 window stays an ordinary session: `sudo -iu svc`, password prompts and anything
 interactive work as usual, and you read each window's output yourself.
 
-1. Right-click a host or a group header and pick **Open SSH terminals…**. Tick
+1. Right-click a host or a group header and pick **Open SSH terminals on several
+   hosts…**. Opening more than 16 windows asks first. Tick
    **Open the Send to terminals bar** (remembered). The terminals are tiled above
    a strip along the bottom of the screen, and the bar opens there, on top.
 2. Type a command in the bar and press **Enter**. It's typed into every ticked
    terminal, followed by Enter. **Shift+Enter** adds a line; a pasted block runs
    line by line. **↑**/**↓** recall earlier lines (kept only while the bar is
    open, never saved).
-3. Untick a host to leave it out. The target button next to a host brings its
+3. Untick a host to leave it out. A terminal opened after the bar is already
+   listing joins unticked, marked *new*, so it never receives a line you didn't
+   mean for it; tick it to include it. A terminal that isn't open yet says
+   *not ready*, and a send that missed some terminals says so in the warning
+   colour. The target button next to a host brings its
    window to the front. The key buttons press **Enter**, **Ctrl+C**, **Ctrl+D**,
    **Tab**, **Esc** and the arrow keys in every ticked terminal.
 4. For a password, click the lock button: the field is hidden (outlined, with a

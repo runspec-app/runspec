@@ -98,7 +98,7 @@ describe('OtherHostsSection', () => {
   it('a click opens the host menu; its actions call back with the host', async () => {
     const props = renderSection()
     fireEvent.click(screen.getByTestId('other-host-ci-01'))
-    await waitFor(() => expect(screen.getByText('Open SSH terminal')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Open SSH terminal here')).toBeTruthy())
     expect(screen.getByText('Switch to profile devops')).toBeTruthy()
     expect(screen.getByText('Switch to profile ci')).toBeTruthy()
 
@@ -109,8 +109,8 @@ describe('OtherHostsSection', () => {
   it('opens a terminal and switches profile from the menu', async () => {
     const props = renderSection()
     fireEvent.contextMenu(screen.getByTestId('other-host-bastion'))
-    await waitFor(() => expect(screen.getByText('Open SSH terminal')).toBeTruthy())
-    fireEvent.click(screen.getByText('Open SSH terminal'))
+    await waitFor(() => expect(screen.getByText('Open SSH terminal here')).toBeTruthy())
+    fireEvent.click(screen.getByText('Open SSH terminal here'))
     expect(props.onOpenTerminal).toHaveBeenCalledWith('bastion')
 
     fireEvent.contextMenu(screen.getByTestId('other-host-bastion'))

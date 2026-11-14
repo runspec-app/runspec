@@ -46,7 +46,7 @@ describe('RunsIndexModal', () => {
   it('shows the index health and stale rows', async () => {
     render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
     expect(await screen.findByText('/opt/venvs/ops-tools/logs/runspec_runs.db')).toBeTruthy()
-    expect(screen.getByText('1 orphaned running row(s)')).toBeTruthy()
+    expect(screen.getByText('1 orphaned running row')).toBeTruthy()
     expect(stats).toHaveBeenCalledWith('web-01', 'ops-tools')
   })
 
@@ -113,7 +113,7 @@ describe('RunsIndexModal', () => {
 
 describe('logs inbox', () => {
   it('summarises the inbox and flags a problem', () => {
-    expect(inboxSummary({ state: 'ok', files: 3, running: 1, finished: 2 })).toEqual({ ok: true, text: '3 pending file(s), 1 running, 2 awaiting sweep' })
+    expect(inboxSummary({ state: 'ok', files: 3, running: 1, finished: 2 })).toEqual({ ok: true, text: '3 pending files, 1 running, 2 awaiting sweep' })
     expect(inboxSummary({ state: 'missing' })?.ok).toBe(false)
     expect(inboxSummary({ state: 'unsupported' })).toBeNull()
     expect(inboxSummary(null)).toBeNull()
@@ -126,7 +126,7 @@ describe('logs inbox', () => {
     })
     maintain.mockResolvedValue({ ok: true, group: 'ops-tools', verb: 'sweep', count: 2, as_user: 'svc' })
     render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
-    expect(await screen.findByText('2 pending file(s), 2 awaiting sweep')).toBeTruthy()
+    expect(await screen.findByText('2 pending files, 2 awaiting sweep')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Sweep inbox/ }))
     await waitFor(() => expect(maintain).toHaveBeenCalledWith('web-01', 'ops-tools', 'sweep', undefined, undefined, 'svc'))
   })

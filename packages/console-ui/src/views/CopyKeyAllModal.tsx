@@ -3,6 +3,7 @@ import { Modal, Button, Typography, Input, Checkbox, message } from 'antd'
 import { KeyOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
+import { StatusIcon } from '../components/kit'
 
 const { Text } = Typography
 
@@ -40,6 +41,7 @@ export function CopyKeyAllModal({
   const [submitting, setSubmitting] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const [results, setResults] = useState<PerHostResult[] | null>(null)
+  const [filter, setFilter] = useState('')
 
   // Reset only on the closed→open transition — pre-select the disconnected
   // hosts and clear any prior password/results. This must NOT re-run on every
@@ -53,16 +55,25 @@ export function CopyKeyAllModal({
       setSelected(hosts.filter(h => !h.connected).map(h => h.name))
       setPassword('')
       setResults(null)
+      setFilter('')
     }
     wasOpen.current = open
   }, [open, hosts])
 
+  // A fleet can be a hundred hosts: filter by name, and pick all, none or
+  // just the ones not connected yet.
+  const shown = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    return q ? hosts.filter(h => h.name.toLowerCase().includes(q)) : hosts
+  }, [hosts, filter])
+  const pick = (names: string[], on: boolean) =>
+    setSelected(prev => (on ? [...new Set([...prev, ...names])] : prev.filter(n => !names.includes(n))))
   const options = useMemo(
-    () => hosts.map(h => ({
+    () => shown.map(h => ({
       label: h.connected ? `${h.name} (already connected)` : h.name,
       value: h.name,
     })),
-    [hosts],
+    [shown],
   )
 
   const close = () => { setPassword(''); onClose() }
@@ -122,21 +133,44 @@ export function CopyKeyAllModal({
         {hosts.length === 0 ? (
           <Text type="secondary" style={{ fontSize: 13 }}>No remote hosts configured.</Text>
         ) : (
-          <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #303030', borderRadius: RADIUS.sm, padding: '8px 10px' }}>
+          <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Input size="small" allowClear placeholder="Filter hosts" aria-label="Filter hosts" value={filter}
+              onChange={e => setFilter(e.target.value)} style={{ width: 180 }} />
+            <Button size="small" type="link" style={{ padding: 0 }} onClick={() => pick(shown.map(h => h.name), true)}>
+              {filter.trim() ? `All shown (${shown.length})` : `All (${hosts.length})`}
+            </Button>
+            <Button size="small" type="link" style={{ padding: 0 }}
+              onClick={() => pick(shown.filter(h => !h.connected).map(h => h.name), true)}>
+              Not connected ({shown.filter(h => !h.connected).length})
+            </Button>
+            <Button size="small" type="link" style={{ padding: 0 }} onClick={() => pick(shown.map(h => h.name), false)}>None</Button>
+            <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>{selected.length} of {hosts.length} selected</Text>
+          </div>
+          <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '8px 10px' }}>
             <Checkbox.Group
-              value={selected}
-              onChange={vals => setSelected(vals as string[])}
+              value={selected.filter(n => shown.some(h => h.name === n))}
+              // The group only knows the shown hosts: keep the hidden picks.
+              onChange={vals => setSelected(prev => [
+                ...prev.filter(n => !shown.some(h => h.name === n)),
+                ...(vals as string[]),
+              ])}
               style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
               options={options}
             />
+            {shown.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>No host matches.</Text>}
           </div>
+          </>
         )}
 
         <Input.Password
           autoFocus
           value={password}
           onChange={e => setPassword(e.target.value)}
-          onPressEnter={submit}
+          // Enter doesn't fire at every host: the Copy button does, on purpose.
+          // (Moving focus to it on Enter isn't enough: the same keypress then
+          // lands on the button and clicks it.)
+          onPressEnter={e => e.preventDefault()}
           placeholder="SSH password"
           autoComplete="new-password"
           disabled={hosts.length === 0}
@@ -148,11 +182,10 @@ export function CopyKeyAllModal({
         {results && results.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
             {results.map(h => {
-              const icon = h.ok ? '✓' : '✗'
-              const color = h.ok ? '#52c41a' : '#ff4d4f'
               return (
                 <div key={h.host} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                  <span style={{ color, fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{icon} {h.host}</span>
+                  <StatusIcon status={h.ok ? 'ok' : 'failed'} style={{ fontSize: 13, marginTop: 2 }} />
+                  <span style={{ fontFamily: MONO_FONT, fontSize: 12, flexShrink: 0 }}>{h.host}</span>
                   {h.error && <Text type="secondary" style={{ fontSize: 11 }}>{h.error}</Text>}
                 </div>
               )

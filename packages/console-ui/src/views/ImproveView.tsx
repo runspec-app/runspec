@@ -12,7 +12,7 @@ import {
 } from '../bridge'
 import { antTone, EmptyState, StatusTag } from '../components/kit'
 import { OnceHint } from '../components/kit'
-import { When } from '../when'
+import { When, plural } from '../when'
 
 const { Text, Paragraph, Title } = Typography
 
@@ -91,7 +91,7 @@ export function ImproveView({ active }: ImproveViewProps) {
       setReport(rep)
       if (withComment) setComment('')
       await refreshList()
-      message.success(`Report generated — ${rep.metrics?.turns ?? 0} turn(s) analysed`)
+      message.success(`Report generated — ${plural(rep.metrics?.turns ?? 0, 'turn')} analysed`)
     } catch (e) {
       message.error(`Could not generate report: ${e}`)
     } finally {
@@ -324,7 +324,7 @@ function ReportPanel({
               {report.kind === 'problem_report' ? 'Problem report' : 'Evaluation'}
             </StatusTag>
             <Text type="secondary">
-              {report.product_name} · last {report.window_days}d · {m.turns ?? 0} turn(s)
+              {report.product_name} · last {report.window_days}d · {plural(m.turns ?? 0, 'turn')}
             </Text>
           </Space>
         }

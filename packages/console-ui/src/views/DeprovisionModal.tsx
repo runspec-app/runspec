@@ -10,6 +10,7 @@ import {
 } from '../bridge'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { membersOf } from './ProvisionModal'
+import { StatusIcon, pressable } from '../components/kit'
 
 const { Text } = Typography
 
@@ -170,6 +171,7 @@ export function DeprovisionModal({
             style={{ width: '100%' }}
             value={root || undefined}
             onChange={v => { setRoot(v); setSelected([]); setConfirm('') }}
+            aria-label="Venv"
             placeholder="Pick a venv the hosts already list"
             disabled={op !== null}
             options={choices.map(c => ({
@@ -184,10 +186,10 @@ export function DeprovisionModal({
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
               {label('Hosts')}
               {(opts?.groups ?? []).map(g => (
-                <Tag key={`g:${g}`} style={{ cursor: 'pointer', margin: 0 }} onClick={() => setSelected(p => [...new Set([...p, ...inChoice(membersOf(opts?.hosts ?? [], 'group', g))])])}>+ Group: {g}</Tag>
+                <Tag key={`g:${g}`} style={{ cursor: 'pointer', margin: 0 }} {...pressable(() => setSelected(p => [...new Set([...p, ...inChoice(membersOf(opts?.hosts ?? [], 'group', g))])]))}>+ Group: {g}</Tag>
               ))}
               {(opts?.profiles ?? []).map(p => (
-                <Tag key={`p:${p}`} style={{ cursor: 'pointer', margin: 0 }} onClick={() => setSelected(s => [...new Set([...s, ...inChoice(membersOf(opts?.hosts ?? [], 'profile', p))])])}>+ Profile: {p}</Tag>
+                <Tag key={`p:${p}`} style={{ cursor: 'pointer', margin: 0 }} {...pressable(() => setSelected(s => [...new Set([...s, ...inChoice(membersOf(opts?.hosts ?? [], 'profile', p))])]))}>+ Profile: {p}</Tag>
               ))}
             </div>
             <div style={{ border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '8px 10px', maxHeight: 120, overflowY: 'auto' }}>
@@ -203,9 +205,9 @@ export function DeprovisionModal({
               const res = results?.find(x => x.host === r.host)
               return (
                 <div key={r.host} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12 }}>
-                  {res ? (res.ok ? <CheckCircleFilled style={{ color: '#52c41a', marginTop: 3 }} /> : <CloseCircleFilled style={{ color: '#ff4d4f', marginTop: 3 }} />)
+                  {res ? <StatusIcon status={res.ok ? 'ok' : 'failed'} style={{ marginTop: 3 }} />
                     : op ? <LoadingOutlined style={{ marginTop: 3 }} />
-                    : r.ok ? <CheckCircleFilled style={{ color: textMuted(isDark), marginTop: 3 }} /> : <CloseCircleFilled style={{ color: '#ff4d4f', marginTop: 3 }} />}
+                    : <StatusIcon status={r.ok ? 'done' : 'failed'} style={{ marginTop: 3 }} />}
                   <span style={{ fontFamily: MONO_FONT, minWidth: 100 }}>{r.host}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <Text style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{r.root}</Text>

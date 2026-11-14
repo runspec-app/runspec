@@ -13,6 +13,7 @@ import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined, InfoCir
 import { bridge, type DenylistHostStatus, type DenylistPayload, type DenylistRule, type Host } from '../bridge'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
 import { useRiskConfirm } from '../components/risk'
+import { StatusTag } from '../components/kit'
 
 const { Text } = Typography
 
@@ -233,25 +234,28 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
         </div>
       ),
     },
-    { title: 'Venv', dataIndex: 'venv', key: 'venv', width: 90 },
+    { title: 'Venv', dataIndex: 'venv', key: 'venv', width: 130 },
     {
       title: 'Mode',
       key: 'mode',
       width: 85,
       render: (_: unknown, r: DenylistHostStatus) =>
-        !r.ok ? <Tag color="default">—</Tag>
-          : <Tag color={r.mode === 'off' ? 'default' : r.mode === 'warn' ? 'gold' : 'blue'}>{r.mode}</Tag>,
+        !r.ok ? <StatusTag tone="neutral">—</StatusTag>
+          : <StatusTag tone={r.mode === 'off' ? 'attention' : r.mode === 'warn' ? 'waiting' : 'ok'}
+              tip={r.mode === 'off' ? 'Nothing is checked here' : r.mode === 'warn' ? 'Matching runs go ahead with a warning' : 'Matching runs are refused'}>
+              {r.mode}
+            </StatusTag>,
     },
     {
       title: 'Disabled',
       key: 'disabled',
       width: 110,
       render: (_: unknown, r: DenylistHostStatus) => {
-        if (r.missing) return <Tag color="default">not installed</Tag>
-        if (!r.ok) return <Tag color="red">error</Tag>
-        if (r.disabled) return <Tag color="red">ALL</Tag>
-        if (r.rules?.length) return <Tag color="orange">{r.rules.length} rule{r.rules.length === 1 ? '' : 's'}</Tag>
-        return <Tag color="green">none</Tag>
+        if (r.missing) return <StatusTag tone="neutral">not installed</StatusTag>
+        if (!r.ok) return <StatusTag tone="failed">error</StatusTag>
+        if (r.disabled) return <StatusTag tone="failed" tip="Every runnable is blocked here">all blocked</StatusTag>
+        if (r.rules?.length) return <StatusTag tone="attention">{r.rules.length} rule{r.rules.length === 1 ? '' : 's'}</StatusTag>
+        return <StatusTag tone="neutral">none</StatusTag>
       },
     },
     { title: 'Detail', key: 'detail', render: (_: unknown, r: DenylistHostStatus) => renderDetail(r) },
@@ -286,6 +290,7 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
       <div style={{ marginBottom: 8 }}>
         <Text style={{ fontSize: 13 }}>Target hosts</Text>
         <Select
+          aria-label="Target hosts"
           mode="multiple"
           allowClear
           size="small"
@@ -341,15 +346,15 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
       <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }} size={8}>
         <div>
           <FieldLabel hint="Glob(s) matched against the runnable name. Empty = every runnable.">Runnable names</FieldLabel>
-          <Select mode="tags" size="small" style={{ width: '100%' }} value={runnableGlobs} onChange={setRunnableGlobs} placeholder="e.g. deploy, restart-* — empty = all" />
+          <Select aria-label="Runnable names" mode="tags" size="small" style={{ width: '100%' }} value={runnableGlobs} onChange={setRunnableGlobs} placeholder="e.g. deploy, restart-* — empty = all" />
         </div>
         <div>
           <FieldLabel hint="Glob(s) matched against the OS account the runnable actually runs as — for a shared venv that is usually its owner (e.g. svc-ops), not the account you log in as. Empty = all users.">Usernames</FieldLabel>
-          <Select mode="tags" size="small" style={{ width: '100%' }} value={userGlobs} onChange={setUserGlobs} placeholder="e.g. deploy, svc-* — empty = all users" />
+          <Select aria-label="Usernames" mode="tags" size="small" style={{ width: '100%' }} value={userGlobs} onChange={setUserGlobs} placeholder="e.g. deploy, svc-* — empty = all users" />
         </div>
         <div>
           <FieldLabel hint="Glob(s) matched against each machine's own hostname (shown under the host in the table) — NOT the name the console gives the host. Usually leave this empty and choose where the rule goes with Target hosts above; use it only for one rule shared across many machines that should fire on some of them.">Only on machines whose hostname matches</FieldLabel>
-          <Select mode="tags" size="small" style={{ width: '100%' }} value={hostGlobs} onChange={setHostGlobs} placeholder="empty = every targeted machine (usual)" />
+          <Select aria-label="Machine hostnames" mode="tags" size="small" style={{ width: '100%' }} value={hostGlobs} onChange={setHostGlobs} placeholder="empty = every targeted machine (usual)" />
           {badHostGlobs.length > 0 && (
             <div data-testid="denylist-host-glob-warning">
             <Alert
@@ -369,7 +374,7 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
         </div>
         <div>
           <FieldLabel hint="Free text shown to the caller on the refusal when a matching run is blocked.">Reason</FieldLabel>
-          <Input size="small" placeholder="e.g. incident INC-1234 — paused pending review" value={reason} onChange={e => setReason(e.target.value)} />
+          <Input size="small" aria-label="Reason" placeholder="e.g. incident INC-1234 — paused pending review" value={reason} onChange={e => setReason(e.target.value)} />
         </div>
         <Button
           size="small"

@@ -38,7 +38,7 @@ describe('SettingsDrawer initialTab deep-link', () => {
       expect(sel?.textContent).toBe('MCP Server')
     })
     // …and its content (the dropped-tool warning) is what's rendered.
-    expect(await screen.findByText(/1 runnable\(s\) not published/)).toBeTruthy()
+    expect(await screen.findByText(/1 runnable not published/)).toBeTruthy()
     expect(screen.getByText('internal-metric')).toBeTruthy()
   })
 })

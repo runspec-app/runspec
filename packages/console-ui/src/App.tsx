@@ -42,7 +42,7 @@ import {
 import { ConsoleView } from './views/ConsoleView'
 import { useWaitingCue, usePendingConfirms } from './useWaitingCue'
 import { matchRunnableForEdit, resolveCommandPath, toCommandPath } from './views/formsMatch'
-import { openTerminals as openGroupTerminals, openSendBar } from './views/terminals'
+import { GRID_MAX, openTerminals as openGroupTerminals, openSendBar } from './views/terminals'
 import { OtherHostsSection, profileEditNote, type SyncSource } from './components/OtherHostsSection'
 import type { PendingForm } from './views/FormsView'
 // Code-split: everything below is off the Console tab's first-paint path, so it
@@ -1282,8 +1282,24 @@ export default function App() {
             // Ant paints these in colorPrimary as TEXT; use the text accent.
             Pagination: { itemActiveColor: titleCol, itemActiveColorHover: titleCol },
             Menu: { itemSelectedColor: titleCol },
-            Input: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}` },
-            Select: { optionSelectedBg: withAlpha(titleCol, isDark ? 0.16 : 0.1) },
+            // A focused field's border is Ant's colorPrimary, the raw brand: a
+            // deep brand on the dark surface was 1.2:1. Use the readable accent
+            // for the focus border everywhere a field takes focus.
+            Input: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}`, activeBorderColor: titleCol, hoverBorderColor: titleCol },
+            InputNumber: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}`, activeBorderColor: titleCol, hoverBorderColor: titleCol },
+            DatePicker: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}`, activeBorderColor: titleCol, hoverBorderColor: titleCol },
+            Select: {
+              optionSelectedBg: withAlpha(titleCol, isDark ? 0.16 : 0.1),
+              activeBorderColor: titleCol, hoverBorderColor: titleCol, activeOutlineColor: withAlpha(titleCol, 0.18),
+            },
+            // Switches, checkboxes and radios: on dark the raw brand fill was
+            // 1.2:1 against the surface, so a checked box looked unchecked. The
+            // readable accent fills them there, with a dark tick on top.
+            ...(isDark ? {
+              Switch: { colorPrimary: titleCol, colorPrimaryHover: titleCol, handleBg: sf.base },
+              Checkbox: { colorPrimary: titleCol, colorPrimaryHover: titleCol, colorWhite: sf.base },
+              Radio: { colorPrimary: titleCol, colorPrimaryHover: titleCol, dotSize: 8, colorWhite: sf.base },
+            } : {}),
             Segmented: { itemSelectedBg: sf.overlay, trackBg: sf.sunken },
             Tooltip: { colorBgSpotlight: sf.overlay, colorTextLightSolid: isDark ? 'rgba(255,255,255,0.88)' : 'rgba(0,0,0,0.88)' },
           },
@@ -1411,13 +1427,13 @@ export default function App() {
                             ...(h.connected ? [{
                               key: 'open_terminal',
                               icon: <CodeOutlined />,
-                              label: 'Open SSH terminal',
+                              label: 'Open SSH terminal here',
                               onClick: () => bridge.launch_terminal(h.name).catch(console.error),
                             }] : []),
                             {
                               key: 'open_terminals',
                               icon: <CodeOutlined />,
-                              label: 'Open SSH terminals…',
+                              label: 'Open SSH terminals on several hosts…',
                               onClick: () => setTerminalsFor([h.name]),
                             },
                             {
@@ -1520,7 +1536,10 @@ export default function App() {
                                   icon: <CodeOutlined />,
                                   label: `Open SSH terminals (${connectedRemote.length} connected)`,
                                   disabled: connectedRemote.length === 0,
-                                  onClick: () => { void openGroupTerminals(connectedRemote) },
+                                  // A big group goes through the dialog, which asks first.
+                                  onClick: () => (connectedRemote.length > GRID_MAX
+                                    ? setTerminalsFor(connectedRemote)
+                                    : void openGroupTerminals(connectedRemote)),
                                 },
                                 {
                                   key: 'choose_group_terminals',
@@ -1574,7 +1593,7 @@ export default function App() {
                       isGroupCollapsed={key => isGroupCollapsed(groupsState, key)}
                       onToggleGroup={toggleGroup}
                       onOpenTerminal={name => { bridge.launch_terminal(name).catch(e => message.error(String(e?.message ?? e))) }}
-                      onOpenTerminals={names => { void openGroupTerminals(names) }}
+                      onOpenTerminals={names => (names.length > GRID_MAX ? setTerminalsFor(names) : void openGroupTerminals(names))}
                       onChooseTerminals={names => setTerminalsFor(names)}
                       onCopyKey={name => setCopyKeyHost(name)}
                       onAddToProfile={name => handleHostProfile(name, true)}

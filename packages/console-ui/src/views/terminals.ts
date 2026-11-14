@@ -66,6 +66,18 @@ export function writeSendBarPref(on: boolean): void {
   }
 }
 
+/** One line on what a layout does, shown under the picker. Pure, for tests. */
+export function layoutHelp(layout: TerminalLayout): string {
+  switch (layout) {
+    case 'columns': return 'Full-height windows in one row, good for an ultrawide.'
+    case 'rows': return 'Full-width windows stacked top to bottom.'
+    case 'compact': return 'Terminal-sized windows packed from the top-left corner, the same size on any screen.'
+    case 'cascade': return 'Overlapping windows, each offset down and right, so every title bar shows.'
+    case 'none': return 'Windows open wherever PuTTY puts them; nothing is moved.'
+    default: return 'A near-square grid that fills the screen.'
+  }
+}
+
 /** The bridge call for a layout: `none` turns tiling off. `sendBar` also opens
  *  the Send to terminals bar (and keeps a strip free for it when tiling). */
 export function launchWithLayout(

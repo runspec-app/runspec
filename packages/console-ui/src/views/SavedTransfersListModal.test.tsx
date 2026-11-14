@@ -43,7 +43,7 @@ describe('SavedTransfersListModal', () => {
     expect(await screen.findByText('App logs for a day')).toBeTruthy()
     expect(screen.getByText('push-config')).toBeTruthy()
     expect(screen.getByText(/group Production:\/srv\/app\/config/)).toBeTruthy()
-    expect(screen.getByText('asks first')).toBeTruthy()
+    expect(screen.getByText('confirm')).toBeTruthy()
     fireEvent.change(screen.getByPlaceholderText('Search by name, host or path'), { target: { value: 'srv/app' } })
     expect(screen.queryByText('App logs for a day')).toBeNull()
     expect(screen.getByText('push-config')).toBeTruthy()
