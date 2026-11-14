@@ -9,6 +9,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.444.0] — 2026-11-14
+
+### Changed
+
+- **Webhook approval cards say why.** From runspec-scheduler 0.12.0 a hook
+  runs without asking unless it (or its rule) sets `require_approval = true`;
+  such a card now reads "This hook asks for a person to approve each run."
+  instead of blaming the runnable's own level. A card from a 0.11.0 host
+  still names the runnable's `confirm` / `supervised` level.
+- The new-hook template in the Webhooks editor says saving the hook is the
+  approval and shows the `require_approval = true` line to add, and the
+  `respond = "output"` line that answers the sender with the run's output.
+- **Venvs with webhooks off are a normal state, not a hint.** A followed venv
+  with webhooks switched off and nothing to show no longer gets its own strip
+  saying "Turn them on…"; it's named on one quiet "Webhooks off here" line
+  (with a small *turn on* link), and isn't counted as a problem.
+
 ## [0.443.0] — 2026-11-14
 
 ### Fixed

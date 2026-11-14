@@ -47,7 +47,7 @@ def alerts_hook(**over: Any) -> hc.Hook:
         "rule": [
             {"name": "resolved", "match": {"status": "^resolved$"}, "skip": True},
             {"name": "safe", "match": {"alertname": "^(?P<kind>Disk)"}, "run": "demo", "args": {"marker": "{{ kind | lower }}", "host": "{{ instance | regex('^([^:]+)', 1) }}"}},
-            {"name": "careful", "match": {"alertname": "^Careful"}, "run": "demo", "args": {"careful": "{{ alertname }}"}},
+            {"name": "careful", "match": {"alertname": "^Careful"}, "run": "demo", "args": {"careful": "{{ alertname }}"}, "require_approval": True},
         ],
     }
     raw.update(over)
@@ -90,6 +90,9 @@ def test_dry_run_bad_body_and_empty_split() -> None:
 
 
 def test_manual_and_unknown_are_refused() -> None:
+    # manual stays refused even when the hook asks for an approval
+    hook = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "args": {"reckless": "yes"}, "require_approval": True})
+    assert hookrun.plan_item(hook, {}, resolve=fake_resolve).state == sp.REFUSED
     hook = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "args": {"reckless": "yes"}})
     plan = hookrun.plan_item(hook, {}, resolve=fake_resolve)
     assert plan.state == sp.REFUSED and "manual" in plan.reason
@@ -98,10 +101,20 @@ def test_manual_and_unknown_are_refused() -> None:
     assert plan.state == sp.REFUSED and "isn't installed" in plan.reason
 
 
-def test_require_approval_raises_autonomous() -> None:
+def test_setting_up_the_hook_is_the_approval() -> None:
+    # A confirm (or supervised) runnable runs like an autonomous one: the
+    # hook's rules and token are what a person agreed to.
+    hook = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "args": {"careful": "yes"}})
+    plan = hookrun.plan_item(hook, {}, resolve=fake_resolve)
+    assert (plan.state, plan.autonomy, plan.reason) == (sp.WAITING, "confirm", "")
+
+
+def test_require_approval_waits_whatever_the_level() -> None:
     hook = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "require_approval": True})
     plan = hookrun.plan_item(hook, {}, resolve=fake_resolve)
-    assert (plan.state, plan.autonomy) == (sp.PENDING, "confirm")
+    assert (plan.state, plan.autonomy, plan.reason) == (sp.PENDING, "autonomous", "the hook asks for an approval")
+    careful = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "args": {"careful": "yes"}, "require_approval": True})
+    assert hookrun.plan_item(careful, {}, resolve=fake_resolve).state == sp.PENDING
     rule_level = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "rule": [{"run": "demo", "require_approval": True}]})
     assert hookrun.plan_item(rule_level, {}, resolve=fake_resolve).state == sp.PENDING
 
@@ -365,3 +378,79 @@ def test_recover_marks_dead_runs(env: tuple[Worker, sp.Spool, hc.HookConfig]) ->
     worker.recover()
     row = spool.get(d)
     assert row and row["state"] == sp.RAN and "daemon was stopped" in row["reason"]
+
+
+# ── respond = "output" ────────────────────────────────────────────────────────
+
+
+def test_output_value() -> None:
+    assert hookrun.output_value('{"a": 1}\n') == {"a": 1}
+    assert hookrun.output_value("[1, 2]") == [1, 2]
+    assert hookrun.output_value("done\n") == "done"
+    assert hookrun.output_value("{not json") == "{not json"
+    assert hookrun.output_value("") == ""
+    assert hookrun.output_value(None) is None
+
+
+def test_collect_output_cuts_and_cleans_up(tmp_path: Path) -> None:
+    spool = sp.Spool(tmp_path / "hooks" / "spool.sqlite")
+    d = spool.add_delivery("h", source="x", content_type="", headers={}, body=b"")
+    fd, path = hookrun.open_output(spool, d)
+    import os
+    import stat
+
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    os.write(fd, b"x" * 20)
+    os.close(fd)
+    assert hookrun.collect_output(spool, d, 8) is True
+    row = spool.get(d)
+    assert row and (row["output"], row["output_truncated"]) == ("x" * 8, 1)
+    assert not Path(path).exists()
+    assert hookrun.collect_output(spool, d, 8) is False  # no file: nothing to do
+    spool.close()
+
+
+def test_request_result_split_items(tmp_path: Path) -> None:
+    spool = sp.Spool(tmp_path / "hooks" / "spool.sqlite")
+    hook = hc.parse_hook({"name": "alerts", "token_sha256": TOKEN_SHA, "split": "alerts", "run": "demo", "respond": "output"})
+    first = spool.add_delivery("alerts", source="x", content_type="", headers={}, body=b"{}")
+    spool.update(first, request=first, state=sp.RAN, exit_code=0, runnable="demo", output="ok\n")
+    second = spool.add_delivery("alerts", source="x", content_type="", headers={}, body=b"", request=first, item=1)
+    url = f"/hook/alerts/delivery/{first}"
+    got = hookrun.request_result(spool, first, hook=hook, status_url=url)
+    assert got and got["status"] == "running" and got["status_url"] == url and len(got["items"]) == 2
+    assert "state" not in got  # several items: only the list
+    spool.update(second, state=sp.SKIPPED, reason="a rule said skip")
+    got = hookrun.request_result(spool, first, hook=hook, status_url=url)
+    assert got and got["status"] == "done" and got["ok"] is True and [i["output"] for i in got["items"]] == ["ok", None]
+    # an item's own id isn't a request
+    assert hookrun.request_result(spool, second, hook=hook, status_url="") is None
+    assert hookrun.request_result(spool, 999, hook=hook, status_url="") is None
+    # a hook without respond = "output" never shows output
+    plain = hc.parse_hook({"name": "alerts", "token_sha256": TOKEN_SHA, "run": "demo"})
+    got = hookrun.request_result(spool, first, hook=plain, status_url=url)
+    assert got and all("output" not in i for i in got["items"])
+    spool.close()
+
+
+def test_respond_hook_run_writes_its_stdout(tmp_path: Path) -> None:
+    import os
+
+    fake = tmp_path / "fakepy"
+    fake.write_text("#!/bin/sh\ncat >/dev/null\necho '{\"freed_mb\": 812}'\nexit 0\n")
+    os.chmod(fake, 0o755)
+    config = tmp_path / "runspec_scheduler.toml"
+    config.write_text("")
+    spool = sp.Spool(tmp_path / "hooks" / "spool.sqlite")
+    hook = hc.parse_hook({"name": "reply", "token_sha256": TOKEN_SHA, "run": "demo", "respond": "output"})
+    cfg = hc.HookConfig(settings=hc.parse_hooks_settings({"enabled": True, "port": 1}), smtp=hc.parse_smtp(None), hooks={"reply": hook}, listed=[])
+    worker = hookrun.HookWorker(spool, config, python=str(fake), resolver=fake_resolve)  # type: ignore[arg-type]
+    worker.configure(cfg)
+    d = spool.add_delivery("reply", source="x", content_type="application/json", headers={}, body=b"{}")
+    worker.tick()
+    run = worker._runs[d]
+    run.proc.wait(10)
+    worker.reap()
+    got = hookrun.request_result(spool, d, hook=hook, status_url="")
+    assert got and (got["status"], got["exit_code"], got["output"]) == ("done", 0, {"freed_mb": 812})
+    spool.close()

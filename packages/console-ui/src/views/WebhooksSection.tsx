@@ -79,12 +79,16 @@ export function followsText(follows: string[]): string {
 
 type ModalTab = 'hooks' | 'settings'
 
+/** A followed venv with webhooks switched off and nothing to show: a normal
+ *  state (not every venv on a host takes webhooks), so it gets no strip of
+ *  its own, only a name on the quiet "Webhooks off here" line. */
+export function isOffQuietly(v: WebhookVenv): boolean {
+  return v.connected && !v.unavailable && v.settings?.enabled === false && !v.open.length && !v.recent.length
+}
+
 /** The quiet line under a strip when following it can't bring anything yet. */
 export function stripHint(v: WebhookVenv): { text: string; action: string; tab: ModalTab } | null {
-  if (!v.connected) return null
-  if (v.settings && v.settings.enabled === false) {
-    return { text: 'Webhooks are off in this venv, so nothing arrives yet.', action: 'Turn them on…', tab: 'settings' }
-  }
+  if (!v.connected || v.settings?.enabled === false) return null
   if (!v.hooks.length) return { text: 'No hooks in this venv yet.', action: 'Add a hook…', tab: 'hooks' }
   return null
 }
@@ -226,6 +230,26 @@ function UnavailableLine({ venvs }: { venvs: WebhookVenv[] }) {
   )
 }
 
+/** Followed venvs with webhooks switched off, as one quiet line. */
+function OffLine({ venvs, editable, onTurnOn }: { venvs: WebhookVenv[]; editable: boolean; onTurnOn: (v: WebhookVenv) => void }) {
+  const isDark = useIsDark()
+  return (
+    <div data-testid="webhook-off" style={{ fontSize: 12, color: textMuted(isDark), display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 4 }}>
+      <span>Webhooks off here:</span>
+      {venvs.map((v, i) => (
+        <span key={v.key} style={{ fontFamily: MONO_FONT }}>
+          {v.host} / {v.venv}
+          {editable && (
+            <Button size="small" type="link" style={{ padding: '0 0 0 4px', height: 'auto', fontSize: 12, fontFamily: 'inherit' }}
+              aria-label={`Turn on webhooks on ${v.host} / ${v.venv}`} onClick={() => onTurnOn(v)}>turn on</Button>
+          )}
+          {i < venvs.length - 1 ? ',' : ''}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 /** One host this console doesn't follow: each venv's webhook state, a way to
  *  set them up, and Follow (works before any hook exists). */
 function HostOfferRow({ offer, editable, busy, onFollow, onEdit }: {
@@ -284,7 +308,8 @@ export function WebhooksSection({ status, venvs, editable, onChanged }: {
   const [following, setFollowing] = useState('')
   const [expanded, setExpanded] = useState<boolean | null>(null)
   const offers = hostOffers(venvs, status)
-  const live = status.venvs.filter(v => !v.unavailable)
+  const live = status.venvs.filter(v => !v.unavailable && !isOffQuietly(v))
+  const off = status.venvs.filter(isOffQuietly)
   const quiet = status.venvs.filter(v => !!v.unavailable)
   if (!status.venvs.length && !offers.length) return null
   const showOffers = expanded ?? offers.length <= HOSTS_SHOWN
@@ -309,6 +334,7 @@ export function WebhooksSection({ status, venvs, editable, onChanged }: {
       {live.map(v => (
         <WebhookStrip key={v.key} v={v} editable={editable} onHooks={(x, tab) => setEditing({ host: x.host, venv: x.venv, tab })} />
       ))}
+      {off.length > 0 && <OffLine venvs={off} editable={editable} onTurnOn={v => setEditing({ host: v.host, venv: v.venv, tab: 'settings' })} />}
       {quiet.length > 0 && <UnavailableLine venvs={quiet} />}
       {offers.length > 0 && (
         <h3 style={{ margin: '6px 0 0', fontSize: 13, fontWeight: 600, color: textColor(isDark), display: 'flex', alignItems: 'baseline', gap: 8 }}>

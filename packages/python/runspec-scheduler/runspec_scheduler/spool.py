@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS delivery (
     pid INTEGER,
     emailed_ts REAL,
     mail TEXT NOT NULL DEFAULT '',
+    output TEXT,
+    output_truncated INTEGER NOT NULL DEFAULT 0,
     updated_ts REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS delivery_state ON delivery(state);
@@ -114,6 +116,9 @@ CREATE TABLE IF NOT EXISTS follower (
     seen_ts REAL NOT NULL
 );
 """
+
+#: Columns a spool from an older runspec-scheduler gets on open.
+_ADDED_COLUMNS = (("output", "TEXT"), ("output_truncated", "INTEGER NOT NULL DEFAULT 0"))
 
 #: A follower not seen for this long isn't following.
 FOLLOWER_STALE_SECONDS = 30.0
@@ -149,6 +154,11 @@ class Spool:
             os.close(fd)
         conn = self.conn()
         conn.executescript(_SCHEMA)
+        # Columns added after 0.11.0 (a spool made by it lacks them).
+        have = {r["name"] for r in conn.execute("PRAGMA table_info(delivery)").fetchall()}
+        for column, decl in _ADDED_COLUMNS:
+            if column not in have:
+                conn.execute(f"ALTER TABLE delivery ADD COLUMN {column} {decl}")
 
     def conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -194,6 +204,12 @@ class Spool:
     def get(self, delivery_id: int) -> dict[str, Any] | None:
         row = self.conn().execute("SELECT * FROM delivery WHERE id = ?", (delivery_id,)).fetchone()
         return _row(row) if row else None
+
+    def items(self, request_id: int) -> list[dict[str, Any]]:
+        """Every item of one received request (one row unless it was split),
+        in body order."""
+        rows = self.conn().execute("SELECT * FROM delivery WHERE id = ? OR request = ? ORDER BY item, id", (request_id, request_id)).fetchall()
+        return [_row(r) for r in rows]
 
     def queued(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = self.conn().execute("SELECT * FROM delivery WHERE state = ? ORDER BY id LIMIT ?", (QUEUED, limit)).fetchall()

@@ -85,12 +85,27 @@ def config(venv: Path, port: int) -> str:
     match = {{ alertname = "^Careful" }}
     run = "demo"
     args = {{ careful = "{{{{ alertname }}}}", marker = "{marks}/careful" }}
+    require_approval = true
+
+    [[hook.rule]]
+    name = "trusted"
+    match = {{ alertname = "^Trusted" }}
+    run = "demo"
+    args = {{ careful = "{{{{ alertname }}}}", marker = "{marks}/trusted" }}
 
     [[hook.rule]]
     name = "never"
     match = {{ alertname = "^Reckless" }}
     run = "demo"
     args = {{ reckless = "yes" }}
+
+    [[hook]]
+    name = "reply"
+    token_sha256 = "{hc.sha256(TOKEN)}"
+    respond = "output"
+    respond_within = "30s"
+    run = "demo"
+    args = {{ marker = "{marks}/reply" }}
     """
 
 
@@ -101,9 +116,9 @@ def start(venv: Path, procs: list[pe.Proc]) -> pe.Proc:
     return p
 
 
-def post(port: int, payload: Any, token: str = TOKEN) -> tuple[int, str]:
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    conn.request("POST", "/hook/alerts", body=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+def post(port: int, payload: Any, token: str = TOKEN, hook: str = "alerts") -> tuple[int, str]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=40)
+    conn.request("POST", f"/hook/{hook}", body=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
     resp = conn.getresponse()
     text = resp.read().decode()
     conn.close()
@@ -150,19 +165,23 @@ def test_webhook_end_to_end(venv: Any) -> None:
                 {"status": "firing", "labels": {"alertname": "CarefulThing"}},
                 {"status": "resolved", "labels": {"alertname": "DiskFull"}},
                 {"status": "firing", "labels": {"alertname": "RecklessThing"}},
+                {"status": "firing", "labels": {"alertname": "TrustedThing"}},
             ]
         },
     )
     assert status == 202 and json.loads(text)["status"] == "queued"
 
-    # the autonomous item runs at once, recorded like any run
+    # the autonomous item runs at once, recorded like any run; so does a
+    # confirm one (setting up the hook is the approval)
     pe.wait_for(lambda: (path / "marks" / "disk").exists(), 30, what="the autonomous run")
+    pe.wait_for(lambda: (path / "marks" / "trusted").exists(), 30, what="the confirm run")
     runs = pe.wait_for(lambda: [r for r in hook_runs(path) if r.get("status") != "running"], 30, what="the run row")
     assert runs[0]["runnable"] == "demo" and runs[0]["exit_code"] == 0
 
     listing = pe.wait_for(lambda: [d for d in verb(path, "hooks", "deliveries")["deliveries"] if d["state"] not in ("queued", "running", "waiting")] or None, 20, what="planned deliveries")
     by_rule = {d["rule"]: d for d in verb(path, "hooks", "deliveries")["deliveries"]}
     assert by_rule["careful"]["state"] == "pending" and by_rule["careful"]["autonomy"] == "confirm"
+    assert by_rule["trusted"]["state"] in ("running", "ran") and by_rule["trusted"]["autonomy"] == "confirm"
     assert by_rule["resolved"]["state"] == "skipped"
     assert by_rule["never"]["state"] == "refused" and "manual" in by_rule["never"]["reason"]
     assert listing
@@ -179,6 +198,13 @@ def test_webhook_end_to_end(venv: Any) -> None:
     follow = subprocess.run(argv, capture_output=True, text=True, cwd=str(path), timeout=60, check=False)
     kinds = [json.loads(line)["kind"] for line in follow.stdout.splitlines()]
     assert kinds[0] == "hello" and "approved" in kinds and "split" in kinds
+
+    # a respond = "output" hook answers with the run's exit code and stdout
+    status, text = post(port, {"go": True}, hook="reply")
+    reply = json.loads(text)
+    assert status == 200, text
+    assert reply["status"] == "done" and reply["ok"] is True and reply["exit_code"] == 0
+    assert "ok" in str(reply["output"]) and (path / "marks" / "reply").exists()
 
     # status reports the listener
     status_out = verb(path, "status")

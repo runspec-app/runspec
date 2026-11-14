@@ -249,3 +249,88 @@ def test_tls(service: Any, tmp_path: Path) -> None:
     raw.sendall(b"GET /healthz HTTP/1.0\r\n\r\n")
     raw.close()
     assert call(svc, "GET", "/healthz", tls=True)[0] == 200
+
+
+# ── status URL + respond = "output" ───────────────────────────────────────────
+
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
+
+
+def settle_later(svc: listener.HookService, delivery: int, delay: float = 0.3, **changes: Any) -> Any:
+    """Play the worker: once the delivery is spooled, settle it."""
+    import threading
+
+    def go() -> None:
+        end = time.monotonic() + 5
+        while time.monotonic() < end and svc.spool.get(delivery) is None:
+            time.sleep(0.05)
+        time.sleep(delay)
+        svc.spool.update(delivery, **changes)
+        svc.spool.close()
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    return t
+
+
+def test_status_url(service: Any) -> None:
+    svc = service({"base_path": "/rs"})
+    status, _, text = call(svc, "POST", "/rs/hook/alerts", b"{}", AUTH)
+    sent = json.loads(text)
+    assert status == 202 and sent["status_url"] == f"/rs/hook/alerts/delivery/{sent['id']}"
+    url = sent["status_url"]
+    assert call(svc, "GET", url)[0] == 401
+    status, _, text = call(svc, "GET", url, headers=AUTH)
+    got = json.loads(text)
+    assert status == 200 and got["status"] == "running" and got["state"] == "queued" and "output" not in got
+    svc.spool.update(sent["id"], state=sp.RAN, exit_code=3, runnable="demo")
+    got = json.loads(call(svc, "GET", url, headers=AUTH)[2])
+    assert (got["status"], got["exit_code"], got["ok"]) == ("done", 3, False) and "status_url" not in got
+    # another hook's address, an unknown id, and a POST there are refused
+    basic = {"Authorization": "Basic " + base64.b64encode(b"svc:pw").decode()}
+    assert call(svc, "GET", f"/rs/hook/basic/delivery/{sent['id']}", headers=basic)[0] == 404
+    assert call(svc, "GET", f"/rs/hook/lan/delivery/{sent['id']}", headers=AUTH)[0] == 403
+    assert call(svc, "GET", "/rs/hook/alerts/delivery/999", headers=AUTH)[0] == 404
+    assert call(svc, "POST", url, b"{}", AUTH)[0] == 405
+
+
+RESPOND_HOOKS = {
+    "reply": {"token_sha256": hc.sha256(TOKEN), "respond": "output", "respond_within": "3s"},
+    "quick": {"token_sha256": hc.sha256(TOKEN), "respond": "output", "respond_within": "1s"},
+}
+
+
+def test_respond_output_waits_for_the_run(service: Any) -> None:
+    svc = service(hooks=RESPOND_HOOKS)
+    settle_later(svc, 1, state=sp.RAN, exit_code=0, runnable="demo", output='{"disk": "cleaned", "freed_mb": 812}\n')
+    started = time.monotonic()
+    status, _, text = post(svc, "reply", Authorization=f"Bearer {TOKEN}")
+    got = json.loads(text)
+    assert status == 200 and time.monotonic() - started < 3
+    assert got["status"] == "done" and got["ok"] is True and got["exit_code"] == 0
+    assert got["output"] == {"disk": "cleaned", "freed_mb": 812} and got["output_truncated"] is False
+    assert len(got["items"]) == 1
+
+
+def test_respond_output_text_and_failure(service: Any) -> None:
+    svc = service(hooks=RESPOND_HOOKS)
+    settle_later(svc, 1, state=sp.RAN, exit_code=2, runnable="demo", output="no such host\n")
+    got = json.loads(post(svc, "reply", Authorization=f"Bearer {TOKEN}")[2])
+    assert (got["status"], got["ok"], got["exit_code"], got["output"]) == ("done", False, 2, "no such host")
+
+
+def test_respond_output_answers_a_waiting_approval_at_once(service: Any) -> None:
+    svc = service(hooks=RESPOND_HOOKS)
+    settle_later(svc, 1, delay=0.1, state=sp.PENDING, runnable="demo", reason="the hook asks for an approval")
+    status, _, text = post(svc, "reply", Authorization=f"Bearer {TOKEN}")
+    got = json.loads(text)
+    assert status == 202 and got["status"] == "pending" and got["status_url"] == "/hook/reply/delivery/1"
+
+
+def test_respond_output_gives_up_after_respond_within(service: Any) -> None:
+    svc = service(hooks=RESPOND_HOOKS)
+    started = time.monotonic()
+    status, _, text = post(svc, "quick", Authorization=f"Bearer {TOKEN}")
+    got = json.loads(text)
+    assert status == 202 and got["status"] == "running" and got["status_url"] == "/hook/quick/delivery/1"
+    assert 0.9 < time.monotonic() - started < 3

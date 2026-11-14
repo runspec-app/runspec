@@ -18,7 +18,7 @@ vi.mock('../bridge', () => ({
   bridge: new Proxy({}, { get: (_t, p) => (fns as Record<string, unknown>)[p as string] ?? vi.fn() }),
 }))
 
-import { WebhooksSection, WebhooksSummary, followsText, hookStateText, hostOffers, stripHint, venvHookState, webhookCounts } from './WebhooksSection'
+import { WebhooksSection, WebhooksSummary, followsText, hookStateText, hostOffers, isOffQuietly, stripHint, venvHookState, webhookCounts } from './WebhooksSection'
 import { changed, hasUsername, tomlName, NEW_HOOK_TOML } from './WebhookHooksModal'
 
 const strip = (patch: Partial<WebhookVenv> = {}): WebhookVenv => ({
@@ -59,8 +59,12 @@ describe('pure helpers', () => {
     expect(followsText(['*'])).toBe('follows every hook')
     expect(followsText(['a', 'b'])).toBe('follows a, b')
   })
-  it('hints when a followed venv has webhooks off or no hooks', () => {
-    expect(stripHint(strip({ settings: { enabled: false } }))?.tab).toBe('settings')
+  it('hints when a followed venv has no hooks, never because webhooks are off', () => {
+    expect(stripHint(strip({ settings: { enabled: false } }))).toBeNull()
+    expect(isOffQuietly(strip({ settings: { enabled: false }, recent: [] }))).toBe(true)
+    // something to show keeps its strip
+    expect(isOffQuietly(strip({ settings: { enabled: false } }))).toBe(false)
+    expect(isOffQuietly(strip({ settings: { enabled: true }, recent: [] }))).toBe(false)
     expect(stripHint(strip({ settings: { enabled: true } }))?.action).toBe('Add a hook…')
     expect(stripHint(strip({ settings: { enabled: true }, hooks: [consoleHook] }))).toBeNull()
     expect(stripHint(strip({ connected: false, settings: { enabled: false } }))).toBeNull()
@@ -115,6 +119,22 @@ describe('WebhooksSection', () => {
     expect(fns.webhook_hooks).toHaveBeenCalledWith({ host: 'db-01', venv: 'ops' })
   })
 
+  it('lists followed venvs with webhooks off on one quiet line, not as strips', async () => {
+    render(<WebhooksSection editable venvs={[]} status={status([
+      strip(),
+      strip({ key: 'web-01/tools', venv: 'tools', settings: { enabled: false }, recent: [] }),
+      strip({ key: 'web-01/batch', venv: 'batch', settings: { enabled: false }, recent: [] }),
+    ])} />)
+    expect(screen.getAllByTestId('webhook-strip')).toHaveLength(1)
+    const off = screen.getByTestId('webhook-off')
+    expect(off.textContent).toContain('Webhooks off here:')
+    expect(off.textContent).toContain('web-01 / tools')
+    expect(off.textContent).toContain('web-01 / batch')
+    expect(screen.queryByText(/Turn them on/)).toBeNull()
+    expect(webhookCounts(status([strip({ settings: { enabled: false }, recent: [] })])).problems).toBe(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on web-01 / tools' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+  })
   it('folds followed venvs that take no webhooks into one quiet line', () => {
     const root = strip({ key: 'little-boy/ops-root', host: 'little-boy', venv: 'ops-root', connected: false, recent: [], unavailable: 'root-owned venv: runspec-scheduler never runs as root, so it takes no webhooks' })
     const old = strip({ key: 'little-girl/legacy', host: 'little-girl', venv: 'legacy', connected: false, recent: [], unavailable: "runspec-scheduler isn't installed in this venv (or is older than 0.11.0)" })

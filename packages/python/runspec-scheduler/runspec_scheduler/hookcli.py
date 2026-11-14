@@ -470,7 +470,7 @@ def render_list(payload: dict[str, Any]) -> str:
 #: What each delivery state means, in words (``hooks test`` and ``deliveries``).
 OUTCOME_WORDS = {
     sp.QUEUED: "received, not worked out yet",
-    sp.WAITING: "runs at once (autonomous)",
+    sp.WAITING: "runs at once",
     sp.PENDING: "waits for someone to approve it",
     sp.APPROVED: "approved, about to run",
     sp.RUNNING: "running",

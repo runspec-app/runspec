@@ -311,3 +311,20 @@ def test_rule_after_another_table_still_reads_back(tmp_path: Path) -> None:
 def test_with_secret() -> None:
     raw, token = hc.with_secret({"name": "a"})
     assert raw["token_sha256"] == hc.sha256(token) and len(token) > 30
+
+
+def test_respond_settings() -> None:
+    plain = hc.parse_hook({"name": "a", "token_sha256": TOKEN_SHA})
+    assert (plain.respond, plain.respond_within, plain.respond_max) == ("", 25, 64 * 1024)
+    hook = hc.parse_hook({"name": "a", "token_sha256": TOKEN_SHA, "run": "demo", "respond": "output", "respond_within": "40s", "respond_max": "1m"})
+    assert (hook.respond, hook.respond_within, hook.respond_max) == ("output", 40, 1024 * 1024)
+    assert hook.summary()["respond"] == "output"
+    assert 'respond = "output"' in hc.render_hook(hook.raw)
+    for bad, msg in (
+        ({"respond": "body"}, "respond must be"),
+        ({"respond_within": "0"}, "respond_within"),
+        ({"respond_within": "10m"}, "respond_within"),
+        ({"respond_max": "8m"}, "respond_max"),
+    ):
+        with pytest.raises(ValueError, match=msg):
+            hc.parse_hook({"name": "a", "token_sha256": TOKEN_SHA, **bad})
