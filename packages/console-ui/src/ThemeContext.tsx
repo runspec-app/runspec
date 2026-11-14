@@ -84,18 +84,21 @@ export const FONT_SIZE = { xs: 11, sm: 12, md: 13, lg: 14, xl: 16, xxl: 18, xxxl
 export interface Surfaces {
   sunken: string; base: string; raised: string; overlay: string
   border: string; borderStrong: string; divider: string
+  // The outline of a form control (field, select, checkbox, unchecked
+  // switch): 3:1 on every surface it sits on, as a control's boundary must be.
+  field: string
   shadowSm: string; shadowMd: string; shadowLg: string
 }
 const DARK_SURFACES: Surfaces = {
   sunken: '#1e2428', base: '#262e33', raised: '#2f383e', overlay: '#39434a',
-  border: '#3b454c', borderStrong: '#4d5860', divider: 'rgba(255,255,255,0.07)',
+  border: '#3b454c', borderStrong: '#4d5860', divider: 'rgba(255,255,255,0.07)', field: '#8b959c',
   shadowSm: '0 1px 2px rgba(6,10,13,0.35)',
   shadowMd: '0 4px 14px rgba(6,10,13,0.4)',
   shadowLg: '0 16px 40px rgba(6,10,13,0.5)',
 }
 const LIGHT_SURFACES: Surfaces = {
   sunken: '#d4d9dd', base: '#e0e4e7', raised: '#eceff1', overlay: '#f5f6f7',
-  border: '#c3c9ce', borderStrong: '#adb4ba', divider: 'rgba(20,30,40,0.08)',
+  border: '#c3c9ce', borderStrong: '#adb4ba', divider: 'rgba(20,30,40,0.08)', field: '#6e7880',
   shadowSm: '0 1px 2px rgba(20,30,40,0.10)',
   shadowMd: '0 4px 14px rgba(20,30,40,0.12)',
   shadowLg: '0 16px 40px rgba(20,30,40,0.18)',
@@ -183,10 +186,25 @@ export function hueSat(hex: string): { hue: number; sat: number } {
  * 4.5:1 on every surface; `onFill` is the text on a filled danger button (dark
  * text on the light dark-theme red, white on the deep light-theme one).
  */
-export function dangerColors(accent: string | undefined, isDark: boolean): { text: string; onFill: string } {
+/** Whether a brand colour reads as red: saturated, and within 30° of red. */
+export function isRedBrand(accent: string | undefined): boolean {
   const { hue, sat } = hueSat(accent || '')
   const dist = Math.min(Math.abs(hue - 4), 360 - Math.abs(hue - 4))
-  const redBrand = !!accent && sat > 0.35 && dist < 30
+  return !!accent && sat > 0.35 && dist < 30
+}
+
+/** The colour for focus rings, checked boxes and switches, and links: the
+ *  readable brand accent, except when the brand reads as red. Then a focused
+ *  field would look invalid and a checked box like an error, so controls use
+ *  the neutral strong text colour and the brand stays on the chrome (title,
+ *  tabs). Pure, for tests. */
+export function controlAccent(accent: string | undefined, isDark: boolean): string {
+  if (isRedBrand(accent)) return textSecondary(isDark)
+  return accent ? readableAccent(accent, isDark) : (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
+}
+
+export function dangerColors(accent: string | undefined, isDark: boolean): { text: string; onFill: string } {
+  const redBrand = isRedBrand(accent)
   if (isDark) return { text: redBrand ? '#ff8fc4' : '#ff8f87', onFill: '#1e2428' }
   return { text: redBrand ? '#9c1458' : '#b42318', onFill: '#ffffff' }
 }

@@ -94,18 +94,24 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         minHeight: '100vh', padding: 24, gap: 16, textAlign: 'center',
-        background: 'var(--rs-bg, #141414)', color: 'var(--rs-text, #e6e6e6)',
+        // --rs-surface-base, not a missing --rs-bg: the fallback dark fill under
+        // the light theme's dark text made the heading about 1.1:1.
+        background: 'var(--rs-surface-base, #141414)', color: 'var(--rs-text, #e6e6e6)',
         fontFamily: 'system-ui, -apple-system, sans-serif',
       }}>
-        <div style={{ fontSize: 16, fontWeight: 600 }}>The console hit a snag while loading.</div>
+        <div style={{ fontSize: 16, fontWeight: 600 }}>
+          {isTransientLoadError(this.state.error) ? 'The console hit a snag while loading.' : 'Part of the console broke.'}
+        </div>
         <div style={{ fontSize: 13, color: 'var(--rs-text-muted, #999)', maxWidth: 460 }}>
-          This is usually a transient startup race. Reloading almost always fixes it.
+          {isTransientLoadError(this.state.error)
+            ? 'A part of the app failed to load. Reloading almost always fixes it.'
+            : 'Reload to get back to work. The details below say what went wrong; they are also in runspec-console.log.'}
         </div>
         <button
           onClick={() => window.location.reload()}
           style={{
             padding: '8px 18px', fontSize: 14, cursor: 'pointer', borderRadius: 6,
-            border: 'none', color: '#fff', background: 'var(--rs-accent, #1668dc)',
+            border: 'none', color: 'var(--rs-surface-base, #141414)', background: 'var(--rs-text, #e6e6e6)',
           }}
         >
           Reload

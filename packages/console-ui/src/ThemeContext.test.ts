@@ -12,7 +12,7 @@ import {
   surfaces, RADIUS, UI_FONT, MONO_FONT, FONT_SIZE, withAlpha, type Surfaces,
   textSecondary, textMuted, textFaint, textColor, DEFAULT_ACCENT,
   statusText, dangerColors, approveColors, hueSat,
-  inkColors,
+  inkColors, controlAccent, isRedBrand,
 } from './ThemeContext'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -21,6 +21,35 @@ const luminance = (hex: string) => {
   const n = parseInt(hex.slice(1), 16)
   return ((n >> 16) & 255) * 0.2126 + ((n >> 8) & 255) * 0.7152 + (n & 255) * 0.0722
 }
+
+describe('form control outlines', () => {
+  it('read at 3:1 on every surface, in both themes', () => {
+    for (const isDark of [true, false]) {
+      const s = surfaces(isDark)
+      for (const bg of [s.sunken, s.base, s.raised, s.overlay]) {
+        expect(contrastRatio(s.field, bg), `${isDark ? 'dark' : 'light'} ${bg}`).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
+})
+
+describe('controls under a red brand', () => {
+  it('spots a red brand and keeps controls neutral under it', () => {
+    for (const red of ['#9b031a', '#c41230', '#e10600', '#d81b60']) expect(isRedBrand(red), red).toBe(true)
+    for (const other of ['#0b7a6e', '#2f54eb', '#d4a017', '#7a7a7a', undefined]) expect(isRedBrand(other), String(other)).toBe(false)
+    for (const isDark of [true, false]) {
+      // A red brand: the neutral strong text, never the brand.
+      expect(controlAccent('#9b031a', isDark)).toBe(textSecondary(isDark))
+      // Any other brand: its readable accent; none: the default.
+      expect(controlAccent('#2f54eb', isDark)).toBe(readableAccent('#2f54eb', isDark))
+      expect(controlAccent(undefined, isDark)).toBe(isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
+      // Whatever it is, it reads on the dialog surface (3:1 for a focus ring).
+      for (const brand of ['#9b031a', '#2f54eb', '#e8590c', undefined]) {
+        expect(contrastRatio(controlAccent(brand, isDark), surfaces(isDark).overlay)).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
+})
 
 describe('surfaces()', () => {
   const dark = surfaces(true)
@@ -55,7 +84,7 @@ describe('surfaces()', () => {
     const pairs: Array<[keyof Surfaces, string]> = [
       ['sunken', '--rs-surface-sunken'], ['base', '--rs-surface-base'],
       ['raised', '--rs-surface-raised'], ['overlay', '--rs-surface-overlay'],
-      ['border', '--rs-border'], ['borderStrong', '--rs-border-strong'], ['divider', '--rs-divider'],
+      ['border', '--rs-border'], ['borderStrong', '--rs-border-strong'], ['divider', '--rs-divider'], ['field', '--rs-field'],
       ['shadowSm', '--rs-shadow-sm'], ['shadowMd', '--rs-shadow-md'], ['shadowLg', '--rs-shadow-lg'],
     ]
     const norm = (v: string) => v.replace(/\s+/g, '')

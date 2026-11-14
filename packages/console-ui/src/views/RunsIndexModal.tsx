@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Modal, Button, Alert, Descriptions, Tag, Typography, Form, Input, InputNumber,
-  Popconfirm, Spin, Space, Tooltip, message,
+  Spin, Space, Tooltip, message,
 } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import {
@@ -11,6 +11,7 @@ import {
 import { MONO_FONT } from '../ThemeContext'
 import { fmtDayRange, plural } from '../when'
 import { StatusTag, type StatusTone } from '../components/kit'
+import { useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -24,7 +25,8 @@ const { Text } = Typography
 export interface RunsIndexTarget { host: string; group: string }
 
 const STATUS_TONE: Record<string, StatusTone> = {
-  completed: 'ok', failed: 'failed', crashed: 'failed', running: 'running',
+  // crashed (the process vanished) apart from failed (it exited non-zero).
+  completed: 'ok', failed: 'failed', crashed: 'attention', running: 'running',
 }
 
 export function humanBytes(n: number | undefined): string {
@@ -115,6 +117,9 @@ export function RunsIndexModal({ target, onClose }: {
     return () => { cancelled = true }
   }, [target, load])
 
+  // Hooks stay above the early return (a hook after it crashes on open).
+  const [askRisk, riskHolder] = useRiskConfirm()
+
   if (!target) return null
   const { host, group } = target
   const isHome = group === '~/logs'
@@ -164,6 +169,7 @@ export function RunsIndexModal({ target, onClose }: {
       onCancel={onClose}
       footer={[<Button key="close" onClick={onClose}>Close</Button>]}
     >
+      {riskHolder}
       <Text type="secondary" style={{ fontSize: 13 }}>
         The SQLite index (<Text code>runspec_runs.db</Text>) the History tab reads for fast loads.
         Runspec keeps it bounded on every run ({'[config.history]'} retention); use these to
@@ -195,7 +201,7 @@ export function RunsIndexModal({ target, onClose }: {
             {(s.stale_running ?? 0) > 0 && (
               <Descriptions.Item label="Stale">
                 <StatusTag tone="attention">{plural(s.stale_running ?? 0, 'orphaned running row')}</StatusTag>
-                <Text type="secondary" style={{ fontSize: 12 }}>Reap marks them crashed.</Text>
+                <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>Reap marks them crashed.</Text>
               </Descriptions.Item>
             )}
             {inbox && (
@@ -242,13 +248,13 @@ export function RunsIndexModal({ target, onClose }: {
           <Form.Item label="Delete rows older than" style={{ marginBottom: 8 }}
             validateStatus={age.error ? 'error' : undefined}
             help={age.error ?? 'e.g. 30d, 2w, 72h — whole days; blank = no age limit'}>
-            <Input value={olderThan} onChange={e => setOlderThan(e.target.value)} placeholder="30d"
+            <Input value={olderThan} onChange={e => setOlderThan(e.target.value)} placeholder="e.g. 30d"
               aria-label="older than" style={{ width: 220, fontFamily: MONO_FONT }} />
           </Form.Item>
           <Form.Item label="Keep only the newest" style={{ marginBottom: 8 }}
             help="rows — blank = no row cap">
             <Space.Compact>
-              <InputNumber value={maxRows} onChange={v => setMaxRows(v)} min={1} placeholder="10000"
+              <InputNumber value={maxRows} onChange={v => setMaxRows(v)} min={1} placeholder="e.g. 10000"
                 aria-label="max rows" style={{ width: 200 }} />
               <Space.Addon>rows</Space.Addon>
             </Space.Compact>
@@ -257,11 +263,19 @@ export function RunsIndexModal({ target, onClose }: {
       </Form>
 
       <Space wrap style={{ marginTop: 8 }}>
-        <Popconfirm title="Prune the runs index?"
-          description={<span>Deletes {pruneSummary || 'nothing'}.<br />Reindex restores rows while their audit logs remain.</span>}
-          onConfirm={() => act('prune')} disabled={!hasPolicy}>
-          <Button danger disabled={!hasPolicy || busy !== null} loading={busy === 'prune'}>Prune</Button>
-        </Popconfirm>
+        <Tooltip title={hasPolicy ? '' : 'Set an age or a row count above to prune'}>
+          <Button danger disabled={!hasPolicy || busy !== null} loading={busy === 'prune'}
+            onClick={async () => {
+              const a = await askRisk({
+                level: 'fleet', title: `Prune the runs index of ${group}?`,
+                action: `Delete ${pruneSummary}`, targets: [`${host} / ${group}`],
+                consequence: 'Reindex restores rows while their audit logs remain.', okText: 'Prune',
+              })
+              if (a.ok) await act('prune')
+            }}>
+            Prune…
+          </Button>
+        </Tooltip>
         <Tooltip title="Mark 'running' rows whose process is gone (or older than max_run_hours) as crashed">
           <Button disabled={busy !== null} loading={busy === 'reap'} onClick={() => act('reap')}>Reap orphans</Button>
         </Tooltip>

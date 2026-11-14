@@ -39,6 +39,13 @@ describe('helpers', () => {
 })
 
 describe('LogCleanupModal', () => {
+  it('opens after mounting empty (closed), without a hook-order crash', async () => {
+    const { rerender } = render(<LogCleanupModal target={null} onClose={() => {}} />)
+    rerender(<LogCleanupModal target={T} onClose={() => {}} />)
+    expect(await screen.findByText('compress after 7d, delete after 90d')).toBeTruthy()
+    rerender(<LogCleanupModal target={null} onClose={() => {}} />)
+  })
+
   it('shows the policy and its last pass, and saves a change', async () => {
     api.logs_retention_set = vi.fn(() => Promise.resolve({ ok: true, group: 'ops', policy: { compact_after: '7d', delete_after: '30d' }, as_user: 'svc' }))
     render(<LogCleanupModal target={T} onClose={() => {}} />)

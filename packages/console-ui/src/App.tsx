@@ -89,7 +89,7 @@ import { DisclaimerGate } from './components/DisclaimerGate'
 import { RUNNING_STATUSES } from './components/runShared'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type OtherHost, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
-import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning, dangerColors, inkColors, statusText } from './ThemeContext'
+import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning, dangerColors, inkColors, statusText, controlAccent, isRedBrand } from './ThemeContext'
 import GateMark from './components/GateMark'
 import {
   anyExpanded, isGroupCollapsed, loadSidebarGroups, saveSidebarGroups, setAllGroups, toggleGroupState,
@@ -983,6 +983,10 @@ export default function App() {
     ? readableAccent(brandTheme.accent_color, isDark)
     : (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
   const danger    = dangerColors(brandTheme.accent_color || undefined, isDark)
+  // Focus rings, checked fills and links: the text accent, or a neutral ink
+  // when the brand reads as red (so a focused field never looks invalid).
+  const ctrlCol   = controlAccent(brandTheme.accent_color || undefined, isDark)
+  const neutralControls = isDark || isRedBrand(brandTheme.accent_color || undefined)
   const ink       = inkColors(isDark)
   const contentBg = sf.base
   const iconCol   = textMuted(isDark)
@@ -994,6 +998,7 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
     document.documentElement.style.setProperty('--rs-accent', titleCol)
+    document.documentElement.style.setProperty('--rs-focus', ctrlCol)
     document.documentElement.style.setProperty('--rs-danger', danger.text)
     document.documentElement.style.setProperty('--rs-waiting', statusText(isDark).waiting)
     document.documentElement.style.setProperty('--rs-ok', statusText(isDark).ok)
@@ -1017,7 +1022,7 @@ export default function App() {
     root.setProperty('--rs-shadow-sm', s.shadowSm)
     root.setProperty('--rs-shadow-md', s.shadowMd)
     root.setProperty('--rs-shadow-lg', s.shadowLg)
-  }, [isDark, titleCol, danger.text])
+  }, [isDark, titleCol, ctrlCol, danger.text])
 
   const viewTabs = visibleNavTabs([
     {
@@ -1226,7 +1231,8 @@ export default function App() {
             colorBgLayout: sf.base,
             colorBgContainer: sf.raised,
             colorBgElevated: sf.overlay,
-            colorBorder: sf.borderStrong,
+            // Form controls' outline: 3:1 on every surface (sf.field).
+            colorBorder: sf.field,
             colorBorderSecondary: sf.border,
             colorSplit: sf.divider,
             boxShadow: sf.shadowMd,
@@ -1248,8 +1254,8 @@ export default function App() {
             // Text in the brand colour (links, link buttons) uses the accent
             // tuned for text on this theme's surfaces. colorPrimary is a fill
             // colour (white text on it), and on the dark surfaces it is ~2.2:1.
-            colorLink: titleCol,
-            colorLinkHover: titleCol,
+            colorLink: ctrlCol,
+            colorLinkHover: ctrlCol,
             // Danger (Delete, Uninstall, Stop): red that reads as text on these
             // surfaces, moved to magenta when the brand itself is red so a
             // primary and a destructive button never share a colour.
@@ -1260,7 +1266,7 @@ export default function App() {
             // Keyboard focus ring on every Ant control: Ant draws it in
             // colorPrimaryBorder, a dark shade of the raw brand (1.15:1 on the
             // dark surface). Use the readable accent, 2px, like our own controls.
-            colorPrimaryBorder: titleCol,
+            colorPrimaryBorder: ctrlCol,
             lineWidthFocus: 2,
           },
           components: {
@@ -1277,7 +1283,7 @@ export default function App() {
             Button: {
               fontWeight: 500, dangerColor: danger.onFill, dangerShadow: 'none',
               colorPrimary: ink.bg, colorPrimaryHover: ink.hover, colorPrimaryActive: ink.active,
-              primaryColor: ink.text, primaryShadow: 'none', colorPrimaryBorder: titleCol,
+              primaryColor: ink.text, primaryShadow: 'none', colorPrimaryBorder: ctrlCol,
             },
             // Ant paints these in colorPrimary as TEXT; use the text accent.
             Pagination: { itemActiveColor: titleCol, itemActiveColorHover: titleCol },
@@ -1285,20 +1291,21 @@ export default function App() {
             // A focused field's border is Ant's colorPrimary, the raw brand: a
             // deep brand on the dark surface was 1.2:1. Use the readable accent
             // for the focus border everywhere a field takes focus.
-            Input: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}`, activeBorderColor: titleCol, hoverBorderColor: titleCol },
-            InputNumber: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}`, activeBorderColor: titleCol, hoverBorderColor: titleCol },
-            DatePicker: { activeShadow: `0 0 0 3px ${withAlpha(titleCol, 0.18)}`, activeBorderColor: titleCol, hoverBorderColor: titleCol },
+            Input: { activeShadow: `0 0 0 3px ${withAlpha(ctrlCol, 0.18)}`, activeBorderColor: ctrlCol, hoverBorderColor: ctrlCol },
+            InputNumber: { activeShadow: `0 0 0 3px ${withAlpha(ctrlCol, 0.18)}`, activeBorderColor: ctrlCol, hoverBorderColor: ctrlCol },
+            DatePicker: { activeShadow: `0 0 0 3px ${withAlpha(ctrlCol, 0.18)}`, activeBorderColor: ctrlCol, hoverBorderColor: ctrlCol },
             Select: {
-              optionSelectedBg: withAlpha(titleCol, isDark ? 0.16 : 0.1),
-              activeBorderColor: titleCol, hoverBorderColor: titleCol, activeOutlineColor: withAlpha(titleCol, 0.18),
+              optionSelectedBg: withAlpha(ctrlCol, isDark ? 0.16 : 0.1),
+              activeBorderColor: ctrlCol, hoverBorderColor: ctrlCol, activeOutlineColor: withAlpha(ctrlCol, 0.18),
             },
             // Switches, checkboxes and radios: on dark the raw brand fill was
             // 1.2:1 against the surface, so a checked box looked unchecked. The
             // readable accent fills them there, with a dark tick on top.
-            ...(isDark ? {
-              Switch: { colorPrimary: titleCol, colorPrimaryHover: titleCol, handleBg: sf.base },
-              Checkbox: { colorPrimary: titleCol, colorPrimaryHover: titleCol, colorWhite: sf.base },
-              Radio: { colorPrimary: titleCol, colorPrimaryHover: titleCol, dotSize: 8, colorWhite: sf.base },
+            // A red brand gets the neutral fill on light too.
+            ...(neutralControls ? {
+              Switch: { colorPrimary: ctrlCol, colorPrimaryHover: ctrlCol, ...(isDark ? { handleBg: sf.base } : {}) },
+              Checkbox: { colorPrimary: ctrlCol, colorPrimaryHover: ctrlCol, ...(isDark ? { colorWhite: sf.base } : {}) },
+              Radio: { colorPrimary: ctrlCol, colorPrimaryHover: ctrlCol, dotSize: 8, ...(isDark ? { colorWhite: sf.base } : {}) },
             } : {}),
             Segmented: { itemSelectedBg: sf.overlay, trackBg: sf.sunken },
             Tooltip: { colorBgSpotlight: sf.overlay, colorTextLightSolid: isDark ? 'rgba(255,255,255,0.88)' : 'rgba(0,0,0,0.88)' },

@@ -38,6 +38,9 @@ html, body, #root {
    in sync with the (possibly white-labelled) accent colour. */
 :root {
   --rs-accent: #3cc7b6;
+  /* Focus rings and links: the accent, or a neutral when the brand reads as
+     red (App.tsx sets it from controlAccent). */
+  --rs-focus: #3cc7b6;
   --rs-hover: rgba(255, 255, 255, 0.05);
   --rs-scroll-thumb: #4d5860;
   --rs-scroll-thumb-hover: #5f6b74;
@@ -56,6 +59,7 @@ html, body, #root {
   --rs-surface-overlay: #39434a;
   --rs-border: #3b454c;
   --rs-border-strong: #4d5860;
+  --rs-field: #8b959c;
   --rs-divider: rgba(255, 255, 255, 0.07);
   --rs-shadow-sm: 0 1px 2px rgba(6, 10, 13, 0.35);
   --rs-shadow-md: 0 4px 14px rgba(6, 10, 13, 0.4);
@@ -80,6 +84,7 @@ html[data-theme='light'] {
   --rs-surface-overlay: #f5f6f7;
   --rs-border: #c3c9ce;
   --rs-border-strong: #adb4ba;
+  --rs-field: #6e7880;
   --rs-divider: rgba(20, 30, 40, 0.08);
   --rs-shadow-sm: 0 1px 2px rgba(20, 30, 40, 0.10);
   --rs-shadow-md: 0 4px 14px rgba(20, 30, 40, 0.12);
@@ -119,7 +124,7 @@ body {
 /* Console session chips (SessionStrip): accent-neutral hover, no re-render. */
 .rs-session-chip { transition: background var(--rs-motion), border-color var(--rs-motion); }
 .rs-session-chip:hover { background: var(--rs-hover); }
-.rs-session-chip:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 1px; }
+.rs-session-chip:focus-visible { outline: 2px solid var(--rs-focus, var(--rs-accent)); outline-offset: 1px; }
 
 /* Sidebar resize handle: invisible until hovered/dragged, then a faint accent
    line shows where the draggable edge is. */
@@ -143,7 +148,7 @@ body {
 }
 .rs-nav-tab:hover { background: var(--rs-hover); }
 .rs-nav-tab:focus-visible {
-  outline: 2px solid var(--rs-accent);
+  outline: 2px solid var(--rs-focus, var(--rs-accent));
   outline-offset: -2px;
 }
 
@@ -157,7 +162,7 @@ body {
   transition: border-color var(--rs-motion), color var(--rs-motion);
 }
 .rs-palette-btn:hover { color: var(--rs-text-secondary); border-color: var(--rs-border-strong); }
-.rs-palette-btn:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 1px; }
+.rs-palette-btn:focus-visible { outline: 2px solid var(--rs-focus, var(--rs-accent)); outline-offset: 1px; }
 
 /* Read by screen readers, not drawn (e.g. "You" before a prompt bubble). */
 .rs-visually-hidden {
@@ -171,8 +176,8 @@ body {
 /* Composer (CommandInput): an accent ring while you type in it. */
 .rs-composer { transition: border-color var(--rs-motion), box-shadow var(--rs-motion); }
 .rs-composer:focus-within {
-  border-color: color-mix(in srgb, var(--rs-accent) 55%, var(--rs-border-strong)) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rs-accent) 16%, transparent) !important;
+  border-color: color-mix(in srgb, var(--rs-focus, var(--rs-accent)) 55%, var(--rs-border-strong)) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rs-focus, var(--rs-accent)) 16%, transparent) !important;
 }
 /* The composer's placeholder: the muted token, not the browser's #757575
    (2.6:1 on gunmetal). */
@@ -218,7 +223,7 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
   transition: border-color var(--rs-motion), color var(--rs-motion);
 }
 .rs-scope-btn:hover { border-color: var(--rs-border-strong); }
-.rs-scope-btn:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 1px; }
+.rs-scope-btn:focus-visible { outline: 2px solid var(--rs-focus, var(--rs-accent)); outline-offset: 1px; }
 
 /* Settings modal: a fixed-height dialog whose tab strip stays put while the
    tab content scrolls underneath it (the strip used to scroll away). */
@@ -366,13 +371,13 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
 /* Schedules tab option cards (ScheduleScopeCards): hover + keyboard focus. */
 .rs-scope-card { transition: background var(--rs-motion), border-color var(--rs-motion); }
 .rs-scope-card[aria-checked='false']:hover { background: var(--rs-hover) !important; border-color: var(--rs-accent) !important; }
-.rs-scope-card:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 2px; }
+.rs-scope-card:focus-visible { outline: 2px solid var(--rs-focus, var(--rs-accent)); outline-offset: 2px; }
 
 /* Rows and cards made pressable (kit.pressable) show where keyboard focus is. */
 .rs-host-row:focus-visible,
 .rs-group-header:focus-visible,
 [role='button'][tabindex='0']:focus-visible {
-  outline: 2px solid var(--rs-accent);
+  outline: 2px solid var(--rs-focus, var(--rs-accent));
   outline-offset: -2px;
 }
 
@@ -387,7 +392,7 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
    tokens, a shade the readable ones don't cover (links 3.7:1 on the raised
    surface, warning text 4.0:1, the outlined Stop 4.3:1). Pin them. */
 a.ant-typography:not(.ant-typography-disabled),
-.ant-typography a:not(.ant-typography-disabled) { color: var(--rs-accent); }
+.ant-typography a:not(.ant-typography-disabled) { color: var(--rs-focus, var(--rs-accent)); }
 .ant-typography.ant-typography-warning { color: var(--rs-warn); }
 .ant-typography.ant-typography-danger { color: var(--rs-danger); }
 .ant-typography.ant-typography-success { color: var(--rs-ok); }
@@ -399,3 +404,9 @@ a.ant-typography:not(.ant-typography-disabled),
 }
 .ant-btn-dangerous.ant-btn-variant-text:not(:disabled),
 .ant-btn-dangerous.ant-btn-variant-link:not(:disabled) { border-color: transparent; }
+
+/* A form control's boundary reads at 3:1 (WCAG 1.4.11). Ant draws the select
+   arrow and an unchecked switch's track in its quaternary text grey (1.8:1 on
+   light); use the field outline colour. Disabled controls keep Ant's look. */
+.ant-select:not(.ant-select-disabled) .ant-select-arrow { color: var(--rs-field); }
+.ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled) { background: var(--rs-field); }

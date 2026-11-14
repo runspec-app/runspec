@@ -8,7 +8,7 @@
 import type { ReactNode } from 'react'
 import { Spin, theme } from 'antd'
 import { AppstoreOutlined, DesktopOutlined, ScheduleOutlined, CloudServerOutlined, WarningFilled } from '@ant-design/icons'
-import { RADIUS, useAccent, useIsDark, textColor, textMuted, textSecondary, withAlpha } from '../ThemeContext'
+import { RADIUS, statusText, useAccent, useIsDark, textColor, textMuted, textSecondary, withAlpha } from '../ThemeContext'
 import type { ScheduleScope, ScopeCount } from './allSchedules'
 
 interface CardDef {
@@ -90,7 +90,7 @@ export function ScheduleScopeCards({ value, onChange, counts, hostsPending, noDa
                 <span
                   aria-label={`${problems} problem${problems === 1 ? '' : 's'}`}
                   title={`${problems} problem${problems === 1 ? '' : 's'}`}
-                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: token.colorWarning, color: 'rgba(0,0,0,0.88)' }}
+                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: withAlpha(statusText(isDark).warn, isDark ? 0.2 : 0.14), color: statusText(isDark).warn }}
                 >
                   <WarningFilled style={{ fontSize: 11 }} />{problems}
                 </span>

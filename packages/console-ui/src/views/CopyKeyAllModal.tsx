@@ -4,6 +4,8 @@ import { KeyOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
 import { StatusIcon } from '../components/kit'
+import { useRiskConfirm } from '../components/risk'
+import { plural } from '../when'
 
 const { Text } = Typography
 
@@ -77,9 +79,18 @@ export function CopyKeyAllModal({
   )
 
   const close = () => { setPassword(''); onClose() }
+  const [askRisk, riskHolder] = useRiskConfirm()
 
   const submit = async () => {
     if (!password.trim() || selected.length === 0) return
+    // It adds this machine's key to authorized_keys on every selected host.
+    const a = await askRisk({
+      level: 'fleet', title: `Copy the key to ${plural(selected.length, 'host')}?`,
+      action: 'Add this machine\'s public key to ~/.ssh/authorized_keys', targets: selected,
+      consequence: 'Each host then accepts this machine without a password. Remove the line from authorized_keys to undo it.',
+      okText: `Copy to ${selected.length}`,
+    })
+    if (!a.ok) return
     setSubmitting(true)
     setResults(null)
     try {
@@ -125,6 +136,7 @@ export function CopyKeyAllModal({
         </div>
       }
     >
+      {riskHolder}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Text style={{ fontSize: 13 }}>
           Authorize this machine on the selected hosts by adding its public key to each host's <Text code>authorized_keys</Text>. One password is tried against every host — ideal for a fleet that shares a bootstrap credential.
@@ -171,6 +183,7 @@ export function CopyKeyAllModal({
           // (Moving focus to it on Enter isn't enough: the same keypress then
           // lands on the button and clicks it.)
           onPressEnter={e => e.preventDefault()}
+          aria-label="SSH password"
           placeholder="SSH password"
           autoComplete="new-password"
           disabled={hosts.length === 0}

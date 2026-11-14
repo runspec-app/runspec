@@ -78,6 +78,10 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
     if (target) load(target)
   }, [target, load])
 
+  // Every hook runs before the early return below: a hook after it would run
+  // only once a target is set, and React throws on the changed hook count.
+  const [askRisk, riskHolder] = useRiskConfirm()
+
   if (!target) return null
   const { host, group } = target
   const problem = cleanupProblem(form)
@@ -100,7 +104,6 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
     } catch (e) { setError(String(e)) } finally { setBusy('') }
   }
 
-  const [askRisk, riskHolder] = useRiskConfirm()
   // Deleting logs can't be undone (the risk ladder's destructive level): run
   // the same pass dry first, show what it would remove, and have the venv's
   // name typed before the real pass.

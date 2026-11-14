@@ -34,7 +34,7 @@ import {
 import {
   bridge, type EnvFileKind, type EnvFileReader, type EnvFileRef, type EnvFileTarget, type EnvFileVenvChange, type EnvFileView, type Host,
 } from '../bridge'
-import { MONO_FONT } from '../ThemeContext'
+import { MONO_FONT, statusText, useIsDark, withAlpha } from '../ThemeContext'
 import { EmptyState, StatusTag } from '../components/kit'
 
 const { Text } = Typography
@@ -187,6 +187,7 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
       </Text>
       <Space wrap style={{ marginBottom: 12 }}>
         <Segmented
+          aria-label="View"
           value={mode}
           onChange={v => guard(() => setMode(v as 'one' | 'many'))}
           options={[{ label: 'One venv', value: 'one' }, { label: 'Across venvs', value: 'many' }]}
@@ -260,6 +261,7 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
 
   const changes = draftChanges(rows)
   const changeCount = Object.keys(changes.set).length + changes.unset.length
+  const [switchModal, switchHolder] = Modal.useModal()
   useEffect(() => { onDirty(changeCount) }, [changeCount, onDirty])
   useEffect(() => () => onDirty(0), [onDirty])
 
@@ -385,6 +387,7 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
 
   return (
     <div>
+      {switchHolder}
       <Space style={{ marginBottom: 8, width: '100%' }} wrap>
         <Select
           showSearch
@@ -395,7 +398,11 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
           value={selected || undefined}
           onChange={v => {
             if (changeCount === 0) { setSelected(v); return }
-            Modal.confirm({ title: 'Discard unsaved changes?', okText: 'Discard', onOk: () => setSelected(v) })
+            switchModal.confirm({
+              title: `Discard ${changeCount} unsaved change${changeCount === 1 ? '' : 's'}?`,
+              okText: 'Discard', okButtonProps: { danger: true }, autoFocusButton: 'cancel',
+              onOk: () => setSelected(v),
+            })
           }}
           options={options}
           optionFilterProp="label"
@@ -615,10 +622,11 @@ export function valueGroups(refs: string[], views: Record<string, EnvFileView>, 
     .sort((a, b) => (a.token === null ? 1 : 0) - (b.token === null ? 1 : 0) || b.refs.length - a.refs.length)
 }
 
-const EDIT_BG = {
-  added: 'rgba(82, 196, 26, 0.16)',
-  changed: 'rgba(250, 173, 20, 0.18)',
-  removed: 'rgba(255, 77, 79, 0.14)',
+// A staged edit's cell tint, from the theme's status tones (fixed Ant greens
+// and reds ignored dark/light).
+function editBg(kind: 'added' | 'changed' | 'removed', isDark: boolean): string {
+  const st = statusText(isDark)
+  return withAlpha(kind === 'added' ? st.ok : kind === 'changed' ? st.warn : st.error, isDark ? 0.18 : 0.12)
 }
 const COL_W = 240
 const KEY_W = 300
@@ -638,6 +646,7 @@ function inScope(t: EnvFileTarget, scope: Scope): boolean {
 }
 
 function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFileKind; targets: EnvFileTarget[]; loadingTargets: boolean; onDirty: (n: number) => void }) {
+  const isDark = useIsDark()
   const supported = useMemo(() => targets.filter(t => t.supported), [targets])
   const unsupported = targets.length - supported.length
   const [views, setViews] = useState<Record<string, EnvFileView>>({})
@@ -780,7 +789,14 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
     if (!v) return
     try {
       const res = await bridge.env_file_reveal({ host: v.host, runspec_path: v.runspec_path, ...(file ? { file } : {}), key })
-      setRevealed(prev => ({ ...prev, ...Object.fromEntries(refs.map(r => [`${r}|${key}`, res.value])) }))
+      const ids = refs.map(r => `${r}|${key}`)
+      setRevealed(prev => ({ ...prev, ...Object.fromEntries(ids.map(id => [id, res.value])) }))
+      // Hidden again after 30 seconds, as in One venv.
+      window.setTimeout(() => setRevealed(prev => {
+        const next = { ...prev }
+        for (const id of ids) delete next[id]
+        return next
+      }), 30_000)
     } catch (err) {
       message.error((err as Error)?.message || 'could not reveal')
     }
@@ -919,7 +935,7 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
         onKeyDown={canEdit ? e => { if (e.key === 'Enter') startEdit(refs, key) } : undefined}
         style={{
           display: 'flex', alignItems: 'flex-start', gap: 4, minHeight: 24, margin: '-4px -8px', padding: '4px 8px',
-          cursor: canEdit ? 'pointer' : 'default', background: editKind ? EDIT_BG[editKind] : undefined,
+          cursor: canEdit ? 'pointer' : 'default', background: editKind ? editBg(editKind, isDark) : undefined,
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>{body}</div>
@@ -1033,7 +1049,7 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
 
   return (
     <div>
-      <style>{'.rs-env-grid .rs-env-cell-remove{opacity:0}.rs-env-grid td:hover .rs-env-cell-remove{opacity:1}'}</style>
+      <style>{'.rs-env-grid .rs-env-cell-remove{opacity:0}.rs-env-grid td:hover .rs-env-cell-remove,.rs-env-grid td:focus-within .rs-env-cell-remove{opacity:1}'}</style>
       <Space wrap style={{ marginBottom: 8, width: '100%' }}>
         <Input
           size="small" allowClear style={{ width: 240 }} placeholder="Filter variables" prefix={<SearchOutlined />}

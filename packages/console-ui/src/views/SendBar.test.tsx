@@ -55,8 +55,9 @@ describe('send bar helpers', () => {
     for (const line of ['systemctl status nginx', 'grep rm notes.txt', 'echo killed', 'firmware --version']) {
       expect(planSend({ ticked: few, line, remembered: null }), line).toEqual({ kind: 'send' })
     }
-    // A password answers a prompt the visible line already asked about.
-    expect(planSend({ ticked: many, line: 's3cret', hidden: true, remembered: null })).toEqual({ kind: 'send' })
+    // A password to a few windows goes; past the limit it asks like any line.
+    expect(planSend({ ticked: few, line: 's3cret', hidden: true, remembered: null })).toEqual({ kind: 'send' })
+    expect(planSend({ ticked: many, line: 's3cret', hidden: true, remembered: null })).toEqual({ kind: 'ask', disruptive: false, canRemember: true })
   })
 
   it('treats windows that appear after the first list as late', () => {
@@ -110,11 +111,15 @@ describe('SendBar', () => {
     render(<SendBar />)
     await screen.findByText('web-01')
     await user.click(screen.getByRole('button', { name: 'Tab' }))
+    // The arrow keys are named, not just drawn.
+    expect(screen.getByRole('button', { name: 'Up arrow' })).toBeTruthy()
     expect(sendToTerminals).toHaveBeenCalledWith(['10', '11', '12'], '', false, 'tab')
-    await user.click(screen.getByRole('button', { name: 'Ctrl+C' }))
+    await user.click(screen.getByRole('button', { name: 'Interrupt (Ctrl+C)' }))
     expect(sendToTerminals).toHaveBeenCalledTimes(1)
     expect((await screen.findByTestId('risk-action')).textContent).toBe('Press Interrupt (Ctrl+C)')
-    await user.click(screen.getByRole('button', { name: 'Send to 3' }))
+    // db-01 isn't open yet: it is named as not sent, not counted as a target.
+    expect(screen.getByText(/Not ready, so not sent: db-01/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Send to 2' }))
     await waitFor(() => expect(sendToTerminals).toHaveBeenCalledWith(['10', '11', '12'], '', false, 'ctrl-c'))
   })
 

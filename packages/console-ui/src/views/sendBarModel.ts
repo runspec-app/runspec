@@ -21,8 +21,9 @@ export type SendPlan =
 
 /** What a send should do before it goes, by the risk ladder:
  *  - an empty line is never sent (Enter alone has its own key button);
- *  - a hidden (password) send answers a prompt the visible line already
- *    raised, so it doesn't ask;
+ *  - a hidden (password) send asks only past the window limit, like any line:
+ *    it is usually the answer to a prompt the visible line raised, but if that
+ *    prompt didn't appear everywhere, the text lands in shells and history;
  *  - a disruptive line or key to more than one window asks every time;
  *  - anything to more than CONFIRM_OVER windows asks, unless the person said
  *    not to ask again for exactly this set.
@@ -32,7 +33,11 @@ export function planSend(opts: {
 }): SendPlan {
   const { ticked, line = '', key, hidden = false, remembered, over = CONFIRM_OVER } = opts
   if (!key && !line.trim()) return { kind: 'empty' }
-  if (hidden) return { kind: 'send' }
+  if (hidden) {
+    return ticked.length > over && signature(ticked) !== remembered
+      ? { kind: 'ask', disruptive: false, canRemember: true }
+      : { kind: 'send' }
+  }
   const disruptive = key ? DISRUPTIVE_KEYS.has(key) : DISRUPTIVE_LINE.test(line)
   if (disruptive && ticked.length > 1) return { kind: 'ask', disruptive: true, canRemember: false }
   if (ticked.length > over && signature(ticked) !== remembered) return { kind: 'ask', disruptive: false, canRemember: true }

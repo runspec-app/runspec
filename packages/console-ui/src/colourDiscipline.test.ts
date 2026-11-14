@@ -1,7 +1,8 @@
 /**
  * Colour discipline: status and surface colours come from the theme
  * (ThemeContext.tsx tokens, kit StatusTag / StatusIcon), never from Ant's
- * preset tag colours (`<Tag color="red">`) or hex literals in a view. Those
+ * preset tag or badge colours (`<Tag color="red">`) or hex / rgb() literals
+ * in a view. Those
  * ignore dark/light and the white-label accent, and they drifted in every
  * window that wasn't on the kit.
  *
@@ -26,28 +27,31 @@ const EXEMPT = new Set([
   'diagramRender.ts',            // Mermaid's canvas theme
 ])
 
-// Remaining offenders, by file: Tag presets + hex literals. Burn these down.
+// Remaining offenders, by file: Tag/Badge presets, hex and rgb() literals.
+// Burn these down.
 const BASELINE: Record<string, number> = {
-  'App.tsx': 18,
+  'App.tsx': 22,
   'components/CommandInput.tsx': 13,  // syntax-highlight palette
-  'components/ConfigSyncPreview.tsx': 5,
+  'components/ConfigSyncPreview.tsx': 9,
   'components/CredentialGuide.tsx': 4,
-  'components/ErrorBoundary.tsx': 1,
   'components/HelpdeskPanel.tsx': 4,
   'components/LogStream.tsx': 8,
-  'components/Markdown.tsx': 3,
+  'components/Markdown.tsx': 4,
   'components/OtherHostsSection.tsx': 4,
-  'components/OutputPanel.tsx': 15,
-  'components/SettingsDrawer.tsx': 4,
+  'components/OutputPanel.tsx': 17,
+  'components/SettingsDrawer.tsx': 13,
   'components/TriggersEditor.tsx': 2,
   'components/runShared.tsx': 8,
   'views/AnalyticsView.tsx': 6,
   'views/DevView.tsx': 9,
+  'views/EvalsView.tsx': 1,
   'views/FormsView.tsx': 4,
   'views/HistoryView.tsx': 3,
   'views/HostScheduleModal.tsx': 1,
   'views/HostsView.tsx': 7,
+  'views/ImproveView.tsx': 1,
   'views/KnowledgeCheck.tsx': 1,
+  'views/KnowledgeEdits.tsx': 2,
   'views/KnowledgeTools.tsx': 4,
   'views/KnowledgeView.tsx': 3,
   'views/MarketplaceView.tsx': 1,
@@ -58,8 +62,10 @@ const BASELINE: Record<string, number> = {
   'views/formsShared.tsx': 1,
 }
 
-const TAG_PRESET = /<Tag\b[^>]*\bcolor=/g
+const TAG_PRESET = /<(?:Tag|Badge)\b[^>]*\bcolor=/g
 const HEX = /['"`]#[0-9a-fA-F]{3,8}['"`]/g
+// A literal rgb()/rgba() colour in a string (not a var() fallback).
+const RGB = /['"`]rgba?\(\s*\d/g
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap(name => {
@@ -70,7 +76,7 @@ function files(dir: string): string[] {
 }
 
 export function offences(text: string): number {
-  return (text.match(TAG_PRESET)?.length ?? 0) + (text.match(HEX)?.length ?? 0)
+  return (text.match(TAG_PRESET)?.length ?? 0) + (text.match(HEX)?.length ?? 0) + (text.match(RGB)?.length ?? 0)
 }
 
 describe('colour discipline', () => {
@@ -82,6 +88,7 @@ describe('colour discipline', () => {
 
   it('counts Tag presets and hex literals', () => {
     expect(offences(`<Tag color="red">x</Tag> <Tag>y</Tag> style={{ color: '#52c41a' }} "#fff"`)).toBe(3)
+    expect(offences(`<Badge color="orange" /> background: 'rgba(82,196,26,0.16)' 'var(--x, rgba(0,0,0,.1))'`)).toBe(2)
   })
 
   it('no file adds a raw colour (use StatusTag, StatusIcon or a theme token)', () => {

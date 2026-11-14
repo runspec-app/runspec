@@ -83,8 +83,8 @@ describe('RunsIndexModal', () => {
     fireEvent.change(screen.getByLabelText('older than'), { target: { value: '3d' } })
     fireEvent.change(screen.getByLabelText('max rows'), { target: { value: '1000' } })
     fireEvent.click(screen.getByRole('button', { name: /Prune/ }))
-    expect(await screen.findByText(/older than 3 days, then all but the newest 1,000/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /OK|Yes/ }))
+    expect((await screen.findByTestId('risk-action')).textContent).toMatch(/older than 3 days, then all but the newest 1,000/)
+    fireEvent.click(screen.getByTestId('risk-ok'))
     await waitFor(() => expect(maintain).toHaveBeenCalledWith('web-01', 'ops-tools', 'prune', '3d', 1000, 'svc'))
   })
 
