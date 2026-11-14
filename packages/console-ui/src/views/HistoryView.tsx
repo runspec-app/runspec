@@ -9,7 +9,7 @@ import { bridge, type HistoryRecord, type HistoryLogLine, type HistorySyncState,
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT, RADIUS, statusText, textColor, useAccent, useIsDark, withAlpha } from '../ThemeContext'
 import { EmptyState, IconAction, OnceHint, PageToolbar, RowActions, StatusTag, type RowAction, type StatusTone } from '../components/kit'
-import { When, fullWhen } from '../when'
+import { When, fmtClock, fmtDay, fullWhen } from '../when'
 
 // History shows real runnable runs only, with who initiated each (operator vs the
 // assistant). Whole agent turns and individual built-in tool calls are agent
@@ -102,9 +102,9 @@ export function logLevelColour(level: string, isDark: boolean): string {
 }
 
 function formatLogsAsText(record: HistoryRecord, logLines: HistoryLogLine[]): string {
-  const header = `Log output from /${record.runnable} on ${record.host} (${new Date(record.ts).toLocaleString()})`
+  const header = `Log output from /${record.runnable} on ${record.host} (${fullWhen(record.ts)})`
   const lines = logLines.map(l =>
-    `${new Date(l.ts).toLocaleTimeString()} ${l.level.padEnd(8)} ${l.message}`
+    `${fmtClock(l.ts)} ${l.level.padEnd(8)} ${l.message}`
   )
   return [header, '', ...lines].join('\n')
 }
@@ -214,7 +214,7 @@ function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewF
           )}
           {record.logPrunedAt
             ? <span style={{ color: 'var(--rs-text-muted)' }}>
-                log pruned by {record.logPrunedBy || 'unknown'} on {new Date(record.logPrunedAt).toLocaleDateString()} — record retained
+                log pruned by {record.logPrunedBy || 'unknown'} on {fmtDay(record.logPrunedAt)} — record retained
               </span>
             : logsLoading
             ? <Spin size="small" />
@@ -230,7 +230,7 @@ function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewF
 
 function LogLine({ line }: { line: HistoryLogLine }) {
   const isDark = useIsDark()
-  const time = new Date(line.ts).toLocaleTimeString()
+  const time = fmtClock(line.ts)
   return (
     <div>
       <span style={{ color: 'var(--rs-text-muted)', marginRight: 10 }}>{time}</span>

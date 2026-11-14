@@ -12,6 +12,7 @@ import {
 } from '../bridge'
 import { antTone, EmptyState, StatusTag } from '../components/kit'
 import { OnceHint } from '../components/kit'
+import { When } from '../when'
 
 const { Text, Paragraph, Title } = Typography
 
@@ -221,7 +222,7 @@ export function ImproveView({ active }: ImproveViewProps) {
                         {r.kind === 'problem_report' ? 'problem' : 'eval'}
                       </StatusTag>
                       {r.has_synthesis && <StatusTag tone="ok">rec</StatusTag>}
-                      <Text style={{ fontSize: 13 }}>{r.ts?.slice(0, 16).replace('T', ' ')}</Text>
+                      <Text style={{ fontSize: 13 }}><When t={r.ts} /></Text>
                       <Button
                         aria-label="Delete this report"
                         size="small"

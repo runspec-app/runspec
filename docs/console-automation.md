@@ -428,10 +428,15 @@ schedules show above the list. Turning on and off is recorded as
 
 Filters: the search box matches id, runnable and args, and takes the same
 `host:` and `group:` tokens as Forms and Marketplace (`host:web group:prod`).
-Quick filters narrow by source (on **All**), state, owner and run-as account;
+**Filter** narrows by source (on **All**), state, owner and run-as account, and
 **Only problems** keeps failed, not installed, stale, stopped and unreadable
-rows. Sort by next fire (the default), last run, host or runnable. Filters are
-remembered.
+rows. The active filters show as chips under the bar; remove one with its ×,
+or **Show all** to clear them. The first time there are problems the list
+opens on just those, until you change the filters. Sort by next fire (the
+default), last run, host or runnable. Filters are remembered.
+
+With more than one scheduler daemon, the daemons fold to one status line
+(plus any that need a look); click it to see them all.
 
 The console reads host schedules with `status`. In a venv owned by a service
 account the scheduler only runs as that owner, so the console runs it as the

@@ -4,21 +4,21 @@ import { ReloadOutlined, WarningOutlined } from '@ant-design/icons'
 import { Area, Line, Column, Pie } from '@ant-design/plots'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type AnalyticsData, type AnalyticsBucket, type AnalyticsException } from '../bridge'
-import { ThemeContext, useAccent } from '../ThemeContext'
+import { ThemeContext, statusText, useAccent, useIsDark } from '../ThemeContext'
 import {
   filterBuckets, computeKpis, runsOverTime, successRateOverTime,
   durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown,
 } from './analytics'
 import { EmptyState, StatusTag } from '../components/kit'
-import { When } from '../when'
+import { When, fmtDayRange } from '../when'
 
 const { Text } = Typography
 
 // Status palette; the series accent comes from useAccent() so charts follow a
 // white-label accent_color too, not just the shell chrome.
-const SUCCESS = '#52c41a'
-const FAILURE = '#ff4d4f'
-const WARNING = '#faad14'
+// Chart and summary colours come from the theme's status tones, so each one
+// reads on both the dark and the light surface (the fixed Ant hues were 1.6:1
+// on light).
 
 // At most 30 days — the History cache's window, which remote hosts are
 // aggregated from (the backend clamps a wider request to 30 too).
@@ -36,6 +36,8 @@ interface AnalyticsViewProps {
 export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsViewProps) {
   const isDark = useContext(ThemeContext)
   const ACCENT = useAccent()
+  const st = statusText(useIsDark())
+  const SUCCESS = st.ok, FAILURE = st.error, WARNING = st.warn
   const BRAND_RANGE = useMemo(
     () => [ACCENT, '#722ed1', WARNING, '#13c2c2', '#eb2f96', SUCCESS, '#fa8c16', '#2f54eb'],
     [ACCENT],
@@ -185,7 +187,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         {loading && <Spin size="small" indicator={<ReloadOutlined spin />} />}
         <div style={{ flex: 1 }} />
         <Text type="secondary" style={{ fontSize: 13 }}>
-          {data.since} → {data.until}
+          {fmtDayRange(data.since, data.until)}
         </Text>
       </div>
 
@@ -207,7 +209,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
 
       {/* KPI cards */}
       <Row gutter={[16, 16]}>
-        <Col xs={12} sm={6}><Card size="small" style={cardStyle}><Statistic title="Total runs" value={kpis.total} valueStyle={{ color: ACCENT }} /></Card></Col>
+        <Col xs={12} sm={6}><Card size="small" style={cardStyle}><Statistic title="Total runs" value={kpis.total} /></Card></Col>
         <Col xs={12} sm={6}><Card size="small" style={cardStyle}><Statistic title="Success rate" value={kpis.rate} precision={1} suffix="%" valueStyle={{ color: kpis.rate >= 95 ? SUCCESS : kpis.rate >= 80 ? WARNING : FAILURE }} /></Card></Col>
         <Col xs={12} sm={6}>
           <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/agent filters' : ''}>
@@ -216,7 +218,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         </Col>
         <Col xs={12} sm={6}>
           <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/agent filters' : ''}>
-            <Card size="small" style={cardStyle}><Statistic title="Duration p95" value={(data.durationMs.p95 / 1000).toFixed(2)} suffix="s" valueStyle={{ color: WARNING }} /></Card>
+            <Card size="small" style={cardStyle}><Statistic title="Duration p95" value={(data.durationMs.p95 / 1000).toFixed(2)} suffix="s" /></Card>
           </Tooltip>
         </Col>
       </Row>

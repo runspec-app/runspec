@@ -10,7 +10,7 @@
 
 import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, SyntheticEvent } from 'react'
 import { cloneElement, isValidElement, useState } from 'react'
-import { Button, Dropdown, Modal, Segmented, Tooltip, Typography } from 'antd'
+import { Button, Dropdown, Modal, Segmented, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import { CloseOutlined, EllipsisOutlined, ExclamationCircleOutlined, InfoCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
 
@@ -340,6 +340,22 @@ export function OnceHint({ id, children, style }: { id: string; children: ReactN
 
 /** One line saying why there is nothing here, and at most one thing to do
  *  about it. Replaces Ant's stock <Empty> illustration. */
+/** A Settings section's Save, pinned to the bottom of the scrolling content
+ *  so it is always in reach (it used to sit mid-page, after one column). */
+export function SaveBar({ children, hint }: { children: ReactNode; hint?: ReactNode }) {
+  const { token } = theme.useToken()
+  return (
+    <div data-testid="save-bar" style={{
+      position: 'sticky', bottom: 0, zIndex: 2, marginTop: 18, padding: '12px 0',
+      display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      background: token.colorBgElevated, borderTop: `1px solid ${token.colorBorderSecondary}`,
+    }}>
+      {children}
+      {hint && <Typography.Text type="secondary" style={{ fontSize: 13 }}>{hint}</Typography.Text>}
+    </div>
+  )
+}
+
 export function EmptyState({ message, action, style }: {
   message: ReactNode
   action?: { label: string; onClick: () => void; icon?: ReactNode }

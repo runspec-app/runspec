@@ -2,6 +2,7 @@ import { Button, Tooltip, message } from 'antd'
 import { CopyOutlined } from '@ant-design/icons'
 import { RADIUS, useAccent, useIsDark } from '../ThemeContext'
 import { statusTone, type StatusTone } from './kit'
+import { fmtClock } from '../when'
 
 // Shared run-inbox primitives used by both the Triggers and Schedules tabs (their
 // run inbox + detail drawer + event log). Kept in one module so the two views
@@ -75,5 +76,5 @@ export function CopyButton({ text, title = 'Copy' }: { text: string; title?: str
 
 export function fmtTime(epochSeconds: number): string {
   if (!epochSeconds) return ''
-  return new Date(epochSeconds * 1000).toLocaleTimeString()
+  return fmtClock(epochSeconds * 1000)
 }

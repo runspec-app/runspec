@@ -13,6 +13,7 @@ import { CloudDownloadOutlined, TeamOutlined } from '@ant-design/icons'
 
 import { bridge, type MemorySyncStatus, type MemorySyncUpdate } from '../bridge'
 import { errorText, type SyncResult } from '../components/MemorySyncTab'
+import { fmtWhen } from '../when'
 
 interface KnowledgeSyncProps {
   onOpenSettings?: () => void
@@ -23,7 +24,7 @@ interface KnowledgeSyncProps {
 function when(iso: string): string {
   if (!iso) return 'never'
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
+  return Number.isNaN(d.getTime()) ? iso : fmtWhen(d)
 }
 
 // The Pull tooltip: what a pull reads, what it last read, and anything newer.

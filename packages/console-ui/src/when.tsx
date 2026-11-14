@@ -38,6 +38,44 @@ export function fullWhen(t: string | number | Date | null | undefined): string {
   return `${day} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+/** A time of day for a log or a card header: "19:53:41" (24h, every locale),
+ *  or "19:53" without seconds. "" for no time. Pure, for tests. */
+export function fmtClock(t: string | number | Date | null | undefined, seconds = true): string {
+  const d = toDate(t)
+  if (!d) return ''
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return seconds ? `${hm}:${pad(d.getSeconds())}` : hm
+}
+
+/** A day: "13 Nov" this year, "13 Nov 2024" another. "" for no date. */
+export function fmtDay(t: string | number | Date | null | undefined, now = Date.now()): string {
+  const d = toDate(t)
+  if (!d) return ''
+  const day = `${d.getDate()} ${MONTHS[d.getMonth()]}`
+  return d.getFullYear() === new Date(now).getFullYear() ? day : `${day} ${d.getFullYear()}`
+}
+
+/** A span of days, as Runs and Charts both show it: "6 Nov – 13 Nov". A bare
+ *  "YYYY-MM-DD" is read as a local date. Pure, for tests. */
+export function fmtDayRange(from: string | null | undefined, to: string | null | undefined, now = Date.now()): string {
+  const local = (v: string | null | undefined) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00` : v)
+  const a = fmtDay(local(from), now)
+  const b = fmtDay(local(to), now)
+  if (!a) return b
+  return !b || a === b ? a : `${a} – ${b}`
+}
+
+/** A clock on screen, with the full timestamp on hover. */
+export function Clock({ t, seconds = true, style }: { t: string | number | Date | null | undefined; seconds?: boolean; style?: React.CSSProperties }) {
+  const full = fullWhen(t)
+  return <time dateTime={toDate(t)?.toISOString()} title={full || undefined} style={style}>{fmtClock(t, seconds)}</time>
+}
+
+/** "1 file" / "3 files". */
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
 /** A moment on screen: the short form, the full timestamp on hover. */
 export function When({ t, style }: { t: string | number | Date | null | undefined; style?: React.CSSProperties }) {
   const full = fullWhen(t)

@@ -146,6 +146,8 @@ describe('AllSchedulesView host actions', () => {
     },
   }]
   const collected = collectRows([], venvs)
+  // These test the row actions, so open on every row rather than just problems.
+  beforeEach(() => { localStorage.setItem('runspec.schedules.allFilters', '{}') })
 
   it('lists editable venvs and marks rows that a sync fixes', () => {
     expect(collected.venvs.map(v => `${v.key}:${v.backend}`)).toEqual(['web-1::ops:cron'])

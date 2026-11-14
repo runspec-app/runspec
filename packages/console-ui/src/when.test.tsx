@@ -1,8 +1,29 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { fmtWhen, fullWhen, When } from './when'
+import { fmtClock, fmtDay, fmtDayRange, fmtWhen, fullWhen, plural, When } from './when'
 
 const now = new Date(2026, 10, 13, 19, 53, 0).getTime() // 13 Nov 2026 19:53 local
+
+describe('clock, day and range', () => {
+  it('shows a 24h clock whatever the locale', () => {
+    expect(fmtClock(new Date(2026, 10, 13, 7, 5, 9))).toBe('07:05:09')
+    expect(fmtClock(new Date(2026, 10, 13, 19, 53, 0), false)).toBe('19:53')
+    expect(fmtClock(null)).toBe('')
+  })
+
+  it('shows days and spans the same way for Runs and Charts', () => {
+    expect(fmtDay(new Date(2026, 10, 6), now)).toBe('6 Nov')
+    expect(fmtDay(new Date(2024, 4, 29), now)).toBe('29 May 2024')
+    expect(fmtDayRange('2026-11-06', '2026-11-13', now)).toBe('6 Nov – 13 Nov')
+    expect(fmtDayRange('2026-11-13T08:00:00Z', '2026-11-13T09:00:00Z', now)).toBe('13 Nov')
+    expect(fmtDayRange('', '2026-11-13', now)).toBe('13 Nov')
+  })
+
+  it('says one file, not file(s)', () => {
+    expect(plural(1, 'file')).toBe('1 file')
+    expect(plural(3, 'file')).toBe('3 files')
+  })
+})
 
 describe('fmtWhen', () => {
   it.each([

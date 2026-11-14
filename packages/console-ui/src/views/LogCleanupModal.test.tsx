@@ -66,7 +66,7 @@ describe('LogCleanupModal', () => {
     render(<LogCleanupModal target={T} onClose={() => {}} />)
     await screen.findByText('compress after 7d, delete after 90d')
     fireEvent.click(screen.getByRole('button', { name: 'Preview now' }))
-    expect(await screen.findByText(/would compress 2 run file\(s\) and delete 5/)).toBeTruthy()
+    expect(await screen.findByText(/would compress 2 run files and delete 5/)).toBeTruthy()
     expect(api.logs_retention_run).toHaveBeenCalledWith('web-1', 'ops', true)
   })
 

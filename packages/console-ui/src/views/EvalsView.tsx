@@ -15,6 +15,7 @@ import {
 import { useIsDark, textColor, textSecondary, MONO_FONT } from '../ThemeContext'
 import { antTone, EmptyState, StatusTag } from '../components/kit'
 import { OnceHint } from '../components/kit'
+import { When } from '../when'
 
 const { Text, Paragraph, Title } = Typography
 
@@ -351,7 +352,7 @@ export function EvalsView({ active }: EvalsViewProps) {
                         {r.summary.passed}/{r.summary.total}
                       </StatusTag>
                       <Text style={{ fontSize: 13 }}>
-                        {r.generated_at?.slice(0, 16).replace('T', ' ')}
+                        <When t={r.generated_at} />
                       </Text>
                       <Button
                         aria-label="Delete this run"

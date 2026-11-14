@@ -59,7 +59,10 @@ beforeEach(() => {
 
 const card = (scope: string) => document.querySelector(`[data-scope="${scope}"]`) as HTMLElement
 
-async function renderView(extra: Partial<Parameters<typeof SchedulesView>[0]> = {}) {
+async function renderView(extra: Partial<Parameters<typeof SchedulesView>[0]> = {}, { firstVisit = false } = {}) {
+  // A stored (empty) filter means the viewer has chosen, so the list isn't
+  // narrowed to problems on open; firstVisit leaves it unset.
+  if (!firstVisit) localStorage.setItem('runspec.schedules.allFilters', '{}')
   render(<SchedulesView hosts={HOSTS} runnables={[]} selectedHost="local" {...extra} />)
   await waitFor(() => expect(api.shared_schedules_all).toHaveBeenCalled(), { timeout: 3000 })
   await screen.findByText('nightly', undefined, { timeout: 3000 })
@@ -96,11 +99,27 @@ describe('Schedules option cards', () => {
     expect(await screen.findByText('New schedule')).toBeTruthy()
   })
 
-  it('Only problems narrows the list', async () => {
+  it('Only problems narrows the list, shown as a removable chip', async () => {
     await renderView()
-    fireEvent.click(screen.getByRole('switch', { name: 'Only problems' }))
+    expect(screen.queryByTestId('filter-chips')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'Only problems' }))
     expect(screen.getAllByText('report').length).toBeGreaterThan(0)
     expect(screen.queryByText('nightly')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Filter, 1 active' })).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Remove filter only problems'))
+    expect(screen.getByText('nightly')).toBeTruthy()
+  })
+
+  it('opens on just the problems the first time there are any', async () => {
+    render(<SchedulesView hosts={HOSTS} runnables={[]} selectedHost="local" />)
+    expect((await screen.findAllByText('report', undefined, { timeout: 3000 })).length).toBeGreaterThan(0)
+    expect(within(screen.getByTestId('filter-chips')).getByText('only problems')).toBeTruthy()
+    expect(screen.queryByText('nightly')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show all' }))
+    expect(screen.getByText('nightly')).toBeTruthy()
+    // That choice sticks: the list isn't narrowed again.
+    expect(JSON.parse(localStorage.getItem('runspec.schedules.allFilters')!).onlyProblems).toBe(false)
   })
 
   it('a host: token narrows to that host', async () => {

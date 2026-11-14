@@ -11,11 +11,13 @@
  * Rows, states, counts and filtering live in allSchedules.ts (pure, tested).
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Table, Tag, Typography, Button, Tooltip, Alert, Dropdown, Empty, Input, Modal, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
+import { Table, Tag, Typography, Button, Tooltip, Alert, Dropdown, Empty, Input, Modal, Popover, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
 import {
   ReloadOutlined, HistoryOutlined, InfoCircleOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   PauseCircleOutlined, PlayCircleOutlined, SyncOutlined, SettingOutlined, RightOutlined, DownOutlined, ThunderboltOutlined,
+  FilterOutlined, CloseOutlined,
 } from '@ant-design/icons'
+import { When, fmtWhen, fullWhen } from '../when'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, type SharedSchedule } from '../bridge'
 import { HostScheduleModal, timeoutText, type HostScheduleEditing } from './HostScheduleModal'
@@ -47,6 +49,31 @@ export function readFilters(): RowFilters {
       sort: (['next', 'last', 'host', 'runnable'] as SortKey[]).includes(v.sort as SortKey) ? v.sort as SortKey : 'next',
     }
   } catch { return DEFAULT_FILTERS }
+}
+
+/** Whether the viewer has ever set a filter (so we don't override it). */
+function hasStoredFilters(): boolean {
+  try { return localStorage.getItem(FILTERS_KEY) != null } catch { return true }
+}
+
+const FILTER_SOURCE_LABEL: Record<RowSource, string> = {
+  console: 'This console', cron: 'Host cron', daemon: 'Host daemon', unknown: 'Unreadable venv',
+}
+
+export interface FilterChip { key: string; label: string; clear: Partial<RowFilters> }
+
+/** The active filters as removable chips, each with the patch that clears it.
+ *  Pure, for tests. */
+export function filterChips(f: RowFilters, scope: ScheduleScope): FilterChip[] {
+  const out: FilterChip[] = []
+  if (f.onlyProblems) out.push({ key: 'problems', label: 'only problems', clear: { onlyProblems: false } })
+  if (scope === 'all') for (const s of f.source) out.push({ key: `src:${s}`, label: FILTER_SOURCE_LABEL[s], clear: { source: f.source.filter(x => x !== s) } })
+  for (const s of f.states) out.push({ key: `st:${s}`, label: s, clear: { states: f.states.filter(x => x !== s) } })
+  if (scope !== 'console') {
+    for (const o of f.owners) out.push({ key: `ow:${o}`, label: `owner ${o}`, clear: { owners: f.owners.filter(x => x !== o) } })
+    for (const o of f.runAs) out.push({ key: `ra:${o}`, label: `runs as ${o}`, clear: { runAs: f.runAs.filter(x => x !== o) } })
+  }
+  return out
 }
 
 const DAEMONS_OPEN_KEY = 'runspec.schedules.daemonsOpen'
@@ -366,6 +393,14 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     return next
   })
 
+  // With problems on the page and no filter of the viewer's own yet, open on
+  // just the problems: the chip says so and one click shows everything.
+  const [filterOpen, setFilterOpen] = useState(false)
+  const anyProblem = collected.rows.some(r => r.problem)
+  useEffect(() => {
+    if (anyProblem && !hasStoredFilters()) setFiltersState(prev => ({ ...prev, onlyProblems: true }))
+  }, [anyProblem])
+
   const scoped = useMemo(() => filterRows(collected.rows, scope, { ...DEFAULT_FILTERS, sort: filters.sort }), [collected.rows, scope, filters.sort])
   const rows = useMemo(() => filterRows(collected.rows, scope, filters), [collected.rows, scope, filters])
   const owners = useMemo(() => [...new Set(scoped.map(r => r.owner).filter(Boolean))].sort(), [scoped])
@@ -373,6 +408,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
   const states = useMemo(() => ALL_STATES.filter(s => scoped.some(r => r.state === s) || filters.states.includes(s)), [scoped, filters.states])
   const notes = collected.notes.filter(n => scope === 'all' || n.source === scope)
   const daemons = scope === 'daemon' || scope === 'all' ? collected.daemons : []
+  const chips = filterChips(filters, scope)
   const narrowed = filters.search || filters.states.length || filters.owners.length || filters.runAs.length || filters.onlyProblems || (scope === 'all' && filters.source.length)
 
   const muted = textMuted(isDark)
@@ -415,7 +451,8 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     } catch (e) { message.error(`Run now failed: ${String(e)}`) } finally { setBusy('') }
   }
   const [daemonsOpen, setDaemonsOpen] = useState<boolean | null>(readDaemonsOpen)
-  const daemonsShown = daemonsOpen ?? daemons.length <= FOLDED_ATTENTION_MAX
+  // Folded to one status line (plus any that need a look) unless there's only one.
+  const daemonsShown = daemonsOpen ?? daemons.length <= 1
   const toggleDaemons = () => { writeDaemonsOpen(!daemonsShown); setDaemonsOpen(!daemonsShown) }
   const visibleDaemons = daemonsShown ? daemons : daemons.filter(daemonNeedsAttention).slice(0, FOLDED_ATTENTION_MAX)
   const foldedHidden = daemons.length - visibleDaemons.length
@@ -502,13 +539,18 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
         </div>
       ),
     },
-    { title: 'When', key: 'when', render: (_: unknown, r) => <WhenCell when={r.when} /> },
     {
-      title: 'Next fire',
-      key: 'next',
-      render: (_: unknown, r) => r.nextRun
-        ? <Tooltip title={new Date(r.nextRun).toLocaleString()}><span style={{ color: secondary }}>{relTime(r.nextRun)}</span></Tooltip>
-        : <span style={{ color: muted }}>—</span>,
+      // Cadence and the next fire in one column (they answer one question).
+      title: 'When',
+      key: 'when',
+      render: (_: unknown, r) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <WhenCell when={r.when} />
+          {r.nextRun && (
+            <span style={{ fontSize: 12, color: secondary }}>next <When t={r.nextRun} /></span>
+          )}
+        </div>
+      ),
     },
     {
       title: 'Last run',
@@ -520,8 +562,8 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
         return (
           <Space size={4}>
             <StatusTag tone={RUN_TONE[l.status] ?? 'neutral'}>{label}</StatusTag>
-            <Tooltip title={`${new Date(l.ts).toLocaleString()}${l.durationMs != null ? ` · ${(l.durationMs / 1000).toFixed(1)}s` : ''}`}>
-              <span style={{ color: secondary, fontSize: 13 }}>{relTime(l.ts)}</span>
+            <Tooltip title={`${fullWhen(l.ts)}${l.durationMs != null ? ` · ${(l.durationMs / 1000).toFixed(1)}s` : ''}`}>
+              <span style={{ color: secondary, fontSize: 13 }}>{fmtWhen(l.ts)}</span>
             </Tooltip>
             {onOpenHistory && r.historySearch && (
               <IconAction label="Open in History" tip={`Open in History (search “${r.historySearch}”)`} icon={<HistoryOutlined />}
@@ -666,7 +708,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     )
   }
 
-  const selectStyle = { minWidth: 130 }
+  const selectStyle = { width: '100%' }
   const emptyText = !loaded && scope !== 'console'
     ? 'Reading schedules…'
     : scope === 'daemon' && collected.daemons.length === 0
@@ -683,33 +725,39 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           onChange={e => setFilters({ search: e.target.value })}
           style={{ width: 300 }}
         />
-        {scope === 'all' && (
-          <Select mode="multiple" allowClear placeholder="Source" aria-label="Filter by source" style={selectStyle} maxTagCount="responsive"
-            value={filters.source} onChange={v => setFilters({ source: v })}
-            options={[
-              { label: 'This console', value: 'console' },
-              { label: 'Host cron', value: 'cron' },
-              { label: 'Host daemon', value: 'daemon' },
-              { label: 'Unreadable venv', value: 'unknown' },
-            ]} />
-        )}
-        <Select mode="multiple" allowClear placeholder="State" aria-label="Filter by state" style={selectStyle} maxTagCount="responsive"
-          value={filters.states} onChange={v => setFilters({ states: v })}
-          options={states.map(s => ({ label: s, value: s }))} />
-        {scope !== 'console' && (
-          <>
-            <Select mode="multiple" allowClear placeholder="Owner" aria-label="Filter by owner" style={selectStyle} maxTagCount="responsive"
-              value={filters.owners} onChange={v => setFilters({ owners: v })}
-              options={[...new Set([...owners, ...filters.owners])].map(o => ({ label: o, value: o }))} />
-            <Select mode="multiple" allowClear placeholder="Run as" aria-label="Filter by run-as account" style={selectStyle} maxTagCount="responsive"
-              value={filters.runAs} onChange={v => setFilters({ runAs: v })}
-              options={[...new Set([...runAs, ...filters.runAs])].map(o => ({ label: o, value: o }))} />
-          </>
-        )}
-        <Space size={6}>
-          <Switch size="small" checked={filters.onlyProblems} onChange={v => setFilters({ onlyProblems: v })} aria-label="Only problems" />
-          <span style={{ fontSize: 13, color: secondary }}>Only problems</span>
-        </Space>
+        {/* One Filter control instead of five, with the active filters as
+            chips under the bar (critique: six filters crowded the page). */}
+        <Popover trigger="click" placement="bottomLeft" open={filterOpen} onOpenChange={setFilterOpen}
+          content={(
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: 280 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <Switch size="small" checked={filters.onlyProblems} onChange={v => setFilters({ onlyProblems: v })} aria-label="Only problems" />
+                Only problems
+              </label>
+              {scope === 'all' && (
+                <Select mode="multiple" allowClear placeholder="Any source" aria-label="Filter by source" style={selectStyle}
+                  value={filters.source} onChange={v => setFilters({ source: v })}
+                  options={(Object.keys(FILTER_SOURCE_LABEL) as RowSource[]).map(v => ({ label: FILTER_SOURCE_LABEL[v], value: v }))} />
+              )}
+              <Select mode="multiple" allowClear placeholder="Any state" aria-label="Filter by state" style={selectStyle}
+                value={filters.states} onChange={v => setFilters({ states: v })}
+                options={states.map(s => ({ label: s, value: s }))} />
+              {scope !== 'console' && (
+                <>
+                  <Select mode="multiple" allowClear placeholder="Any owner" aria-label="Filter by owner" style={selectStyle}
+                    value={filters.owners} onChange={v => setFilters({ owners: v })}
+                    options={[...new Set([...owners, ...filters.owners])].map(o => ({ label: o, value: o }))} />
+                  <Select mode="multiple" allowClear placeholder="Any run-as account" aria-label="Filter by run-as account" style={selectStyle}
+                    value={filters.runAs} onChange={v => setFilters({ runAs: v })}
+                    options={[...new Set([...runAs, ...filters.runAs])].map(o => ({ label: o, value: o }))} />
+                </>
+              )}
+            </div>
+          )}>
+          <Button icon={<FilterOutlined />} aria-label={chips.length ? `Filter, ${chips.length} active` : 'Filter'}>
+            Filter{chips.length ? ` · ${chips.length}` : ''}
+          </Button>
+        </Popover>
         <Select size="middle" aria-label="Sort schedules" value={filters.sort} onChange={v => setFilters({ sort: v })} style={{ width: 170 }}
           options={[
             { label: 'Sort: next fire', value: 'next' },
@@ -725,7 +773,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
               </Tooltip>
             )}
             <span style={{ fontSize: 12, color: muted }}>
-              {hostCount} host{hostCount === 1 ? '' : 's'}{updatedAt ? ` · read ${Date.now() - updatedAt < 10_000 ? 'just now' : relTime(new Date(Math.min(updatedAt, Date.now())).toISOString())}` : ''}
+              {hostCount} host{hostCount === 1 ? '' : 's'}{updatedAt ? ` · read ${fmtWhen(Math.min(updatedAt, Date.now()))}` : ''}
             </span>
             <Button size="small" icon={<ReloadOutlined />} onClick={onRefresh} loading={loading}>Refresh</Button>
             {editable && scopeVenvs.length > 0 && (
@@ -757,6 +805,24 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           </Space>
         )}
       </div>
+
+      {chips.length > 0 && (
+        <div data-testid="filter-chips" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '-4px 0 12px' }}>
+          <span style={{ fontSize: 12, color: muted }}>
+            Showing {rows.length} of {scoped.length}:
+          </span>
+          {chips.map(ch => (
+            <Tag key={ch.key} closable onClose={e => { e.preventDefault(); setFilters(ch.clear) }}
+              closeIcon={<CloseOutlined aria-label={`Remove filter ${ch.label}`} />} style={{ margin: 0 }}>
+              {ch.label}
+            </Tag>
+          ))}
+          <Button size="small" type="link" style={{ padding: 0 }}
+            onClick={() => setFilters({ onlyProblems: false, source: [], states: [], owners: [], runAs: [] })}>
+            Show all
+          </Button>
+        </div>
+      )}
 
       {daemons.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>

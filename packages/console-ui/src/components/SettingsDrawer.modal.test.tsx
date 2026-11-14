@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import { SettingsDrawer, groupSettingsTabs } from './SettingsDrawer'
+import { SettingsDrawer, SettingsTabBar, groupSettingsTabs, matchSettingsTab } from './SettingsDrawer'
 
 vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
@@ -42,6 +42,35 @@ describe('Settings modal', () => {
       const sel = screen.getAllByRole('tab').find(t => t.getAttribute('aria-selected') === 'true')
       expect(sel?.textContent).toBe('Hosts')
     })
+  })
+})
+
+describe('Settings search', () => {
+  it('finds a section by what it holds, and Enter opens the first match', () => {
+    const onSelect = vi.fn()
+    render(<SettingsTabBar activeKey="ssh" onSelect={onSelect} items={[
+      { key: 'ssh', label: 'SSH' }, { key: 'telemetry', label: 'Telemetry' }, { key: 'credentials', label: 'Credentials' },
+    ]} />)
+    const box = screen.getByLabelText('Search settings sections')
+    fireEvent.change(box, { target: { value: 'otel' } })
+    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Telemetry'])
+    fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 })
+    expect(onSelect).toHaveBeenCalledWith('telemetry')
+    fireEvent.change(box, { target: { value: 'zzzz' } })
+    expect(screen.getByText('No section matches.')).toBeTruthy()
+  })
+
+  it('matches every word against the name and the keywords', () => {
+    expect(matchSettingsTab({ key: 'credentials', label: 'Credentials' }, 'keychain token')).toBe(true)
+    expect(matchSettingsTab({ key: 'credentials', label: 'Credentials' }, 'keychain proxy')).toBe(false)
+    expect(matchSettingsTab({ key: 'ssh', label: 'SSH' }, '')).toBe(true)
+  })
+
+  it('pins Save to the bottom of the SSH section, not mid-column', async () => {
+    render(<SettingsDrawer open onClose={() => {}} />)
+    const bar = await screen.findByTestId('save-bar')
+    expect(bar.style.position).toBe('sticky')
+    expect(bar.closest('.rs-settings-cols')).toBeNull()
   })
 })
 
