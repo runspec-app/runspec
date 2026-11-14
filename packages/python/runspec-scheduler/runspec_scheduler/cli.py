@@ -644,7 +644,14 @@ def _cmd_hooks(spec: rs.RunSpec, verb: str) -> None:
             h.render_test,
         )
     elif verb == "token":
-        run(h.token, lambda p: f"Token:        {p['token']}\ntoken_sha256: {p['token_sha256']}\n{p['note']}")
+        basic = bool(spec.basic.value)
+
+        def shown(p: dict[str, Any]) -> str:
+            if basic:
+                return f"Password:      {p['password']}\npassword_hash: {p['password_hash']}\n{p['note']}"
+            return f"Token:        {p['token']}\ntoken_sha256: {p['token_sha256']}\n{p['note']}"
+
+        run(lambda: h.token(basic=basic), shown)
     elif verb == "save":
         text = sys.stdin.read()
         run(lambda: h.save(path, text, new_token=bool(spec.new_token.value), new_password=bool(spec.new_password.value)), h.render_save)

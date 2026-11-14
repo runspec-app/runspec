@@ -270,8 +270,11 @@ file         = {type = "path", required = false, description = "Test the hook as
 content-type = {type = "str", required = false, description = "The body's Content-Type (default: worked out from the body)."}
 
 [runspec-scheduler.commands.hooks.commands.token]
-description = "Make a new random token and print it with its SHA-256. Put the hash in a hook (token_sha256) and the token in the sending app. Nothing is stored."
+description = "Make a new random token and print it with its SHA-256. Put the hash in a hook (token_sha256) and the token in the sending app. --basic makes a basic-auth password and its password_hash instead. Nothing is stored."
 output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.token.args]
+basic = {type = "flag", default = false, description = "Make a basic-auth password and its password_hash (a salted PBKDF2 hash) instead of a token."}
 
 [runspec-scheduler.commands.hooks.commands.save]
 description = "Add or replace a console-made hook from a JSON object or a TOML [[hook]] on stdin (checked first). --new-token makes a token and prints it once; only its hash is kept. A hook deployed in hooks.d can't be saved over."

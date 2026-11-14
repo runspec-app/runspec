@@ -119,7 +119,7 @@ and give the sending app the address and the token, either as
 | `name` | The address: `/hook/<name>`. Lowercase letters, digits, `.`, `_`, `-` |
 | `token_sha256` | SHA-256 of the token the sender uses. Never the token itself |
 | `token_header` | The header the token may also come in (default `X-Runspec-Token`) |
-| `username` + `password_sha256` | Basic auth instead of (or as well as) a token |
+| `username` + `password_hash` | Basic auth instead of (or as well as) a token. `password_hash` is a salted PBKDF2 hash (`pbkdf2_sha256$…`): `hooks save --new-password` makes one, or `hooks token --basic` prints a password and its hash for a hooks.d file |
 | `allow` | Addresses or networks that may send, e.g. `["10.20.0.0/16"]`. Empty = any |
 | `fields` | `name = "path.to.value"`. A path starting `$.` reads the whole body even when it's split |
 | `split` | Path to a list in the body: each item is its own delivery |

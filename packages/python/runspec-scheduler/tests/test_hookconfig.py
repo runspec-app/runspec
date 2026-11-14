@@ -100,9 +100,20 @@ def test_parse_hook_full() -> None:
 
 
 def test_basic_auth() -> None:
-    h = hc.parse_hook({"name": "b", "username": "svc", "password_sha256": hc.sha256("pw")})
+    h = hc.parse_hook({"name": "b", "username": "svc", "password_hash": hc.hash_password("pw", iterations=1000)})
     assert h.check_basic("svc", "pw") and not h.check_basic("svc", "no") and not h.check_basic("x", "pw")
-    assert not h.check_token("pw")
+    assert h.check_basic("svc", "pw")  # second time from the in-memory match
+    assert not h.check_basic("svc", "") and not h.check_token("pw")
+
+
+def test_password_hash_is_salted_and_slow() -> None:
+    a, b = hc.hash_password("pw", iterations=1000), hc.hash_password("pw", iterations=1000)
+    assert a != b and a.startswith("pbkdf2_sha256$1000$")
+    assert hc.verify_password("pw", a) and hc.verify_password("pw", b) and not hc.verify_password("pw2", a)
+    assert not hc.verify_password("pw", "pbkdf2_sha256$1000$!!!!!!!!$" + "A" * 44)
+    assert not hc.verify_password("pw", hc.sha256("pw"))
+    assert hc.PBKDF2_ITERATIONS >= 600_000
+    assert hc.hash_password("pw").startswith(f"pbkdf2_sha256${hc.PBKDF2_ITERATIONS}$")
 
 
 @pytest.mark.parametrize(
@@ -110,8 +121,10 @@ def test_basic_auth() -> None:
     [
         ({"name": "Bad Name", "token_sha256": TOKEN_SHA}, "must be lowercase"),
         ({"name": "a"}, "needs a token"),
-        ({"name": "a", "token_sha256": "plaintext"}, "never the secret itself"),
-        ({"name": "a", "username": "u"}, "needs both username and password_sha256"),
+        ({"name": "a", "token_sha256": "plaintext"}, "never the token itself"),
+        ({"name": "a", "username": "u", "password_hash": "plaintext"}, "never the password itself"),
+        ({"name": "a", "username": "u", "password_hash": TOKEN_SHA}, "never the password itself"),
+        ({"name": "a", "username": "u"}, "needs both username and password_hash"),
         (hook(color="red"), "unknown key"),
         (hook(fields={"x": "a..b"}), "empty step"),
         (hook(rule=[{"match": {"x": "("}}]), "match.x"),

@@ -11,7 +11,9 @@ Two places hold hooks, read together:
 
 ``[hooks]`` holds the listener settings and ``[smtp]`` the mail relay for
 approvals nobody picked up. Hooks never hold a secret: only the SHA-256 of a
-token or password (``token_sha256`` / ``password_sha256``).
+token (``token_sha256`` — tokens are long and random, so a fast hash is
+enough) and a salted, slow PBKDF2 hash of a basic-auth password
+(``password_hash`` — a person may choose that one).
 
 Stdlib only; the TOML writer is hand-rolled for these shapes (see
 :mod:`runspec_scheduler.config`).
@@ -19,6 +21,7 @@ Stdlib only; the TOML writer is hand-rolled for these shapes (see
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import ipaddress
@@ -26,6 +29,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -283,7 +287,7 @@ class Hook:
     token_sha256: str = ""
     token_header: str = DEFAULT_TOKEN_HEADER
     username: str = ""
-    password_sha256: str = ""
+    password_hash: str = ""
     allow: tuple[Any, ...] = ()
     fields: dict[str, str] = field(default_factory=dict)
     split: str = ""
@@ -308,7 +312,9 @@ class Hook:
         return bool(self.token_sha256) and bool(token) and hmac.compare_digest(sha256(token), self.token_sha256)
 
     def check_basic(self, username: str, password: str) -> bool:
-        return bool(self.username and self.password_sha256) and hmac.compare_digest(username, self.username) and hmac.compare_digest(sha256(password), self.password_sha256)
+        if not (self.username and self.password_hash and password) or not hmac.compare_digest(username, self.username):
+            return False
+        return _password_matches(password, self.password_hash)
 
     def allows(self, address: str) -> bool:
         if not self.allow:
@@ -341,7 +347,56 @@ class Hook:
 
 
 def sha256(text: str) -> str:
+    """SHA-256 hex of a token. Only for long random tokens; a password goes
+    through :func:`hash_password`."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+PBKDF2_ITERATIONS = 600_000
+_PW_HASH_RE = re.compile(r"^pbkdf2_sha256\$(\d{1,9})\$([A-Za-z0-9+/=]{8,})\$([A-Za-z0-9+/=]{40,})$")
+
+
+def hash_password(password: str, *, iterations: int = PBKDF2_ITERATIONS, salt: bytes | None = None) -> str:
+    """``pbkdf2_sha256$<iterations>$<salt>$<hash>`` (base64) for a basic-auth
+    password: salted and slow, so a copy of the config doesn't give the
+    password away to a guessing run."""
+    salt = salt if salt is not None else secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return f"pbkdf2_sha256${iterations}${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    m = _PW_HASH_RE.match(encoded)
+    if not m:
+        return False
+    try:
+        salt = base64.b64decode(m.group(2), validate=True)
+        want = base64.b64decode(m.group(3), validate=True)
+    except ValueError:
+        return False
+    got = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(m.group(1)))
+    return hmac.compare_digest(got, want)
+
+
+# A sender sends the same password with every delivery; checking it costs
+# ~0.3 s, so the last password that matched each hash is kept in memory (never
+# written anywhere) and compared directly next time.
+_matched: dict[str, str] = {}
+_matched_lock = threading.Lock()
+
+
+def _password_matches(password: str, encoded: str) -> bool:
+    with _matched_lock:
+        known = _matched.get(encoded)
+    if known is not None and hmac.compare_digest(known.encode("utf-8"), password.encode("utf-8")):
+        return True
+    if not verify_password(password, encoded):
+        return False
+    with _matched_lock:
+        if len(_matched) >= 256:
+            _matched.clear()
+        _matched[encoded] = password
+    return True
 
 
 def new_token() -> str:
@@ -350,7 +405,7 @@ def new_token() -> str:
 
 
 _HOOK_KEYS = {
-    "name", "enabled", "description", "token_sha256", "token_header", "username", "password_sha256", "allow",
+    "name", "enabled", "description", "token_sha256", "token_header", "username", "password_hash", "allow",
     "fields", "split", "rule", "run", "command", "args", "dedup", "dedup_window", "require_approval",
     "approve_within", "expect_claim_within", "email_to", "max_running", "skip_if_running", "timeout",
     "rate_per_minute", "transform", "managed_by",
@@ -428,15 +483,16 @@ def parse_hook(raw: Any, *, source: str = "console", file: str = "") -> Hook:
     if unknown:
         raise ValueError(f"{what}: unknown key(s) {', '.join(unknown)}")
     token_sha = str(raw.get("token_sha256") or "").strip().lower()
-    pw_sha = str(raw.get("password_sha256") or "").strip().lower()
+    pw_hash = str(raw.get("password_hash") or "").strip()
     username = str(raw.get("username") or "").strip()
-    for key, value in (("token_sha256", token_sha), ("password_sha256", pw_sha)):
-        if value and not _HEX64.match(value):
-            raise ValueError(f"{what}: {key} must be the 64-character SHA-256 hex of the secret, never the secret itself")
-    if bool(username) != bool(pw_sha):
-        raise ValueError(f"{what}: basic auth needs both username and password_sha256")
+    if token_sha and not _HEX64.match(token_sha):
+        raise ValueError(f"{what}: token_sha256 must be the 64-character SHA-256 hex of the token, never the token itself")
+    if pw_hash and not _PW_HASH_RE.match(pw_hash):
+        raise ValueError(f"{what}: password_hash must be a pbkdf2_sha256$… hash, never the password itself; make one with: runspec-scheduler hooks token --basic")
+    if bool(username) != bool(pw_hash):
+        raise ValueError(f"{what}: basic auth needs both username and password_hash")
     if not token_sha and not username:
-        raise ValueError(f"{what}: needs a token (token_sha256) or basic auth (username + password_sha256); make one with: runspec-scheduler hooks token")
+        raise ValueError(f"{what}: needs a token (token_sha256) or basic auth (username + password_hash); make one with: runspec-scheduler hooks token")
     fields_raw = raw.get("fields") or {}
     if not isinstance(fields_raw, dict):
         raise ValueError(f'{what}: fields must be a table of name = "path.to.value"')
@@ -474,7 +530,7 @@ def parse_hook(raw: Any, *, source: str = "console", file: str = "") -> Hook:
         token_sha256=token_sha,
         token_header=header,
         username=username,
-        password_sha256=pw_sha,
+        password_hash=pw_hash,
         allow=_networks(raw.get("allow"), f"{what} allow"),
         fields=fields_map,
         split=split,
@@ -645,7 +701,7 @@ def signature(config_path: Path) -> tuple[Any, ...]:
 # ── writing the console layer ─────────────────────────────────────────────────
 
 _HOOK_SCALARS = (
-    "name", "enabled", "description", "managed_by", "token_header", "token_sha256", "username", "password_sha256",
+    "name", "enabled", "description", "managed_by", "token_header", "token_sha256", "username", "password_hash",
     "split", "dedup", "dedup_window", "require_approval", "approve_within", "expect_claim_within", "max_running",
     "skip_if_running", "timeout", "rate_per_minute", "transform", "allow", "email_to",
 )  # fmt: skip
@@ -704,10 +760,12 @@ def _clean_raw(raw: dict[str, Any]) -> dict[str, Any]:
     """A hook table to write: no secrets (a plain ``token``/``password`` is
     hashed), no empty values."""
     out = {k: v for k, v in raw.items() if v not in (None, "", [], {})}
-    for plain, hashed in (("token", "token_sha256"), ("password", "password_sha256")):
-        if out.get(plain):
-            out[hashed] = sha256(str(out.pop(plain)))
-        out.pop(plain, None)
+    if out.get("token"):
+        out["token_sha256"] = sha256(str(out["token"]))
+    if out.get("password"):
+        out["password_hash"] = hash_password(str(out["password"]))
+    out.pop("token", None)
+    out.pop("password", None)
     return out
 
 

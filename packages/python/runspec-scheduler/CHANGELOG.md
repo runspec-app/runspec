@@ -9,7 +9,9 @@ All notable changes to `runspec-scheduler` are documented here.
 - **Webhooks.** Another system can start a runnable in the venv with one HTTP
   `POST {base_path}/hook/<name>`. The daemon listens when `[hooks] enabled =
   true` (on either backend: a cron venv's daemon serves webhooks only), checks
-  the sender (token or basic auth, only SHA-256 hashes stored; address
+  the sender (token or basic auth; only hashes stored: SHA-256 for random
+  tokens, salted PBKDF2 (`password_hash`, `hooks token --basic`) for
+  passwords; address
   allow-list; `trusted_proxies` for `X-Forwarded-For`), writes the request to
   `{venv}/hooks/spool.sqlite` and answers `202 {"id": …}` before anything
   runs. Robust by design: a connection cap (503), read timeouts, the TLS

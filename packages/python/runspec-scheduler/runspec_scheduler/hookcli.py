@@ -178,13 +178,13 @@ def save(config_path: Path, text: str, *, new_token: bool, new_password: bool) -
         secrets["token"] = token
     if new_password:
         password = hc.new_token()
-        raw["password_sha256"] = hc.sha256(password)
+        raw["password_hash"] = hc.hash_password(password)
         secrets["password"] = password
     existing = next((dict(r) for r in read_config(config_path).get("hook") or [] if str(r.get("name") or "") == str(raw.get("name") or "")), None)
     if existing:
         # Keep the stored secrets unless new ones were made or given.
-        for key in ("token_sha256", "password_sha256"):
-            if key not in raw and existing.get(key) and not raw.get(key.replace("_sha256", "")):
+        for key, plain in (("token_sha256", "token"), ("password_hash", "password")):
+            if key not in raw and existing.get(key) and not raw.get(plain):
                 raw[key] = existing[key]
     hook = hc.save_hook(config_path, raw)
     cfg = hc.load_hook_config(config_path)
@@ -239,8 +239,11 @@ def settings(config_path: Path, hooks_changes: list[str], smtp_changes: list[str
     return out
 
 
-def token() -> dict[str, Any]:
+def token(*, basic: bool = False) -> dict[str, Any]:
     value = hc.new_token()
+    if basic:
+        note = "Put password_hash (and a username) in the hook and the password in the sending app; the password isn't stored."
+        return {"ok": True, "password": value, "password_hash": hc.hash_password(value), "note": note}
     return {"ok": True, "token": value, "token_sha256": hc.sha256(value), "note": "Put token_sha256 in the hook and the token in the sending app; the token isn't stored."}
 
 

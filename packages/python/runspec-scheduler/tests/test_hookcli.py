@@ -56,7 +56,16 @@ def test_save_with_new_token_list_and_remove(config: Path) -> None:
 
 def test_save_json_and_basic_password(config: Path) -> None:
     out = hookcli.save(config, json.dumps({"name": "svc", "username": "sender"}), new_token=False, new_password=True)
-    assert out["secrets"]["password"] and "basic" in out["hook"]["auth"]
+    password = out["secrets"]["password"]
+    assert password and "basic" in out["hook"]["auth"]
+    stored = tomllib.loads(config.read_text())["hook"][0]["password_hash"]
+    assert password not in config.read_text() and hc.verify_password(password, stored)
+    # saving again keeps the stored hash; a plain password given is hashed
+    hookcli.save(config, json.dumps({"name": "svc", "username": "sender", "description": "x"}), new_token=False, new_password=False)
+    assert tomllib.loads(config.read_text())["hook"][0]["password_hash"] == stored
+    hookcli.save(config, json.dumps({"name": "svc", "username": "sender", "password": "chosen-one"}), new_token=False, new_password=False)
+    assert "chosen-one" not in config.read_text()
+    assert hc.verify_password("chosen-one", tomllib.loads(config.read_text())["hook"][0]["password_hash"])
 
 
 def test_save_refuses_secretless_and_multiple(config: Path) -> None:
@@ -88,6 +97,8 @@ def test_settings(config: Path) -> None:
 def test_token() -> None:
     out = hookcli.token()
     assert hc.sha256(out["token"]) == out["token_sha256"]
+    basic = hookcli.token(basic=True)
+    assert hc.verify_password(basic["password"], basic["password_hash"]) and "token" not in basic
 
 
 def test_check(tmp_path: Path) -> None:

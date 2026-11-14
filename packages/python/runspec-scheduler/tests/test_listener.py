@@ -51,7 +51,7 @@ def make_cfg(settings: dict[str, Any] | None = None, **hooks: dict[str, Any]) ->
 
 DEFAULT_HOOKS = {
     "alerts": {"token_sha256": hc.sha256(TOKEN)},
-    "basic": {"username": "svc", "password_sha256": hc.sha256("pw")},
+    "basic": {"username": "svc", "password_hash": hc.hash_password("pw", iterations=1000)},
     "lan": {"token_sha256": hc.sha256(TOKEN), "allow": ["10.0.0.0/8"]},
     "off": {"token_sha256": hc.sha256(TOKEN), "enabled": False},
     "slow": {"token_sha256": hc.sha256(TOKEN), "rate_per_minute": 2},
