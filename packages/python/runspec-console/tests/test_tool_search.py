@@ -1200,7 +1200,9 @@ def test_run_runnable_confirm_keeps_raw_name_for_segment_match():
 def test_confirm_names_the_host_even_when_the_call_omits_it():
     # A runnable on one host: the call needn't name the host, but the card does.
     b = _Bridge([_rn("web01", "flush-dns")])
-    b._register_confirm("chat1", "run_runnable", {"id": "flush-dns", "args": {}}, "confirm")
+    b._register_confirm(
+        "chat1", "run_runnable", {"id": "flush-dns", "args": {}}, "confirm"
+    )
     _, detail = b._dispatched[0]
     assert detail["target_host"] == "web01"
 
