@@ -19,7 +19,8 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   instead of blaming the runnable's own level. A card from a 0.11.0 host
   still names the runnable's `confirm` / `supervised` level.
 - The new-hook template in the Webhooks editor says saving the hook is the
-  approval and shows the `require_approval = true` line to add.
+  approval and shows the `require_approval = true` line to add, and the
+  `respond = "output"` line that answers the sender with the run's output.
 - **Venvs with webhooks off are a normal state, not a hint.** A followed venv
   with webhooks switched off and nothing to show no longer gets its own strip
   saying "Turn them on…"; it's named on one quiet "Webhooks off here" line

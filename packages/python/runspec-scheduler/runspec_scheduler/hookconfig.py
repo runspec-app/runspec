@@ -51,6 +51,15 @@ HOOKS_DIR_NAME = "hooks.d"
 _SIZE_UNITS = {"k": 1024, "m": 1024 * 1024}
 
 
+#: ``respond = "output"``: how long the request is held for the run, and how
+#: much of its standard output goes back (the rest is cut, and says so).
+RESPOND_MODES = ("", "output")
+DEFAULT_RESPOND_WITHIN = 25  # under Jira automation's 30 s web-request timeout
+MAX_RESPOND_WITHIN = 300
+DEFAULT_RESPOND_MAX = 64 * 1024
+MAX_RESPOND_MAX = 4 * 1024 * 1024
+
+
 def parse_size(value: Any, what: str) -> int:
     """Bytes from ``262144`` / ``"256k"`` / ``"1m"``."""
     if isinstance(value, bool):
@@ -303,6 +312,9 @@ class Hook:
     timeout: int | None = None
     rate_per_minute: int | None = None
     transform: str = ""
+    respond: str = ""  # "" = answer 202 at once; "output" = wait for the run
+    respond_within: int = DEFAULT_RESPOND_WITHIN
+    respond_max: int = DEFAULT_RESPOND_MAX
     managed_by: str = ""
     source: str = "console"  # console | deployed
     file: str = ""
@@ -343,6 +355,8 @@ class Hook:
             "dedup": self.dedup,
             "require_approval": self.require_approval,
             "transform": self.transform,
+            "respond": self.respond,
+            "respond_within": self.respond_within,
         }
 
 
@@ -408,7 +422,7 @@ _HOOK_KEYS = {
     "name", "enabled", "description", "token_sha256", "token_header", "username", "password_hash", "allow",
     "fields", "split", "rule", "run", "command", "args", "dedup", "dedup_window", "require_approval",
     "approve_within", "expect_claim_within", "email_to", "max_running", "skip_if_running", "timeout",
-    "rate_per_minute", "transform", "managed_by",
+    "rate_per_minute", "transform", "managed_by", "respond", "respond_within", "respond_max",
 }  # fmt: skip
 _RULE_KEYS = {"name", "match", "run", "command", "args", "skip", "require_approval"}
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -523,6 +537,15 @@ def parse_hook(raw: Any, *, source: str = "console", file: str = "") -> Hook:
     if rate is not None and (isinstance(rate, bool) or not isinstance(rate, int) or rate < 1):
         raise ValueError(f"{what}: rate_per_minute must be a whole number above 0")
     transform = str(raw.get("transform") or "").strip()
+    respond = str(raw.get("respond") or "").strip()
+    if respond not in RESPOND_MODES:
+        raise ValueError(f'{what}: respond must be "output" (or left out), got {respond!r}')
+    respond_within = parse_duration(raw.get("respond_within", DEFAULT_RESPOND_WITHIN), f"{what} respond_within")
+    if not 1 <= respond_within <= MAX_RESPOND_WITHIN:
+        raise ValueError(f"{what}: respond_within must be between 1s and {MAX_RESPOND_WITHIN // 60}m")
+    respond_max = parse_size(raw.get("respond_max", DEFAULT_RESPOND_MAX), f"{what} respond_max")
+    if respond_max > MAX_RESPOND_MAX:
+        raise ValueError(f"{what}: respond_max can be at most {MAX_RESPOND_MAX // (1024 * 1024)}m")
     return Hook(
         name=name,
         enabled=_bool(raw, "enabled", True, f"{what} enabled"),
@@ -546,6 +569,9 @@ def parse_hook(raw: Any, *, source: str = "console", file: str = "") -> Hook:
         timeout=_opt_duration(raw, "timeout", f"{what} timeout"),
         rate_per_minute=rate,
         transform=transform,
+        respond=respond,
+        respond_within=respond_within,
+        respond_max=respond_max,
         managed_by=str(raw.get("managed_by") or ""),
         source=source,
         file=file,
@@ -707,7 +733,8 @@ def signature(config_path: Path) -> tuple[Any, ...]:
 _HOOK_SCALARS = (
     "name", "enabled", "description", "managed_by", "token_header", "token_sha256", "username", "password_hash",
     "split", "dedup", "dedup_window", "require_approval", "approve_within", "expect_claim_within", "max_running",
-    "skip_if_running", "timeout", "rate_per_minute", "transform", "allow", "email_to",
+    "skip_if_running", "timeout", "rate_per_minute", "transform", "respond", "respond_within", "respond_max",
+    "allow", "email_to",
 )  # fmt: skip
 
 

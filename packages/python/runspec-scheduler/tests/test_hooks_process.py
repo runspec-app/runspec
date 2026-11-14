@@ -98,6 +98,14 @@ def config(venv: Path, port: int) -> str:
     match = {{ alertname = "^Reckless" }}
     run = "demo"
     args = {{ reckless = "yes" }}
+
+    [[hook]]
+    name = "reply"
+    token_sha256 = "{hc.sha256(TOKEN)}"
+    respond = "output"
+    respond_within = "30s"
+    run = "demo"
+    args = {{ marker = "{marks}/reply" }}
     """
 
 
@@ -108,9 +116,9 @@ def start(venv: Path, procs: list[pe.Proc]) -> pe.Proc:
     return p
 
 
-def post(port: int, payload: Any, token: str = TOKEN) -> tuple[int, str]:
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    conn.request("POST", "/hook/alerts", body=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+def post(port: int, payload: Any, token: str = TOKEN, hook: str = "alerts") -> tuple[int, str]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=40)
+    conn.request("POST", f"/hook/{hook}", body=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
     resp = conn.getresponse()
     text = resp.read().decode()
     conn.close()
@@ -190,6 +198,13 @@ def test_webhook_end_to_end(venv: Any) -> None:
     follow = subprocess.run(argv, capture_output=True, text=True, cwd=str(path), timeout=60, check=False)
     kinds = [json.loads(line)["kind"] for line in follow.stdout.splitlines()]
     assert kinds[0] == "hello" and "approved" in kinds and "split" in kinds
+
+    # a respond = "output" hook answers with the run's exit code and stdout
+    status, text = post(port, {"go": True}, hook="reply")
+    reply = json.loads(text)
+    assert status == 200, text
+    assert reply["status"] == "done" and reply["ok"] is True and reply["exit_code"] == 0
+    assert "ok" in str(reply["output"]) and (path / "marks" / "reply").exists()
 
     # status reports the listener
     status_out = verb(path, "status")

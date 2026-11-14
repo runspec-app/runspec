@@ -32,6 +32,9 @@ fields = { status = "status" }
 # Saving the hook is the approval: its runs go ahead without asking (manual
 # runnables are always refused). For a person to approve each run, add:
 # require_approval = true
+# To answer the sender with the run's exit code and output (runspec-scheduler
+# 0.12.0), waiting up to 25s for it to finish, add:
+# respond = "output"
 
 [[hook.rule]]
 name = "default"

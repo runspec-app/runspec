@@ -18,6 +18,23 @@ All notable changes to `runspec-scheduler` are documented here.
   runnable's own level (0.11.0 showed `confirm` for a raised autonomous one).
 - `hooks test` / `deliveries` say "runs at once" (no "(autonomous)").
 
+### Added
+
+- **A webhook can send the run's output back.** `respond = "output"` on a
+  hook holds the request until the run finishes (up to `respond_within`,
+  default 25s, under Jira automation's 30s limit) and answers `200` with
+  `status`, `ok`, `exit_code` and `output`: the run's standard output, parsed
+  when it's JSON, cut to `respond_max` (default 64k) with `output_truncated`
+  saying so. Standard error never goes back. A delivery that waits for an
+  approval, or a run still going at `respond_within`, answers `202` with its
+  `status` (`pending` / `running`) and a `status_url`.
+- **`GET {base_path}/hook/<name>/delivery/<id>`** answers how a request went
+  (same token or basic auth as the hook; output only for a `respond` hook).
+  Every `202` now carries this `status_url`.
+- The spool gets `output` / `output_truncated` columns (added on open to a
+  0.11.0 spool); a running respond hook's stdout goes to an owner-only
+  `{venv}/hooks/output/<id>.out` first.
+
 ## [0.11.0] — 2026-11-14
 
 ### Added

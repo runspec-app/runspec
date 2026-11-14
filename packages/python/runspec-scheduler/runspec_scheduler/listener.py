@@ -4,8 +4,13 @@ One HTTP(S) port per venv (``[hooks] port``). Two addresses:
 
 * ``POST {base_path}/hook/<name>`` — a webhook. The request thread only
   checks it (address allow-list, token or basic auth, rate, size), writes one
-  spool row and answers ``202 {"id": …}``; everything else happens on the
-  worker thread, so a flood of requests never delays a schedule or a run.
+  spool row and answers ``202 {"id": …, "status_url": …}``; everything else
+  happens on the worker thread, so a flood of requests never delays a
+  schedule or a run. A hook with ``respond = "output"`` holds the request
+  (up to its ``respond_within``) until the run has finished, then answers
+  ``200`` with the exit code and the run's standard output.
+* ``GET {base_path}/hook/<name>/delivery/<id>`` — how one request went
+  (same credentials as the hook).
 * ``GET {base_path}/healthz`` — ``ok``, no auth (for a load balancer).
 
 Anything else is ``404``; another method on a hook address is ``405``.
@@ -39,13 +44,15 @@ from typing import Any
 
 from . import spool as sp
 from .hookconfig import HookConfig
-from .hookrun import keep_headers
+from .hookrun import keep_headers, request_result
 from .records import audit
 
 logger = logging.getLogger("runspec_scheduler.hooks.listener")
 
 READ_TIMEOUT = 10.0
 SPOOL_CHECK_SECONDS = 2.0
+#: How often a respond = "output" request looks for its run's result.
+RESPOND_POLL_SECONDS = 0.2
 
 
 class RateLimiter:
@@ -164,7 +171,8 @@ class HookHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _route(self) -> tuple[str, str]:
-        """(kind, hook name): kind is ``health``, ``hook`` or ``""``."""
+        """(kind, hook name): kind is ``health``, ``hook``, ``delivery`` (the
+        name is then ``<hook>/<id>``) or ``""``."""
         path = self.path.split("?", 1)[0]
         base = self.server.service.cfg.settings.base_path
         if base:
@@ -175,7 +183,52 @@ class HookHandler(BaseHTTPRequestHandler):
             return "health", ""
         if path.startswith("/hook/") and path.count("/") == 2 and len(path) > 6:
             return "hook", path[6:]
+        parts = path.split("/")
+        if len(parts) == 5 and parts[1] == "hook" and parts[2] and parts[3] == "delivery" and parts[4].isdigit():
+            return "delivery", f"{parts[2]}/{parts[4]}"
         return "", ""
+
+    def _status_url(self, name: str, delivery: int) -> str:
+        """Where a sender asks how a request went (relative to this listener)."""
+        return f"{self.server.service.cfg.settings.base_path}/hook/{name}/delivery/{delivery}"
+
+    def _checked_hook(self, name: str, source: str) -> Any:
+        """The hook when this sender may use it, else None (the answer is sent)."""
+        service = self.server.service
+        hook = service.cfg.hooks.get(name)
+        if hook is None or not hook.enabled:
+            service.rejections.add(name, "unknown or disabled hook", source)
+            self._send(404, "not found")
+            return None
+        if not hook.allows(source):
+            service.rejections.add(name, "address not allowed", source)
+            self._send(403, "forbidden")
+            return None
+        if not _authorised(hook, self.headers):
+            service.rejections.add(name, "bad or missing credentials", source)
+            extra = {"WWW-Authenticate": 'Basic realm="runspec"'} if hook.username else None
+            self._send(401, "unauthorised", extra)
+            return None
+        return hook
+
+    def _status(self, key: str) -> None:
+        """``GET …/hook/<name>/delivery/<id>``: how one request went (same
+        credentials as posting it)."""
+        service = self.server.service
+        name, _, raw_id = key.partition("/")
+        source = self._source()
+        hook = self._checked_hook(name, source)
+        if hook is None:
+            return
+        wait = service.limiter.allow(f"status:{name}", max(60, 4 * (hook.rate_per_minute or service.cfg.settings.rate_per_minute)))
+        if wait:
+            self._send(429, "too many requests", {"Retry-After": str(int(wait))})
+            return
+        result = request_result(service.spool, int(raw_id), hook=hook, status_url=self._status_url(name, int(raw_id)))
+        if result is None or result.get("hook") != name:
+            self._send(404, "not found")
+            return
+        self._send(200, result)
 
     def _source(self) -> str:
         """The sender's address: the peer, or (when the peer is a trusted
@@ -193,9 +246,11 @@ class HookHandler(BaseHTTPRequestHandler):
     # methods
 
     def do_GET(self) -> None:  # noqa: N802 — the stdlib's name
-        kind, _ = self._route()
+        kind, name = self._route()
         if kind == "health":
             self._send(200, "ok")
+        elif kind == "delivery":
+            self._status(name)
         elif kind == "hook":
             self._send(405, "POST only", {"Allow": "POST"})
         else:
@@ -206,6 +261,9 @@ class HookHandler(BaseHTTPRequestHandler):
 
     def _not_post(self) -> None:
         kind, _ = self._route()
+        if kind == "delivery":
+            self._send(405, "GET only", {"Allow": "GET"})
+            return
         self._send(405 if kind else 404, "POST only" if kind else "not found", {"Allow": "POST" if kind == "hook" else "GET"} if kind else None)
 
     do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _not_post  # noqa: N815
@@ -218,19 +276,8 @@ class HookHandler(BaseHTTPRequestHandler):
             self._send(404 if kind == "" else 405, "not found" if kind == "" else "GET only")
             return
         source = self._source()
-        hook = cfg.hooks.get(name)
-        if hook is None or not hook.enabled:
-            service.rejections.add(name, "unknown or disabled hook", source)
-            self._send(404, "not found")
-            return
-        if not hook.allows(source):
-            service.rejections.add(name, "address not allowed", source)
-            self._send(403, "forbidden")
-            return
-        if not _authorised(hook, self.headers):
-            service.rejections.add(name, "bad or missing credentials", source)
-            extra = {"WWW-Authenticate": 'Basic realm="runspec"'} if hook.username else None
-            self._send(401, "unauthorised", extra)
+        hook = self._checked_hook(name, source)
+        if hook is None:
             return
         wait = service.limiter.allow(f"hook:{name}", hook.rate_per_minute or cfg.settings.rate_per_minute) or service.limiter.allow(f"src:{source}", cfg.settings.source_rate_per_minute)
         if wait:
@@ -273,7 +320,27 @@ class HookHandler(BaseHTTPRequestHandler):
             return
         service.accepted += 1
         service.notify()
-        self._send(202, {"id": delivery, "status": "queued"})
+        status_url = self._status_url(name, delivery)
+        if hook.respond != "output":
+            self._send(202, {"id": delivery, "status": "queued", "status_url": status_url})
+            return
+        # respond = "output": hold the request until every item has settled
+        # (or waits for an approval), up to respond_within; then answer with
+        # what's known — 200 when done, else 202 and the status URL.
+        deadline = time.monotonic() + hook.respond_within
+        result = None
+        while True:
+            try:
+                result = request_result(service.spool, delivery, hook=hook, status_url=status_url)
+            except Exception as exc:  # noqa: BLE001 — a read hiccup: keep the 202 promise
+                logger.debug("webhook %s: reading delivery %d failed: %s", name, delivery, exc)
+            if (result and result["status"] != "running") or time.monotonic() >= deadline:
+                break
+            time.sleep(RESPOND_POLL_SECONDS)
+        if result is None:
+            self._send(202, {"id": delivery, "status": "queued", "status_url": status_url})
+        else:
+            self._send(200 if result["status"] == "done" else 202, result)
 
 
 def _in(address: str, networks: tuple[Any, ...]) -> bool:

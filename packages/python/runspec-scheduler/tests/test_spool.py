@@ -163,3 +163,23 @@ def test_snapshot_never_has_headers(spool: sp.Spool) -> None:
     assert row
     snap = sp.snapshot(row, body=True)
     assert "headers" not in snap and snap["body"] == '{"a": 1}'
+
+
+def test_old_spool_gets_the_output_columns(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "hooks" / "spool.sqlite"
+    path.parent.mkdir()
+    old = sqlite3.connect(path)
+    # 0.11.0's spool: today's schema without the output columns
+    schema = sp._SCHEMA.replace("    output TEXT,\n", "").replace("    output_truncated INTEGER NOT NULL DEFAULT 0,\n", "")
+    assert "output" not in schema
+    old.executescript(schema)
+    old.commit()
+    old.close()
+    spool = sp.Spool(path)
+    d = spool.add_delivery("h", source="x", content_type="", headers={}, body=b"")
+    assert spool.update(d, output="hi", output_truncated=0)
+    row = spool.get(d)
+    assert row and row["output"] == "hi"
+    spool.close()

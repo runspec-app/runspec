@@ -30,8 +30,10 @@ The rules are the same as everywhere else in runspec:
 1. The app sends `POST https://<host>:<port>/hook/<name>` with a token.
 2. The listener checks the sender's address, the token, the rate limits and the
    size, writes the request to the spool (`{venv}/hooks/spool.sqlite`) and
-   answers `202 {"id": 17, "status": "queued"}`. Nothing else happens on the
-   request, so a slow run never makes the sender wait or retry.
+   answers `202 {"id": 17, "status": "queued", "status_url": "/hook/<name>/delivery/17"}`.
+   Nothing else happens on the request, so a slow run never makes the sender
+   wait or retry. (A hook with `respond = "output"` waits for the run instead:
+   see [Sending the output back](#sending-the-output-back).)
 3. The daemon picks out the fields it was told to, finds the first rule that
    matches, fills in the args and works out the autonomy:
     - **manual**: refused;
@@ -145,6 +147,9 @@ password: you choose it and only its hash is kept.
 | `timeout` | Kill a run after this long (default 6h) |
 | `rate_per_minute` | This hook's own limit (default `[hooks] rate_per_minute`) |
 | `transform` | A runnable that turns an awkward body into fields (see below) |
+| `respond` | `"output"`: hold the request until the run finishes and answer with its exit code and output (see [Sending the output back](#sending-the-output-back)) |
+| `respond_within` | How long `respond = "output"` holds the request (default `25s`, at most `5m`) |
+| `respond_max` | How much of the run's output goes back (default `64k`, at most `4m`; the rest is cut) |
 | `enabled` | `false` answers 404 without removing it |
 
 ### Rule keys
@@ -338,15 +343,77 @@ a mute of one hook.
 | `starttls` | `false` | Use STARTTLS |
 | `timeout` | `10` | Seconds to wait for the relay |
 
+## Sending the output back
+
+By default a hook answers `202` as soon as the request is stored, and the
+runnable reports back on its own if the sender needs to know anything. With
+`respond = "output"`, the request is held until the run finishes and the answer
+carries the result, so the sending product can use it straight away: Jira
+automation's *Send web request* with *Wait for response* (`{{webRequest.body.output}}`),
+or a Rundeck HTTP step.
+
+```toml
+[[hook]]
+name = "disk-cleanup"
+token_sha256 = "…"
+respond = "output"
+respond_within = "25s"   # Jira gives up after 30 s
+run = "cleanup-tmp"
+args = { host = "{{ host }}" }
+```
+
+A run that finishes in time answers `200`:
+
+```json
+{
+  "id": 17,
+  "hook": "disk-cleanup",
+  "status": "done",
+  "ok": true,
+  "state": "ran",
+  "exit_code": 0,
+  "output": {"freed_mb": 812},
+  "output_truncated": false,
+  "items": [ … ]
+}
+```
+
+- `output` is the run's standard output: parsed when the runnable printed JSON
+  (so `{{webRequest.body.output.freed_mb}}` works), else the text. Never its
+  standard error. It's cut to `respond_max`, and `output_truncated` says so.
+- `ok` is true when every item ran with exit code 0 (or was skipped by a rule).
+  A failed run still answers `200`: read `ok` / `exit_code`.
+- `state`, `exit_code` and `output` sit at the top when the request is one item;
+  a [split](#a-hook) body lists every item in `items`.
+- A delivery that waits for an approval, or a run still going after
+  `respond_within`, answers `202` with `"status": "pending"` or `"running"`
+  and a `status_url`. Refused or skipped deliveries answer at once.
+
+The output goes back to whoever holds the hook's token, so only switch it on
+for a runnable whose output that sender may see. It's also in the run's log, as
+for every run.
+
+### Asking how a request went
+
+Any hook's `202` carries `status_url`, relative to the address it was posted
+to. `GET` it with the hook's own token (or basic auth) for the same answer as
+above, `200` with `"status": "done"`, `"pending"` or `"running"`. The output is
+there only for a `respond = "output"` hook.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" https://ops-01:8977/hook/disk-cleanup/delivery/17
+```
+
 ## What the sender gets back
 
 | Code | Meaning |
 |---|---|
-| `202` | Accepted: `{"id": …, "status": "queued"}` |
+| `200` | A `respond = "output"` run finished in time (see [Sending the output back](#sending-the-output-back)), or a `GET` of a `status_url` |
+| `202` | Accepted: `{"id": …, "status": "queued", "status_url": …}` (or `"pending"` / `"running"` for a `respond = "output"` hook) |
 | `401` | Missing or wrong token / password |
 | `403` | The sender's address isn't in `allow` |
 | `404` | No such hook, or it's turned off |
-| `405` | Not a `POST` |
+| `405` | Not a `POST` (a `status_url` takes only `GET`) |
 | `411` | No `Content-Length` (chunked bodies aren't accepted) |
 | `413` | The body is over `max_body` |
 | `429` | Over a rate limit; see `Retry-After` |
@@ -361,5 +428,6 @@ minute per reason.
 |---|---|
 | `{venv}/runspec_scheduler.toml` | `[hooks]`, `[smtp]` and console-made `[[hook]]` tables |
 | `{venv}/hooks.d/*.toml` | Deployed hooks (win over console-made ones) |
-| `{venv}/hooks/spool.sqlite` | Every delivery, its events, mutes and followers (owner-only) |
+| `{venv}/hooks/spool.sqlite` | Every delivery, its events, mutes and followers (owner-only); a `respond = "output"` run's output once it finishes |
+| `{venv}/hooks/output/` | A `respond = "output"` run's standard output while it runs (owner-only, moved into the spool when it ends) |
 | `{venv}/.runspec_scheduler_env` | Credentials for webhook runs and scheduled fires |

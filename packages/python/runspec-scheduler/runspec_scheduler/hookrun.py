@@ -48,7 +48,7 @@ from typing import Any
 
 from . import hooktemplate as tpl
 from . import spool as sp
-from .hookconfig import HOOK_LABEL_PREFIX, TRIGGER_WEBHOOK, TRIGGER_WEBHOOK_APPROVED, Hook, HookConfig, HooksSettings, Rule, SmtpSettings
+from .hookconfig import DEFAULT_RESPOND_MAX, HOOK_LABEL_PREFIX, TRIGGER_WEBHOOK, TRIGGER_WEBHOOK_APPROVED, Hook, HookConfig, HooksSettings, Rule, SmtpSettings
 from .records import audit
 
 logger = logging.getLogger("runspec_scheduler.hooks")
@@ -404,6 +404,110 @@ class _Run:
     hook: str
     proc: subprocess.Popen[bytes]
     started: float
+    output: str = ""  # where the run's stdout goes (respond = "output" hooks)
+    output_max: int = 0
+
+
+# ── sending the output back (respond = "output") ─────────────────────────────
+
+#: Where a respond-hook run's standard output is written while it runs.
+OUTPUT_DIR = "output"
+
+
+def output_path(spool: sp.Spool, delivery: int) -> Path:
+    return spool.path.parent / OUTPUT_DIR / f"{delivery}.out"
+
+
+def open_output(spool: sp.Spool, delivery: int) -> tuple[int, str]:
+    """A fresh owner-only file for a run's stdout: ``(fd, path)``."""
+    folder = spool.path.parent / OUTPUT_DIR
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        os.chmod(folder, 0o700)
+    path = output_path(spool, delivery)
+    with contextlib.suppress(FileNotFoundError):
+        path.unlink()
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    return os.open(path, flags, 0o600), str(path)
+
+
+def collect_output(spool: sp.Spool, delivery: int, limit: int) -> bool:
+    """Move a finished run's stdout file into its spool row (cut to
+    ``limit`` bytes). False when there was no file."""
+    path = output_path(spool, delivery)
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(limit + 1)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        logger.warning("webhook delivery %d: couldn't read its output: %s", delivery, exc)
+        return False
+    truncated = len(data) > limit
+    spool.update(delivery, kind="output", output=data[:limit].decode("utf-8", errors="replace"), output_truncated=int(truncated))
+    with contextlib.suppress(OSError):
+        path.unlink()
+    return True
+
+
+def output_value(text: str | None) -> Any:
+    """The output as the sender gets it: parsed when the runnable printed
+    JSON, else the text (one trailing newline dropped)."""
+    if text is None:
+        return None
+    stripped = text.strip()
+    if stripped[:1] in ("{", "[", '"') or stripped in ("true", "false", "null"):
+        try:
+            return json.loads(stripped)
+        except ValueError:
+            pass
+    return text[:-1] if text.endswith("\n") else text
+
+
+#: States after which nothing more happens to an item without a person.
+_ANSWERED = sp.SETTLED | {sp.PENDING}
+
+
+def request_result(spool: sp.Spool, request_id: int, *, hook: Hook | None, status_url: str) -> dict[str, Any] | None:
+    """What a sender gets back for one request: every item's state, exit code
+    and (for a ``respond = "output"`` hook) output. ``status`` is ``done``
+    (every item settled), ``pending`` (one waits for an approval, the rest
+    settled) or ``running``. None when there's no such request."""
+    items = spool.items(request_id)
+    if not items or items[0]["id"] != request_id or (items[0].get("request") not in (None, request_id)):
+        return None
+    with_output = bool(hook and hook.respond == "output")
+    shown = []
+    for row in items:
+        entry: dict[str, Any] = {
+            "id": row["id"],
+            "item": row["item"],
+            "state": row["state"],
+            "rule": row["rule"],
+            "runnable": row["runnable"],
+            "exit_code": row["exit_code"],
+            "reason": row["reason"],
+        }
+        if with_output:
+            entry["output"] = output_value(row.get("output")) if row["state"] == sp.RAN else None
+            entry["output_truncated"] = bool(row.get("output_truncated"))
+        shown.append(entry)
+    states = {row["state"] for row in items}
+    if not states <= _ANSWERED:
+        status = "running"
+    elif sp.PENDING in states:
+        status = "pending"
+    else:
+        status = "done"
+    out: dict[str, Any] = {"id": request_id, "hook": items[0]["hook"], "status": status}
+    if status == "done":
+        out["ok"] = all(e["state"] in (sp.RAN, sp.SKIPPED, sp.EVENT, sp.NO_MATCH, sp.DUPLICATE) and not e["exit_code"] for e in shown)
+    if len(shown) == 1:
+        out.update({k: v for k, v in shown[0].items() if k not in ("id", "item")})
+    out["items"] = shown
+    if status != "done":
+        out["status_url"] = status_url
+    return out
 
 
 class HookWorker:
@@ -614,11 +718,14 @@ class HookWorker:
             "timeout": hook.timeout if hook.timeout is not None else 6 * 3600,
         }
         env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
+        out_fd, out_path = -1, ""
         try:
+            if hook.respond == "output":
+                out_fd, out_path = open_output(self.spool, row["id"])
             proc = subprocess.Popen(
                 [self.python, "-m", "runspec_scheduler.hookexec"],
                 stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
+                stdout=out_fd if out_fd >= 0 else subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=env,
                 cwd=os.path.expanduser("~") if os.path.isdir(os.path.expanduser("~")) else None,
@@ -632,7 +739,10 @@ class HookWorker:
             self.spool.update(row["id"], state=sp.REFUSED, reason=f"couldn't start the run: {exc}")
             audit("hook.run", "failed", target={"hook": hook.name, "delivery": row["id"]}, detail={"error": str(exc)})
             return
-        self._runs[row["id"]] = _Run(delivery=row["id"], hook=hook.name, proc=proc, started=time.time())
+        finally:
+            if out_fd >= 0:
+                os.close(out_fd)
+        self._runs[row["id"]] = _Run(delivery=row["id"], hook=hook.name, proc=proc, started=time.time(), output=out_path, output_max=hook.respond_max)
         self.spool.update(row["id"], state=sp.RUNNING, started_ts=time.time(), pid=proc.pid)
         how = "approved by " + row["decided_by"] if approved else f"{row.get('autonomy') or 'autonomous'}, set up by the hook"
         logger.info("webhook %s delivery %d: running %s (%s)", hook.name, row["id"], row["runnable"], how)
@@ -643,6 +753,8 @@ class HookWorker:
             if code is None:
                 continue
             del self._runs[delivery]
+            if run.output:
+                collect_output(self.spool, delivery, run.output_max)
             self.spool.update(delivery, state=sp.RAN, finished_ts=time.time(), exit_code=code)
             audit("hook.run", "succeeded" if code == 0 else "failed", target={"hook": run.hook, "delivery": delivery}, detail={"exit_code": code})
             self.notify()
@@ -667,6 +779,8 @@ class HookWorker:
                 except OSError:
                     alive = False
             if not alive:
+                hook = self.cfg.hooks.get(row["hook"]) if self.cfg else None
+                collect_output(self.spool, row["id"], hook.respond_max if hook else DEFAULT_RESPOND_MAX)
                 self.spool.update(row["id"], state=sp.RAN, finished_ts=time.time(), reason="finished while the daemon was stopped (see History for its exit code)")
 
     # approvals
