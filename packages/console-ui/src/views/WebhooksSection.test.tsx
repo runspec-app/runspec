@@ -18,8 +18,8 @@ vi.mock('../bridge', () => ({
   bridge: new Proxy({}, { get: (_t, p) => (fns as Record<string, unknown>)[p as string] ?? vi.fn() }),
 }))
 
-import { WebhooksSection, WebhooksSummary, followsText, hookStateText, hostOffers, isOffQuietly, stripHint, venvHookState, webhookCounts } from './WebhooksSection'
-import { changed, hasUsername, tomlName, NEW_HOOK_TOML } from './WebhookHooksModal'
+import { WebhooksSection, WebhooksSummary, followsText, hookStateText, hostOffers, isOffQuietly, portsOnHost, quietCount, quietHosts, stripHint, venvHookState, webhookCounts } from './WebhooksSection'
+import { changed, hasUsername, tomlName, NEW_HOOK_TOML, suggestPort, portHint, DEFAULT_WEBHOOK_PORT } from './WebhookHooksModal'
 
 const strip = (patch: Partial<WebhookVenv> = {}): WebhookVenv => ({
   key: 'web-01/ops', host: 'web-01', venv: 'ops', follows: ['*'], connected: true, error: '', paused: '', who: 'ops',
@@ -48,6 +48,24 @@ beforeEach(() => {
 })
 
 describe('pure helpers', () => {
+  it('picks a listener port clear of the other venvs on the host', () => {
+    expect(suggestPort([])).toBe(DEFAULT_WEBHOOK_PORT)
+    expect(suggestPort([8977, 8978, 9000])).toBe(8979)
+    expect(portHint([], false)).toBe('Each venv on a host needs its own port.')
+    expect(portHint([8978, 8977, 8977], false)).toBe('Other venvs on this host use 8977, 8978.')
+    expect(portHint([8977], true)).toMatch(/Another venv on this host uses this port/)
+    const st = status([strip({ key: 'web-01/a', venv: 'a', settings: { port: 8977 } }), strip({ key: 'web-01/ops', settings: { port: 9100 } })])
+    const vs = [{ ...sv('web-01', 'b', true), webhooks: { enabled: true, hooks: [], port: 8978 } }, { ...sv('db-01', 'c', true), webhooks: { enabled: true, hooks: [], port: 8979 } }]
+    expect(portsOnHost(st, vs, 'web-01', 'ops')).toEqual([8977, 8978])
+  })
+  it('groups quiet venvs by host, hosts that can be turned on first', () => {
+    const off = strip({ key: 'z/ops', host: 'z', settings: { enabled: false }, recent: [] })
+    const root = strip({ key: 'a/root', host: 'a', venv: 'root', recent: [], unavailable: 'root-owned venv' })
+    const hosts = quietHosts([off], [root])
+    expect(hosts.map(h => [h.host, h.off.length, h.unavailable.length])).toEqual([['z', 1, 0], ['a', 0, 1]])
+    expect(quietCount(hosts)).toBe('2 hosts, 2 venvs')
+    expect(quietCount([{ host: 'a', off: [off], unavailable: [] }])).toBe('1 host, 1 venv')
+  })
   it('lists every unfollowed host, followable ones first, whatever their webhooks say', () => {
     const venvs = [sv('web-01', 'ops', true), sv('db-01', 'ops', true), sv('db-02', 'ops', false), sv('old-01', 'ops', null), sv('db-02', 'tools', true, [])]
     const offers = hostOffers(venvs, status([]))
@@ -119,30 +137,52 @@ describe('WebhooksSection', () => {
     expect(fns.webhook_hooks).toHaveBeenCalledWith({ host: 'db-01', venv: 'ops' })
   })
 
-  it('lists followed venvs with webhooks off on one quiet line, not as strips', async () => {
+  it('lists followed venvs with webhooks off as one row per host with a Turn on button', async () => {
     render(<WebhooksSection editable venvs={[]} status={status([
       strip(),
       strip({ key: 'web-01/tools', venv: 'tools', settings: { enabled: false }, recent: [] }),
       strip({ key: 'web-01/batch', venv: 'batch', settings: { enabled: false }, recent: [] }),
-    ])} />)
+      strip({ key: 'db-01/ops', host: 'db-01', settings: { enabled: false }, recent: [] }),
+    ], { 'web-01': ['*'], 'db-01': ['*'] })} />)
     expect(screen.getAllByTestId('webhook-strip')).toHaveLength(1)
     const off = screen.getByTestId('webhook-off')
-    expect(off.textContent).toContain('Webhooks off here:')
-    expect(off.textContent).toContain('web-01 / tools')
-    expect(off.textContent).toContain('web-01 / batch')
-    expect(screen.queryByText(/Turn them on/)).toBeNull()
+    expect(off.textContent).toContain('Followed, not listening')
+    expect(off.textContent).toContain('2 hosts, 3 venvs')
+    const rows = screen.getAllByTestId('webhook-off-host')
+    expect(rows.map(r => r.textContent)).toEqual([
+      expect.stringContaining('db-01'),
+      expect.stringContaining('web-01'),
+    ])
+    expect(within(rows[1]).getAllByRole('button', { name: /Turn on webhooks/ })).toHaveLength(2)
     expect(webhookCounts(status([strip({ settings: { enabled: false }, recent: [] })])).problems).toBe(0)
     await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on web-01 / tools' }))
-    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(await screen.findByRole('tab', { name: 'Listener & mail', selected: true })).toBeTruthy()
   })
-  it('folds followed venvs that take no webhooks into one quiet line', () => {
+
+  it('shows no Turn on buttons when the section is read-only', () => {
+    render(<WebhooksSection editable={false} venvs={[]} status={status([strip({ settings: { enabled: false }, recent: [] })])} />)
+    expect(screen.getByTestId('webhook-off-host').textContent).toContain('ops')
+    expect(screen.queryByRole('button', { name: /Turn on/ })).toBeNull()
+  })
+
+  it('folds many quiet hosts behind one toggle', async () => {
+    const venvs = 'abcdefghi'.split('').map(h => strip({ key: `${h}/ops`, host: h, settings: { enabled: false }, recent: [] }))
+    render(<WebhooksSection editable venvs={[]} status={status(venvs, Object.fromEntries('abcdefghi'.split('').map(h => [h, ['*']])))} />)
+    expect(screen.queryAllByTestId('webhook-off-host')).toHaveLength(0)
+    expect(screen.getByTestId('webhook-off').textContent).toContain('9 hosts, 9 venvs')
+    await userEvent.click(screen.getByRole('button', { name: 'Show' }))
+    expect(screen.getAllByTestId('webhook-off-host')).toHaveLength(9)
+  })
+
+  it('puts followed venvs that take no webhooks in their host row, muted', () => {
     const root = strip({ key: 'little-boy/ops-root', host: 'little-boy', venv: 'ops-root', connected: false, recent: [], unavailable: 'root-owned venv: runspec-scheduler never runs as root, so it takes no webhooks' })
     const old = strip({ key: 'little-girl/legacy', host: 'little-girl', venv: 'legacy', connected: false, recent: [], unavailable: "runspec-scheduler isn't installed in this venv (or is older than 0.11.0)" })
     render(<WebhooksSection editable venvs={[]} status={status([strip(), root, old], { 'web-01': ['*'], 'little-boy': ['*'], 'little-girl': ['*'] })} />)
     expect(screen.getAllByTestId('webhook-strip')).toHaveLength(1)
-    const line = screen.getByTestId('webhook-unavailable').textContent
-    expect(line).toContain('little-boy / ops-root (root-owned)')
-    expect(line).toContain('little-girl / legacy (needs runspec-scheduler 0.11.0)')
+    const lines = screen.getAllByTestId('webhook-unavailable').map(e => e.textContent)
+    expect(lines).toEqual(['ops-root (root-owned)', 'legacy (needs runspec-scheduler 0.11.0)'])
+    expect(screen.queryByText(/A venv takes webhooks once/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Turn on/ })).toBeNull()
   })
 
   it('folds many unfollowed hosts behind one toggle', async () => {
@@ -222,5 +262,34 @@ describe('hook editor', () => {
     await userEvent.type(approve, '30m')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(fns.webhook_settings).toHaveBeenCalledWith({ host: 'web-01', venv: 'ops', hooks: { approve_within: '30m' }, smtp: {} })
+  })
+
+  it('Turn on starts the form switched on with a free port, and saves both', async () => {
+    fns.webhook_hooks.mockResolvedValue({ ok: true, settings: { enabled: false, port: 0 }, smtp: {}, hooks: [] })
+    fns.webhook_settings.mockResolvedValue({ ok: true })
+    render(<WebhooksSection editable venvs={[]} status={status([
+      strip({ key: 'web-01/tools', venv: 'tools', settings: { enabled: true, port: 8977 } }),
+      strip({ settings: { enabled: false, port: 0 }, recent: [] }),
+    ])} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on web-01 / ops' }))
+    const port = (await screen.findAllByRole('spinbutton', { name: /Port/ }))[0] as HTMLInputElement
+    expect(port.value).toBe('8978')
+    expect(screen.getByText('Other venvs on this host use 8977.')).toBeTruthy()
+    expect(screen.getByRole('switch', { checked: true })).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(fns.webhook_settings).toHaveBeenCalledWith({ host: 'web-01', venv: 'ops', hooks: { enabled: true, port: 8978 }, smtp: {} })
+  })
+
+  it('keeps what is typed when the section re-renders with fresh status', async () => {
+    fns.webhook_hooks.mockResolvedValue({ ok: true, settings: { enabled: true, port: 0 }, smtp: {}, hooks: [] })
+    const { rerender } = render(<WebhooksSection editable venvs={[]} status={status([strip()])} />)
+    await userEvent.click(screen.getByRole('button', { name: /Hooks…/ }))
+    await userEvent.click(await screen.findByRole('tab', { name: 'Listener & mail' }))
+    const port = screen.getAllByRole('spinbutton', { name: /Port/ })[0] as HTMLInputElement
+    expect(port.value).toBe('')
+    await userEvent.type(port, '9001')
+    rerender(<WebhooksSection editable venvs={[]} status={status([strip()])} />)
+    await waitFor(() => expect(fns.webhook_hooks).toHaveBeenCalledTimes(1))
+    expect((screen.getAllByRole('spinbutton', { name: /Port/ })[0] as HTMLInputElement).value).toBe('9001')
   })
 })

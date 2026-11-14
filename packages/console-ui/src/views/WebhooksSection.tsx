@@ -11,7 +11,7 @@
  */
 import { useState } from 'react'
 import { Button, Dropdown, Tag, Tooltip, message } from 'antd'
-import { DownOutlined, RightOutlined, ApiOutlined, BellOutlined } from '@ant-design/icons'
+import { DownOutlined, RightOutlined, ApiOutlined, BellOutlined, PoweroffOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
 import type { WebhookVenv, WebhooksStatus } from '../bridge'
 import { useIsDark, textColor, textMuted, textSecondary, textWarning, MONO_FONT, RADIUS } from '../ThemeContext'
@@ -81,7 +81,7 @@ type ModalTab = 'hooks' | 'settings'
 
 /** A followed venv with webhooks switched off and nothing to show: a normal
  *  state (not every venv on a host takes webhooks), so it gets no strip of
- *  its own, only a name on the quiet "Webhooks off here" line. */
+ *  its own, only a Turn on button in its host's "not listening" row. */
 export function isOffQuietly(v: WebhookVenv): boolean {
   return v.connected && !v.unavailable && v.settings?.enabled === false && !v.open.length && !v.recent.length
 }
@@ -211,18 +211,66 @@ function WebhookStrip({ v, editable, onHooks }: { v: WebhookVenv; editable: bool
   )
 }
 
-/** Followed venvs that take no webhooks at all, folded into one quiet line. */
-function UnavailableLine({ venvs }: { venvs: WebhookVenv[] }) {
+/** The listener ports the other venvs on `host` are set to, from what the
+ *  follower and the scheduler reads know, so a new one is picked clear of them. */
+export function portsOnHost(status: WebhooksStatus, venvs: SchedulerVenv[], host: string, venv: string): number[] {
+  const ports = [
+    ...status.venvs.filter(v => v.host === host && v.venv !== venv).map(v => v.settings?.port ?? 0),
+    ...venvs.filter(v => v.host === host && v.venv !== venv).map(v => v.webhooks?.port ?? 0),
+  ]
+  return [...new Set(ports.filter(p => p > 0))].sort((a, b) => a - b)
+}
+
+/** Why a followed venv takes no webhooks, in a couple of words. */
+export function unavailableText(v: WebhookVenv): string {
+  return /root-owned/i.test(v.unavailable ?? '') ? 'root-owned' : 'needs runspec-scheduler 0.11.0'
+}
+
+/** A followed host whose venvs aren't listening: the ones with webhooks off
+ *  (can be turned on) and the ones that take no webhooks at all. */
+export interface QuietHost { host: string; off: WebhookVenv[]; unavailable: WebhookVenv[] }
+
+/** Followed venvs with nothing to show, one entry per host, sorted: hosts
+ *  with a venv that can be turned on first. */
+export function quietHosts(off: WebhookVenv[], unavailable: WebhookVenv[]): QuietHost[] {
+  const by = new Map<string, QuietHost>()
+  const get = (host: string) => by.get(host) ?? by.set(host, { host, off: [], unavailable: [] }).get(host)!
+  for (const v of off) get(v.host).off.push(v)
+  for (const v of unavailable) get(v.host).unavailable.push(v)
+  return [...by.values()].sort((a, b) => Number(!!b.off.length) - Number(!!a.off.length) || a.host.localeCompare(b.host))
+}
+
+/** "2 hosts, 5 venvs". */
+export function quietCount(hosts: QuietHost[]): string {
+  const venvs = hosts.reduce((n, h) => n + h.off.length + h.unavailable.length, 0)
+  return `${hosts.length} host${hosts.length === 1 ? '' : 's'}, ${venvs} venv${venvs === 1 ? '' : 's'}`
+}
+
+/** One followed host whose venvs aren't listening: a Turn on button per venv
+ *  with webhooks off, and a muted note for each venv that can't take them. */
+function QuietHostRow({ q, editable, onTurnOn }: { q: QuietHost; editable: boolean; onTurnOn: (v: WebhookVenv) => void }) {
   const isDark = useIsDark()
   return (
-    <div data-testid="webhook-unavailable" style={{ fontSize: 12, color: textMuted(isDark), display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-      <span>Not taking webhooks:</span>
-      {venvs.map((v, i) => (
+    <div data-testid="webhook-off-host" style={{
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '4px 10px',
+      border: '1px dashed var(--rs-border)', borderRadius: RADIUS.sm, fontSize: 12,
+    }}>
+      <StatusTag tone="neutral">{q.off.length ? 'webhooks off' : 'no webhooks'}</StatusTag>
+      <span style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark) }}>{q.host}</span>
+      {q.off.map(v => (
+        <span key={v.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: textSecondary(isDark) }}>
+          <span style={{ fontFamily: MONO_FONT }}>{v.venv}</span>
+          {editable && (
+            <Button size="small" icon={<PoweroffOutlined />} aria-label={`Turn on webhooks on ${v.host} / ${v.venv}`} onClick={() => onTurnOn(v)}>
+              Turn on…
+            </Button>
+          )}
+        </span>
+      ))}
+      {q.unavailable.map(v => (
         <Tooltip key={v.key} title={v.unavailable}>
-          <span style={{ fontFamily: MONO_FONT }}>
-            {v.host} / {v.venv}
-            <span style={{ fontFamily: 'inherit' }}> ({/root-owned/i.test(v.unavailable ?? '') ? 'root-owned' : 'needs runspec-scheduler 0.11.0'})</span>
-            {i < venvs.length - 1 ? ',' : ''}
+          <span data-testid="webhook-unavailable" style={{ color: textMuted(isDark) }}>
+            <span style={{ fontFamily: MONO_FONT }}>{v.venv}</span> ({unavailableText(v)})
           </span>
         </Tooltip>
       ))}
@@ -230,22 +278,31 @@ function UnavailableLine({ venvs }: { venvs: WebhookVenv[] }) {
   )
 }
 
-/** Followed venvs with webhooks switched off, as one quiet line. */
-function OffLine({ venvs, editable, onTurnOn }: { venvs: WebhookVenv[]; editable: boolean; onTurnOn: (v: WebhookVenv) => void }) {
+/** Followed venvs that aren't listening, one row per host under a heading,
+ *  folded behind a toggle when there are many hosts. */
+function QuietHosts({ hosts, editable, onTurnOn }: { hosts: QuietHost[]; editable: boolean; onTurnOn: (v: WebhookVenv) => void }) {
   const isDark = useIsDark()
+  const [expanded, setExpanded] = useState<boolean | null>(null)
+  const show = expanded ?? hosts.length <= HOSTS_SHOWN
+  const canTurnOn = hosts.some(h => h.off.length)
   return (
-    <div data-testid="webhook-off" style={{ fontSize: 12, color: textMuted(isDark), display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 4 }}>
-      <span>Webhooks off here:</span>
-      {venvs.map((v, i) => (
-        <span key={v.key} style={{ fontFamily: MONO_FONT }}>
-          {v.host} / {v.venv}
-          {editable && (
-            <Button size="small" type="link" style={{ padding: '0 0 0 4px', height: 'auto', fontSize: 12, fontFamily: 'inherit' }}
-              aria-label={`Turn on webhooks on ${v.host} / ${v.venv}`} onClick={() => onTurnOn(v)}>turn on</Button>
-          )}
-          {i < venvs.length - 1 ? ',' : ''}
-        </span>
-      ))}
+    <div data-testid="webhook-off" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <h3 style={{ margin: '6px 0 0', fontSize: 13, fontWeight: 600, color: textColor(isDark), display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        Followed, not listening
+        <span style={{ fontSize: 12, fontWeight: 400, color: textMuted(isDark) }}>{quietCount(hosts)}</span>
+        {hosts.length > HOSTS_SHOWN && (
+          <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12, fontWeight: 400 }} aria-expanded={show}
+            onClick={() => setExpanded(!show)}>
+            {show ? 'Hide' : 'Show'}
+          </Button>
+        )}
+      </h3>
+      {canTurnOn && (
+        <div style={{ fontSize: 12, color: textSecondary(isDark) }}>
+          A venv takes webhooks once its listener is on. Turn on opens its listener settings; its scheduler daemon must be running.
+        </div>
+      )}
+      {show && hosts.map(q => <QuietHostRow key={q.host} q={q} editable={editable} onTurnOn={onTurnOn} />)}
     </div>
   )
 }
@@ -254,7 +311,7 @@ function OffLine({ venvs, editable, onTurnOn }: { venvs: WebhookVenv[]; editable
  *  set them up, and Follow (works before any hook exists). */
 function HostOfferRow({ offer, editable, busy, onFollow, onEdit }: {
   offer: HostOffer; editable: boolean; busy: string
-  onFollow: (host: string) => void; onEdit: (t: { host: string; venv: string; tab: ModalTab }) => void
+  onFollow: (host: string) => void; onEdit: (t: { host: string; venv: string; tab: ModalTab; turnOn?: boolean }) => void
 }) {
   const isDark = useIsDark()
   const { host, venvs, canFollow } = offer
@@ -277,7 +334,7 @@ function HostOfferRow({ offer, editable, busy, onFollow, onEdit }: {
             {editable && action && (
               <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12 }}
                 aria-label={`${action.label.replace('…', '')} on ${host} / ${v.venv}`}
-                onClick={() => onEdit({ host, venv: v.venv, tab: action.tab })}>
+                onClick={() => onEdit({ host, venv: v.venv, tab: action.tab, turnOn: st === 'off' })}>
                 {action.label}
               </Button>
             )}
@@ -304,13 +361,14 @@ export function WebhooksSection({ status, venvs, editable, onChanged }: {
   onChanged?: () => void
 }) {
   const isDark = useIsDark()
-  const [editing, setEditing] = useState<{ host: string; venv: string; tab?: ModalTab } | null>(null)
+  const [editing, setEditing] = useState<{ host: string; venv: string; tab?: ModalTab; turnOn?: boolean } | null>(null)
   const [following, setFollowing] = useState('')
   const [expanded, setExpanded] = useState<boolean | null>(null)
   const offers = hostOffers(venvs, status)
   const live = status.venvs.filter(v => !v.unavailable && !isOffQuietly(v))
   const off = status.venvs.filter(isOffQuietly)
   const quiet = status.venvs.filter(v => !!v.unavailable)
+  const quietList = quietHosts(off, quiet)
   if (!status.venvs.length && !offers.length) return null
   const showOffers = expanded ?? offers.length <= HOSTS_SHOWN
   const followable = offers.filter(o => o.canFollow).length
@@ -334,8 +392,7 @@ export function WebhooksSection({ status, venvs, editable, onChanged }: {
       {live.map(v => (
         <WebhookStrip key={v.key} v={v} editable={editable} onHooks={(x, tab) => setEditing({ host: x.host, venv: x.venv, tab })} />
       ))}
-      {off.length > 0 && <OffLine venvs={off} editable={editable} onTurnOn={v => setEditing({ host: v.host, venv: v.venv, tab: 'settings' })} />}
-      {quiet.length > 0 && <UnavailableLine venvs={quiet} />}
+      {quietList.length > 0 && <QuietHosts hosts={quietList} editable={editable} onTurnOn={v => setEditing({ host: v.host, venv: v.venv, tab: 'settings', turnOn: true })} />}
       {offers.length > 0 && (
         <h3 style={{ margin: '6px 0 0', fontSize: 13, fontWeight: 600, color: textColor(isDark), display: 'flex', alignItems: 'baseline', gap: 8 }}>
           Not followed here
@@ -351,7 +408,8 @@ export function WebhooksSection({ status, venvs, editable, onChanged }: {
         <HostOfferRow key={o.host} offer={o} editable={editable} busy={following}
           onFollow={h => { void follow(h) }} onEdit={setEditing} />
       ))}
-      {editing && <WebhookHooksModal target={{ host: editing.host, venv: editing.venv }} startTab={editing.tab} onClose={() => { setEditing(null); onChanged?.() }} />}
+      {editing && <WebhookHooksModal target={{ host: editing.host, venv: editing.venv }} startTab={editing.tab} turnOn={editing.turnOn}
+        takenPorts={portsOnHost(status, venvs, editing.host, editing.venv)} onClose={() => { setEditing(null); onChanged?.() }} />}
     </section>
   )
 }

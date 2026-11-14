@@ -101,7 +101,7 @@ export interface SchedulerVenv {
   packages: SharedSchedulesPackages | null
   /** Webhooks this venv takes (runspec-scheduler >= 0.11.0; null before):
    *  whether `[hooks]` is on and the hook names. */
-  webhooks?: { enabled: boolean; hooks: string[] } | null
+  webhooks?: { enabled: boolean; hooks: string[]; port?: number } | null
 }
 
 export interface Collected {
@@ -351,7 +351,7 @@ export function collectRows(
     editable.push({
       key: base, host, hostGroup, venv, backend, owner: v.owner ?? '',
       settings: st.settings ?? null, hostZone: st.host_zone ?? '', packages: st.packages ?? null,
-      webhooks: st.hooks?.settings ? { enabled: !!st.hooks.settings.enabled, hooks: (st.hooks.hooks ?? []).map(h => h.name) } : null,
+      webhooks: st.hooks?.settings ? { enabled: !!st.hooks.settings.enabled, hooks: (st.hooks.hooks ?? []).map(h => h.name), port: st.hooks.settings.port || undefined } : null,
     })
     for (const e of st.packages?.errors ?? []) notes.push({ key: `${base}::pkg::${e}`, host, venv, source: backend, message: e })
     for (const e of st.errors ?? []) notes.push({ key: `${base}::err::${e}`, host, venv, source: backend, message: e })

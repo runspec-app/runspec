@@ -9,6 +9,33 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.445.1] — 2026-11-14
+
+### Fixed
+
+- **The listener settings form reset while you typed.** The Webhooks section
+  hands the hook editor a fresh host/venv object on every render, and the
+  editor re-read the host each time, so every status update put the form back
+  to what the host had (the port went back to 0, the arrows did nothing). It
+  now re-reads only when the host or venv changes.
+- **Turning a venv on picks a port.** *Turn on…* (and *Set up…* on a host
+  you don't follow) opens the listener settings already switched on with a
+  free port filled in: the first from 8977 up that no other venv on the host
+  uses (from what the console has read of that host). Switching the listener
+  on by hand fills it in the same way. The Port field shows which ports the
+  other venvs use, warns on a clash, and is blank (not 0 clamped to 1) when no
+  port is set; saving with webhooks on and no port says so instead of sending
+  it.
+
+### Changed
+
+- **Followed venvs that aren't listening are one row per host.** The single
+  long "Webhooks off here: …" line is now a *Followed, not listening* heading
+  with a count, a one-line explanation, and a row per host: each venv with
+  webhooks off has a real *Turn on…* button, and venvs that can't take
+  webhooks (root-owned, runspec-scheduler older than 0.11.0) sit in the same
+  row, muted. Past 8 hosts the rows fold behind *Show*.
+
 ## [0.445.0] — 2026-11-14
 
 ### Added
