@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { TerminalsModal } from './TerminalsModal'
-import { addToSelection, hostsInGroup, hostsInProfile, readLayoutPref, readSendBarPref, writeLayoutPref } from './terminals'
+import { LAYOUT_OPTIONS, addToSelection, hostsInGroup, hostsInProfile, layoutHelp, readLayoutPref, readSendBarPref, writeLayoutPref } from './terminals'
 import type { JumpHost } from '../bridge'
 
 const { launchTerminals, getJumpHosts, getProfiles } = vi.hoisted(() => ({
@@ -63,6 +63,23 @@ describe('TerminalsModal', () => {
     launchTerminals.mockReset().mockResolvedValue({ opened: ['web-1', 'web-2'], errors: [], tiling: true })
     getJumpHosts.mockReset().mockResolvedValue(HOSTS)
     getProfiles.mockReset().mockResolvedValue([{ name: 'ops' }])
+  })
+
+  it('asks before opening more windows than a readable grid holds', async () => {
+    const many = Array.from({ length: 20 }, (_, i) => `h${i}`)
+    const user = userEvent.setup()
+    render(<TerminalsModal open initial={many} connected={many} onClose={() => {}} />)
+    await user.click(screen.getByRole('button', { name: /Open 20 terminals/ }))
+    expect(launchTerminals).not.toHaveBeenCalled()
+    expect((await screen.findByTestId('risk-action')).textContent).toMatch(/Open 20 PuTTY windows/)
+    await user.click(screen.getByTestId('risk-ok'))
+    await waitFor(() => expect(launchTerminals).toHaveBeenCalledTimes(1))
+  })
+
+  it('says what every layout does and which hosts are not connected', async () => {
+    for (const o of LAYOUT_OPTIONS) expect(layoutHelp(o.value).length).toBeGreaterThan(10)
+    render(<TerminalsModal open initial={[]} connected={['web-1']} onClose={() => {}} />)
+    expect(screen.getByRole('button', { name: 'Open terminals' })).toBeTruthy()
   })
 
   it('opens the pre-selected hosts with tiling on by default', async () => {

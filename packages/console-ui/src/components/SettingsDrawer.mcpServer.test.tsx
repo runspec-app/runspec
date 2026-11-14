@@ -115,7 +115,7 @@ describe('McpServerTab', () => {
       invalid_tools: [{ name: 'internal-metric', reason: "'9' is not of type 'number'" }],
     })
     await act(async () => { render(<McpServerTab />) })
-    expect(await screen.findByText(/1 runnable\(s\) not published/)).toBeTruthy()
+    expect(await screen.findByText(/1 runnable not published/)).toBeTruthy()
     expect(screen.getByText('internal-metric')).toBeTruthy()
     expect(screen.getByText(/is not of type 'number'/)).toBeTruthy()
   })

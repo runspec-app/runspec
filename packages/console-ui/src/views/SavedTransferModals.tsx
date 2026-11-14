@@ -12,6 +12,8 @@ import {
 } from './savedTransfers'
 import { When } from '../when'
 import { useRiskConfirm } from '../components/risk'
+import { StatusTag } from '../components/kit'
+import { autonomyTagProps } from './formsShared'
 
 const { Text } = Typography
 
@@ -583,7 +585,13 @@ export function SavedTransfersListModal({ saved, onClose, onRun, onEdit, onNew }
       title: 'Agent', key: 'autonomy', width: 90,
       render: (_, t) => {
         const a = t.autonomy ?? 'confirm'
-        return <Tag color={a === 'autonomous' ? 'green' : a === 'manual' ? 'default' : 'gold'} style={{ fontSize: 11 }}>{a === 'confirm' ? 'asks first' : a === 'autonomous' ? 'runs' : 'never'}</Tag>
+        const { label } = autonomyTagProps(a)
+        return (
+          <StatusTag tone={a === 'autonomous' ? 'ok' : a === 'manual' ? 'attention' : 'neutral'}
+            tip={a === 'autonomous' ? 'The agent runs it without asking' : a === 'manual' ? 'Only a person can run it' : 'The agent asks you first'}>
+            {label}
+          </StatusTag>
+        )
       },
     },
     {

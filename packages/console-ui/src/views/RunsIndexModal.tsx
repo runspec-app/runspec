@@ -9,7 +9,8 @@ import {
   type HistoryDbAction, type HistoryDbInbox, type HistoryDbStats,
 } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
-import { fmtDayRange } from '../when'
+import { fmtDayRange, plural } from '../when'
+import { StatusTag, type StatusTone } from '../components/kit'
 
 const { Text } = Typography
 
@@ -22,8 +23,8 @@ const { Text } = Typography
 
 export interface RunsIndexTarget { host: string; group: string }
 
-const STATUS_COLOR: Record<string, string> = {
-  completed: 'green', failed: 'red', crashed: 'volcano', running: 'blue',
+const STATUS_TONE: Record<string, StatusTone> = {
+  completed: 'ok', failed: 'failed', crashed: 'failed', running: 'running',
 }
 
 export function humanBytes(n: number | undefined): string {
@@ -51,10 +52,10 @@ export function checkPruneAge(raw: string): { days: number | null; error?: strin
 }
 
 const ACTION_DONE: Record<HistoryDbAction, (n: number) => string> = {
-  prune: n => `Pruned ${n} row(s) from the runs index`,
-  reap: n => `Marked ${n} orphaned running row(s) crashed`,
-  reindex: n => `Reindexed ${n} run(s) from the audit logs`,
-  sweep: n => `Swept ${n} run(s) from the logs inbox into the index`,
+  prune: n => `Pruned ${plural(n, 'row')} from the runs index`,
+  reap: n => `Marked ${plural(n, 'orphaned running row')} crashed`,
+  reindex: n => `Reindexed ${plural(n, 'run')} from the audit logs`,
+  sweep: n => `Swept ${plural(n, 'run')} from the logs inbox into the index`,
 }
 
 const INBOX_PROBLEM: Record<string, string> = {
@@ -71,7 +72,7 @@ const INBOX_PROBLEM: Record<string, string> = {
 export function inboxSummary(ib: HistoryDbInbox | null | undefined): { ok: boolean; text: string } | null {
   if (!ib || ib.state === 'unsupported' || ib.state === 'no-logs') return null
   if (ib.state !== 'ok') return { ok: false, text: INBOX_PROBLEM[ib.state] ?? `logs inbox: ${ib.state}` }
-  const parts = [`${ib.files ?? 0} pending file(s)`]
+  const parts = [`${plural(ib.files ?? 0, 'pending file')}`]
   if (ib.running) parts.push(`${ib.running} running`)
   if (ib.finished) parts.push(`${ib.finished} awaiting sweep`)
   if (ib.subdirs) parts.push(`${ib.subdirs} subdirectory(ies) only root can remove`)
@@ -151,7 +152,7 @@ export function RunsIndexModal({ target, onClose }: {
   const inbox = inboxSummary(s?.inbox)
   const statusTags = s?.by_status
     ? Object.entries(s.by_status).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => (
-        <Tag key={k} color={STATUS_COLOR[k]}>{k} {v}</Tag>
+        <StatusTag key={k} tone={STATUS_TONE[k] ?? 'neutral'}>{k} {v}</StatusTag>
       ))
     : null
 
@@ -193,7 +194,7 @@ export function RunsIndexModal({ target, onClose }: {
             </Descriptions.Item>
             {(s.stale_running ?? 0) > 0 && (
               <Descriptions.Item label="Stale">
-                <Tag color="orange">{s.stale_running} orphaned running row(s)</Tag>
+                <StatusTag tone="attention">{plural(s.stale_running ?? 0, 'orphaned running row')}</StatusTag>
                 <Text type="secondary" style={{ fontSize: 12 }}>Reap marks them crashed.</Text>
               </Descriptions.Item>
             )}
@@ -206,7 +207,7 @@ export function RunsIndexModal({ target, onClose }: {
             )}
             {(s.log_pruned ?? 0) > 0 && (
               <Descriptions.Item label="Pruned logs">
-                {s.log_pruned} row(s) outlive their pruned log file
+                {plural(s.log_pruned ?? 0, 'row')} {s.log_pruned === 1 ? 'outlives its' : 'outlive their'} pruned log file
               </Descriptions.Item>
             )}
           </Descriptions>
@@ -222,7 +223,7 @@ export function RunsIndexModal({ target, onClose }: {
         {!isHome && (
           <Form.Item label="Run as" style={{ marginBottom: 12 }}
             help="Escalate to this OS user via sudo (pre-filled with the venv's owner). Blank runs as you.">
-            <Input value={runAs} onChange={e => setRunAs(e.target.value)} placeholder="(yourself)"
+            <Input aria-label="Run as" value={runAs} onChange={e => setRunAs(e.target.value)} placeholder="(yourself)"
               style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
           </Form.Item>
         )}

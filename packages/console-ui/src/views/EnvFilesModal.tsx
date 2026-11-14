@@ -59,6 +59,7 @@ export interface DraftRow {
   edited: boolean
   removed: boolean
   readers: EnvFileReader[]
+  shown?: boolean          // a revealed secret, visible until it hides again
 }
 
 export function draftFromView(view: EnvFileView): DraftRow[] {
@@ -153,15 +154,29 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
     return [...groups.values()]
   }, [targets])
 
+  // Closing, or switching view or file, drops unsaved edits: ask first, the
+  // way switching venvs already does.
+  const [dirty, setDirty] = useState(0)
+  const [modalApi, modalHolder] = Modal.useModal()
+  const guard = (then: () => void) => {
+    if (!dirty) { then(); return }
+    modalApi.confirm({
+      title: `Discard ${dirty} unsaved change${dirty === 1 ? '' : 's'}?`,
+      okText: 'Discard', okButtonProps: { danger: true }, autoFocusButton: 'cancel',
+      onOk: () => { setDirty(0); then() },
+    })
+  }
+
   return (
     <Modal
       open={open}
-      onCancel={onClose}
+      onCancel={() => guard(onClose)}
       footer={null}
       width={mode === 'many' ? 'min(1600px, 96vw)' : 1000}
       title={<span><CodeOutlined style={{ marginRight: 8 }} />Env files — <Text code>{ENV_FILE_NAMES[file]}</Text></span>}
       destroyOnHidden
     >
+      {modalHolder}
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
         {file === 'schedules'
           ? <>Each venv's <Text code>runspec_schedules.env</Text> is loaded only by runspec-scheduler's fires (cron, the daemon and Run now), on top of <Text code>.runspec_env</Text>. Put a schedule's service-account credentials here: console, agent and hand-run runs in the venv never see them. It needs runspec 0.82.0 and runspec-scheduler 0.7.1 in the venv, and should be owned by the account the fires run as.</>
@@ -173,13 +188,13 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
       <Space wrap style={{ marginBottom: 12 }}>
         <Segmented
           value={mode}
-          onChange={v => setMode(v as 'one' | 'many')}
+          onChange={v => guard(() => setMode(v as 'one' | 'many'))}
           options={[{ label: 'One venv', value: 'one' }, { label: 'Across venvs', value: 'many' }]}
         />
         <Segmented
           aria-label="Env file"
           value={file || 'runspec_env'}
-          onChange={v => setFile(v === 'schedules' ? 'schedules' : '')}
+          onChange={v => guard(() => setFile(v === 'schedules' ? 'schedules' : ''))}
           options={[
             { label: <Tooltip title="Every run in the venv loads it">.runspec_env</Tooltip>, value: 'runspec_env' },
             { label: <Tooltip title="Only scheduled fires load it">runspec_schedules.env</Tooltip>, value: 'schedules' },
@@ -187,15 +202,16 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
         />
       </Space>
       {mode === 'one'
-        ? <OneVenv key={file} file={file} targets={targets} options={options} loadingTargets={loadingTargets} initial={lastRef} onSelect={setLastRef} />
-        : <AcrossVenvs key={file} file={file} targets={targets} loadingTargets={loadingTargets} />}
+        ? <OneVenv key={file} file={file} targets={targets} options={options} loadingTargets={loadingTargets} initial={lastRef} onSelect={setLastRef} onDirty={setDirty} />
+        : <AcrossVenvs key={file} file={file} targets={targets} loadingTargets={loadingTargets} onDirty={setDirty} />}
     </Modal>
   )
 }
 
 // ── One venv ────────────────────────────────────────────────────────────────
 
-function OneVenv({ file, targets, options, loadingTargets, initial, onSelect }: {
+function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, onDirty }: {
+  onDirty: (n: number) => void
   file: EnvFileKind
   initial: EnvFileRef | null
   onSelect: (ref: EnvFileRef) => void
@@ -244,6 +260,8 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect }: 
 
   const changes = draftChanges(rows)
   const changeCount = Object.keys(changes.set).length + changes.unset.length
+  useEffect(() => { onDirty(changeCount) }, [changeCount, onDirty])
+  useEffect(() => () => onDirty(0), [onDirty])
 
   const update = (i: number, patch: Partial<DraftRow>) =>
     setRows(prev => prev.map((r, j) => (j === i ? { ...r, ...patch } : r)))
@@ -251,8 +269,12 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect }: 
   const reveal = async (i: number) => {
     if (!ref) return
     try {
-      const res = await bridge.env_file_reveal({ ...ref, key: rows[i].key })
-      update(i, { value: res.value, original: res.value, masked: false })
+      const key = rows[i].key
+      const res = await bridge.env_file_reveal({ ...ref, key })
+      // Shown straight away (it used to land in a still-dotted field), then
+      // hidden again after 30 seconds; the eye button shows it again.
+      update(i, { value: res.value, original: res.value, masked: false, shown: true })
+      window.setTimeout(() => setRows(prev => prev.map(x => (x.key === key ? { ...x, shown: false } : x))), 30_000)
     } catch (err) {
       message.error((err as Error)?.message || 'could not reveal')
     }
@@ -332,7 +354,10 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect }: 
           onChange: (e: React.ChangeEvent<HTMLInputElement>) => update(i, { value: e.target.value, edited: true }),
           style: { fontFamily: MONO_FONT, fontSize: 12 },
         }
-        return r.secret ? <Input.Password {...props} autoComplete="new-password" /> : <Input {...props} />
+        return r.secret
+          ? <Input.Password {...props} autoComplete="new-password"
+              visibilityToggle={{ visible: !!r.shown, onVisibleChange: v => update(i, { shown: v }) }} />
+          : <Input {...props} />
       },
     },
     {
@@ -612,7 +637,7 @@ function inScope(t: EnvFileTarget, scope: Scope): boolean {
   return true
 }
 
-function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; targets: EnvFileTarget[]; loadingTargets: boolean }) {
+function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFileKind; targets: EnvFileTarget[]; loadingTargets: boolean; onDirty: (n: number) => void }) {
   const supported = useMemo(() => targets.filter(t => t.supported), [targets])
   const unsupported = targets.length - supported.length
   const [views, setViews] = useState<Record<string, EnvFileView>>({})
@@ -779,6 +804,9 @@ function AcrossVenvs({ file, targets, loadingTargets }: { file: EnvFileKind; tar
   }
 
   const changes = gridChanges(draft, views)
+  const dirtyCount = changes.length
+  useEffect(() => { onDirty(dirtyCount) }, [dirtyCount, onDirty])
+  useEffect(() => () => onDirty(0), [onDirty])
   // The save summary lists identical changes once, with the venvs they go to.
   const changeGroups = useMemo(() => {
     const by = new Map<string, { set: string[]; unset: string[]; refs: string[] }>()

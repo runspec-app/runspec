@@ -20,10 +20,11 @@ import { Alert, App as AntApp, Button, Checkbox, ConfigProvider, Input, Modal, T
 import { AimOutlined, LockOutlined, SendOutlined, UnlockOutlined } from '@ant-design/icons'
 import { bridge, type TerminalWindow } from '../bridge'
 import {
-  DEFAULT_ACCENT, MONO_FONT, RADIUS, ThemeContext, UI_FONT, statusText, surfaces, textMuted, useIsDark,
+  BRAND_PRIMARY, DEFAULT_ACCENT, MONO_FONT, RADIUS, ThemeContext, UI_FONT, inkColors, readableAccent, statusText, surfaces,
+  textMuted, useIsDark, withAlpha,
 } from '../ThemeContext'
 import {
-  KEY_BUTTONS, describeResult, historyStep, planSend, pushHistory, signature, tickedIds,
+  KEY_BUTTONS, describeResult, historyStep, lateArrivals, planSend, pushHistory, signature, tickedIds,
 } from './sendBarModel'
 import { useRiskConfirm } from '../components/risk'
 
@@ -45,9 +46,25 @@ export function SendBar() {
   const [askRisk, riskHolder] = useRiskConfirm({ cover: true })
   const draft = useRef('')
 
+  // Windows listed on the first load are ticked (they were opened with the
+  // bar); ones that appear later join unticked and marked new, so a window
+  // opened elsewhere never receives a line nobody meant for it.
+  const seen = useRef<Set<string>>(new Set())
+  const loaded = useRef(false)
+  const [fresh, setFresh] = useState<Set<string>>(new Set())
   const refresh = useCallback(() => {
     bridge.terminal_windows()
-      .then(res => { setSupported(res.supported); setWindows(res.windows) })
+      .then(res => {
+        const late = lateArrivals(res.windows, seen.current, !loaded.current)
+        if (res.windows.length) loaded.current = true
+        res.windows.forEach(w => seen.current.add(w.id))
+        if (late.length) {
+          setUnticked(prev => new Set([...prev, ...late]))
+          setFresh(prev => new Set([...prev, ...late]))
+        }
+        setSupported(res.supported)
+        setWindows(res.windows)
+      })
       .catch(() => { /* bridge not ready yet — next poll */ })
   }, [])
 
@@ -64,6 +81,7 @@ export function SendBar() {
     if (!ticked.length || busy) return
     const plan = planSend({ ticked, line: opts.line, key: opts.key, hidden, remembered: confirmed.current })
     if (plan.kind === 'empty') {
+      setStatusWarn(false)
       setStatus(hidden
         ? 'Nothing typed: an empty password is not sent.'
         : 'Nothing typed. To press Enter in the terminals, use the Enter key button.')
@@ -90,10 +108,12 @@ export function SendBar() {
       if (opts.key) {
         const res = await bridge.send_to_terminals(ticked, '', false, opts.key)
         setStatus(describeResult(res, KEY_BUTTONS.find(k => k.key === opts.key)?.label ?? opts.key))
+        setStatusWarn(res.missing.length > 0)
       } else {
         const line = opts.line ?? ''
         const res = await bridge.send_to_terminals(ticked, line, true, '', hidden)
         setStatus(describeResult(res, hidden ? 'Hidden text' : 'Sent'))
+        setStatusWarn(res.missing.length > 0)
         if (!hidden) {
           const next = pushHistory(history, line)
           setHistory(next)
@@ -126,11 +146,15 @@ export function SendBar() {
     }
   }
 
-  const toggle = (id: string, on: boolean) => setUnticked(prev => {
-    const next = new Set(prev)
-    if (on) next.delete(id); else next.add(id)
-    return next
-  })
+  const toggle = (id: string, on: boolean) => {
+    setFresh(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n })
+    setUnticked(prev => {
+      const next = new Set(prev)
+      if (on) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  const [statusWarn, setStatusWarn] = useState(false)
 
   if (!supported) {
     return (
@@ -156,6 +180,7 @@ export function SendBar() {
           onClick={() => setUnticked(new Set(windows.map(w => w.id)))}>None</Button>
       </div>
       <div
+        role="group"
         aria-label="Terminals"
         style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 12px', maxHeight: 64, overflowY: 'auto', flexShrink: 0 }}
       >
@@ -167,7 +192,9 @@ export function SendBar() {
         {windows.map(w => (
           <span key={w.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
             <Checkbox checked={!unticked.has(w.id)} onChange={e => toggle(w.id, e.target.checked)}>
-              <span style={{ fontFamily: MONO_FONT, fontSize: 12, opacity: w.ready ? 1 : 0.5 }}>{w.host}</span>
+              <span style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{w.host}</span>
+              {!w.ready && <span style={{ fontSize: 11, color: muted }}> · not ready</span>}
+              {fresh.has(w.id) && <span style={{ fontSize: 11, color: statusText(isDark).warn }}> · new, tick to include</span>}
             </Checkbox>
             <Tooltip title={w.ready ? 'Bring this window to the front' : 'Window not open yet'}>
               <Button size="small" type="text" icon={<AimOutlined />} disabled={!w.ready}
@@ -225,7 +252,12 @@ export function SendBar() {
               onClick={() => { void send({ key: k.key }) }}>{k.label}</Button>
           </Tooltip>
         ))}
-        <span role="status" style={{ fontSize: 12, color: muted, marginLeft: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+        <span role="status" title={status} style={{
+          fontSize: 12, marginLeft: 6, flex: 1, minWidth: 0,
+          // A partial send is a fleet left in two states: say so in the warning
+          // colour, wrapped rather than cut off.
+          color: statusWarn ? statusText(isDark).warn : muted, fontWeight: statusWarn ? 600 : undefined,
+        }}>
           {status}
         </span>
       </div>
@@ -239,6 +271,14 @@ export function SendBarApp() {
     try { return localStorage.getItem('theme') !== 'light' } catch { return true }
   })()
   const sf = surfaces(isDark)
+  // The white-label accent, as the main window uses it (it used to be the
+  // default teal here, off-brand next to a branded console).
+  const [brand, setBrand] = useState('')
+  useEffect(() => {
+    Promise.resolve(bridge.brand_theme()).then(t => setBrand(t?.accent_color ?? '')).catch(() => {})
+  }, [])
+  const accent = brand ? readableAccent(brand, isDark) : (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
+  const ink = inkColors(isDark)
   useEffect(() => {
     document.title = 'Send to terminals'
     document.body.style.background = sf.base
@@ -253,11 +293,27 @@ export function SendBarApp() {
           fontFamily: UI_FONT,
           fontFamilyCode: MONO_FONT,
           borderRadius: RADIUS.md,
-          colorPrimary: isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light,
+          colorPrimary: brand || BRAND_PRIMARY,
+          // Text and focus in the accent tuned for these surfaces (Ant's default
+          // link blue was 2.7:1 on dark), primary buttons in ink, as in the
+          // main window.
+          colorLink: accent,
+          colorLinkHover: accent,
+          colorPrimaryBorder: accent,
+          lineWidthFocus: 2,
+          colorTextPlaceholder: textMuted(isDark),
           colorBgBase: sf.base,
           colorBgLayout: sf.base,
           colorBgContainer: sf.raised,
           colorBgElevated: sf.overlay,
+        },
+        components: {
+          Button: {
+            colorPrimary: ink.bg, colorPrimaryHover: ink.hover, colorPrimaryActive: ink.active,
+            primaryColor: ink.text, primaryShadow: 'none', colorPrimaryBorder: accent,
+          },
+          Input: { activeBorderColor: accent, hoverBorderColor: accent, activeShadow: `0 0 0 3px ${withAlpha(accent, 0.18)}` },
+          Checkbox: { colorPrimary: accent, colorPrimaryHover: accent, colorWhite: sf.base },
         },
       }}>
         <AntApp>

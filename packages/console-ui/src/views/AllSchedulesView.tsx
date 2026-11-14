@@ -720,6 +720,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         <Input.Search
           allowClear
+          aria-label="Search schedules"
           placeholder="Search id, runnable, args · host:web group:prod"
           value={filters.search}
           onChange={e => setFilters({ search: e.target.value })}

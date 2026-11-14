@@ -35,7 +35,7 @@ import { KnowledgeSync, SyncResultBanner } from './KnowledgeSync'
 import { KnowledgeTools } from './KnowledgeTools'
 import { pageTargetFor } from './KnowledgeEdits'
 import type { SyncResult } from '../components/MemorySyncTab'
-import { When } from '../when'
+import { When, plural } from '../when'
 import { PageToolbar, SectionSwitch } from '../components/kit'
 
 const RANGE_OPTIONS = [
@@ -172,7 +172,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
     try {
       const r = await bridge.knowledge_capture(rangeDays)
       if (r.ok) {
-        const linked = r.relinked ? ` Linked ${r.relinked} earlier fact(s) to your hosts and groups.` : ''
+        const linked = r.relinked ? ` Linked ${plural(r.relinked, 'earlier fact')} to your hosts and groups.` : ''
         message.success(`Captured ${r.observed ?? 0} facts from ${r.runs ?? 0} runs (${rangeLabel(rangeDays)}) and your config.${linked}`)
       }
       else message.error(r.error || 'Capture failed.')
@@ -188,7 +188,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
       else if (r.note) message.info(r.note)
       else {
         const more = r.remaining ? ` ${r.remaining} more batch(es) to read: click again to continue.` : ''
-        message.success(`Read ${r.conversations ?? 0} chat(s): ${r.proposed ?? 0} suggested fact(s) added to the inbox.${more}`, more ? 6 : 3)
+        message.success(`Read ${plural(r.conversations ?? 0, 'chat')}: ${plural(r.proposed ?? 0, 'suggested fact')} added to the inbox.${more}`, more ? 6 : 3)
       }
       if (r.ok && (r.proposed ?? 0) > 0) setTab('inbox')
       await refresh()
@@ -555,7 +555,7 @@ export function GraphCanvas({ nodes, edges, selected, onSelect, onClear, isStale
                     {n.name.length > 28 ? n.name.slice(0, 27) + '…' : n.name}
                   </text>
                 )}
-                <title>{`${n.id} · ${n.facts} fact(s) · weight ${n.weight}${stale ? ' · not installed on any connected host' : ''}`}</title>
+                <title>{`${n.id} · ${plural(n.facts, 'fact')} · weight ${n.weight}${stale ? ' · not installed on any connected host' : ''}`}</title>
               </g>
             )
           })}
@@ -603,7 +603,7 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, onOpenWik
     body = (
       <>
         <div style={{ fontWeight: 600, color: textColor(isDark), marginBottom: 8 }}>
-          {results.length} result(s) for “{query}”
+          {plural(results.length, 'result')} for “{query}”
         </div>
         {results.map(f => <FactRow key={f.id} fact={f} onEntity={onEntity} onEdit={onEdit} onRetire={onRetire} pins={pins} />)}
       </>

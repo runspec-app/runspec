@@ -30,6 +30,7 @@ import {
   ROOT_SCHEDULES_NOTE,
 } from './ProvisionModal'
 import { venvChoices, venvRoot } from './DeprovisionModal'
+import { StatusIcon, pressable } from '../components/kit'
 
 export { ROOT_SCHEDULES_NOTE }
 
@@ -419,10 +420,10 @@ export function UpdateVenvModal({
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
               <Text style={{ fontSize: 12, color: textSecondary(isDark) }}>Hosts</Text>
               {(opts?.groups ?? []).map(g => (
-                <Tag key={`g:${g}`} style={{ cursor: 'pointer', margin: 0 }} onClick={() => setSelected(p => [...new Set([...p, ...inChoice(membersOf(opts?.hosts ?? [], 'group', g))])])}>+ Group: {g}</Tag>
+                <Tag key={`g:${g}`} style={{ cursor: 'pointer', margin: 0 }} {...pressable(() => setSelected(p => [...new Set([...p, ...inChoice(membersOf(opts?.hosts ?? [], 'group', g))])]))}>+ Group: {g}</Tag>
               ))}
               {(opts?.profiles ?? []).map(p => (
-                <Tag key={`p:${p}`} style={{ cursor: 'pointer', margin: 0 }} onClick={() => setSelected(s => [...new Set([...s, ...inChoice(membersOf(opts?.hosts ?? [], 'profile', p))])])}>+ Profile: {p}</Tag>
+                <Tag key={`p:${p}`} style={{ cursor: 'pointer', margin: 0 }} {...pressable(() => setSelected(s => [...new Set([...s, ...inChoice(membersOf(opts?.hosts ?? [], 'profile', p))])]))}>+ Profile: {p}</Tag>
               ))}
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setSelected(inChoice([...connected]))}>All</Button>
               {selected.length > 0 && <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setSelected([])}>Clear</Button>}
@@ -442,7 +443,7 @@ export function UpdateVenvModal({
               const notes = r.ok ? updateNotes(r, form) : []
               return (
                 <div key={r.host} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12 }}>
-                  {r.ok ? <CheckCircleFilled style={{ color: textMuted(isDark), marginTop: 3 }} /> : <CloseCircleFilled style={{ color: '#ff4d4f', marginTop: 3 }} />}
+                  <StatusIcon status={r.ok ? 'ok' : 'failed'} style={{ marginTop: 3 }} />
                   <span style={{ fontFamily: MONO_FONT, minWidth: 100 }}>{r.host}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     {r.ok && (

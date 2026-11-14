@@ -125,8 +125,8 @@ export function OtherHostsSection(props: OtherHostsSectionProps) {
   const hostMenu = (h: OtherHost): MenuProps['items'] => {
     const switchTo = h.profiles.filter(p => p.toLowerCase() !== activeProfile.toLowerCase())
     return [
-      { key: 'open_terminal', icon: <CodeOutlined />, label: 'Open SSH terminal', onClick: () => onOpenTerminal(h.name) },
-      { key: 'open_terminals', icon: <CodeOutlined />, label: 'Open SSH terminals…', onClick: () => onChooseTerminals([h.name]) },
+      { key: 'open_terminal', icon: <CodeOutlined />, label: 'Open SSH terminal here', onClick: () => onOpenTerminal(h.name) },
+      { key: 'open_terminals', icon: <CodeOutlined />, label: 'Open SSH terminals on several hosts…', onClick: () => onChooseTerminals([h.name]) },
       { key: 'copy_ssh_id', icon: <KeyOutlined />, label: 'Copy SSH public key…', onClick: () => onCopyKey(h.name) },
       { type: 'divider' },
       {

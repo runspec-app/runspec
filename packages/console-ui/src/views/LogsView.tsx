@@ -17,7 +17,7 @@ import { MONO_FONT } from '../ThemeContext'
 import { EmptyState, IconAction, PageToolbar, RowActions, StatusTag, type RowAction } from '../components/kit'
 import { RunsIndexModal, type RunsIndexTarget } from './RunsIndexModal'
 import { LogCleanupModal, type LogCleanupTarget } from './LogCleanupModal'
-import { When } from '../when'
+import { When, plural } from '../when'
 
 // Analytics is a per-host drill off the Logs tab (not a standalone tab): the
 // operator opens a host's disk usage here, then its run analytics in a drawer,
@@ -123,18 +123,18 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
         const r = await bridge.logs_prune(host, group, runnable, olderThan.trim() || undefined, maxFiles ?? undefined, maxTotalSize.trim() || undefined, dryRun, runAs.trim() || undefined)
         if (!r.ok) { setError(r.error || 'Prune failed.'); return }
         if (dryRun) {
-          setPreview(`${r.count ?? 0} file(s) would be deleted — ${humanSize(r.freed_bytes)} freed.`)
+          setPreview(`${plural(r.count ?? 0, 'file')} would be deleted — ${humanSize(r.freed_bytes)} freed.`)
         } else {
-          message.success(`Deleted ${r.count ?? 0} file(s) — ${humanSize(r.freed_bytes)} freed`)
+          message.success(`Deleted ${plural(r.count ?? 0, 'file')} — ${humanSize(r.freed_bytes)} freed`)
           onApplied(host); onClose()
         }
       } else {
         const r = await bridge.logs_compact(host, group, runnable, olderThan.trim() || undefined, gzip, dryRun, runAs.trim() || undefined)
         if (!r.ok) { setError(r.error || 'Compact failed.'); return }
         if (dryRun) {
-          setPreview(`${r.compacted ?? 0} file(s) would roll into ${r.archives?.length ?? 0} archive(s).`)
+          setPreview(`${plural(r.compacted ?? 0, 'file')} would roll into ${plural(r.archives?.length ?? 0, 'archive')}.`)
         } else {
-          message.success(`Compacted ${r.compacted ?? 0} file(s) into ${r.archives?.length ?? 0} archive(s)`)
+          message.success(`Compacted ${plural(r.compacted ?? 0, 'file')} into ${plural(r.archives?.length ?? 0, 'archive')}`)
           onApplied(host); onClose()
         }
       }
@@ -525,7 +525,7 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
               )}
               {v.ok ? (
                 <Text type="secondary" style={{ fontSize: 13 }}>
-                  {v.total_files ?? 0} file(s), {humanSize(v.total_bytes)}
+                  {plural(v.total_files ?? 0, 'file')}, {humanSize(v.total_bytes)}
                 </Text>
               ) : (
                 <StatusTag tone="failed">{v.error || 'unavailable'}</StatusTag>

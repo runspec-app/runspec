@@ -12,7 +12,7 @@ import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, Synthet
 import { cloneElement, isValidElement, useState } from 'react'
 import { Button, Dropdown, Modal, Segmented, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
-import { CloseOutlined, EllipsisOutlined, ExclamationCircleOutlined, InfoCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
+import { CheckCircleFilled, CloseCircleFilled, CloseOutlined, EllipsisOutlined, ExclamationCircleOutlined, InfoCircleOutlined, PauseCircleOutlined, WarningFilled } from '@ant-design/icons'
 
 import {
   dangerColors, statusText, textColor, textMuted, textSecondary, useAccent, useIsDark, withAlpha, MONO_FONT, RADIUS,
@@ -340,6 +340,18 @@ export function OnceHint({ id, children, style }: { id: string; children: ReactN
 
 /** One line saying why there is nothing here, and at most one thing to do
  *  about it. Replaces Ant's stock <Empty> illustration. */
+/** A done / failed / warning mark for a per-host result line, in the theme's
+ *  status tones (never a fixed green or red) and named for screen readers. */
+export function StatusIcon({ status, style }: { status: 'ok' | 'failed' | 'warn' | 'done'; style?: CSSProperties }) {
+  const isDark = useIsDark()
+  const st = statusText(isDark)
+  const s = { fontSize: 14, ...style }
+  if (status === 'ok') return <CheckCircleFilled role="img" aria-label="done" style={{ color: st.ok, ...s }} />
+  if (status === 'done') return <CheckCircleFilled role="img" aria-label="done" style={{ color: textMuted(isDark), ...s }} />
+  if (status === 'warn') return <WarningFilled role="img" aria-label="warning" style={{ color: st.warn, ...s }} />
+  return <CloseCircleFilled role="img" aria-label="failed" style={{ color: st.error, ...s }} />
+}
+
 /** A Settings section's Save, pinned to the bottom of the scrolling content
  *  so it is always in reach (it used to sit mid-page, after one column). */
 export function SaveBar({ children, hint }: { children: ReactNode; hint?: ReactNode }) {

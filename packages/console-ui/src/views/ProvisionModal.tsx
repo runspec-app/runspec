@@ -15,6 +15,7 @@ import {
 } from '../bridge'
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { PathInput } from './PathInput'
+import { StatusIcon, StatusTag, pressable } from '../components/kit'
 
 const { Text } = Typography
 
@@ -242,11 +243,11 @@ export function ProgressPanel({ progress, stepLabel = STEP_LABEL }: { progress: 
           key: host,
           label: (
             <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              {!p.done ? <LoadingOutlined /> : p.ok ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
+              {!p.done ? <LoadingOutlined aria-label="working" /> : <StatusIcon status={p.ok ? 'ok' : 'failed'} />}
               <span style={{ fontFamily: MONO_FONT }}>{host}</span>
               <Text type="secondary" style={{ fontSize: 12 }}>{p.done ? p.summary : stepLabel[p.step] ?? p.step}</Text>
               {p.scheduler && <Tooltip title={p.scheduler.reason}><Tag style={{ margin: 0, fontSize: 11 }}>scheduler: {p.scheduler.manager}</Tag></Tooltip>}
-              {(p.warnings ?? []).length > 0 && <Tooltip title={(p.warnings ?? []).join('\n')}><WarningFilled style={{ color: '#faad14' }} /></Tooltip>}
+              {(p.warnings ?? []).length > 0 && <Tooltip title={(p.warnings ?? []).join('\n')}><span><StatusIcon status="warn" /></span></Tooltip>}
             </span>
           ),
           children: (
@@ -480,7 +481,7 @@ export function ProvisionModal({
     label: (
       <span style={{ fontFamily: MONO_FONT, fontSize: 12 }}>
         {p.path} <Text type="secondary" style={{ fontSize: 11 }}>{p.version}{p.real !== p.path ? ` → ${p.real}` : ''}</Text>
-        {!p.runspec_ok && <Tag color="warning" style={{ marginLeft: 6, fontSize: 11 }}>too old for runspec</Tag>}
+        {!p.runspec_ok && <StatusTag tone="attention" style={{ marginLeft: 6 }}>too old for runspec</StatusTag>}
       </span>
     ),
   }))
@@ -522,10 +523,10 @@ export function ProvisionModal({
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
             {label('Hosts')}
             {(opts?.groups ?? []).map(g => (
-              <Tag key={`g:${g}`} style={{ cursor: 'pointer', margin: 0 }} onClick={() => addMembers('group', g)}>+ Group: {g}</Tag>
+              <Tag key={`g:${g}`} style={{ cursor: 'pointer', margin: 0 }} {...pressable(() => addMembers('group', g))}>+ Group: {g}</Tag>
             ))}
             {(opts?.profiles ?? []).map(p => (
-              <Tag key={`p:${p}`} style={{ cursor: 'pointer', margin: 0 }} onClick={() => addMembers('profile', p)}>+ Profile: {p}</Tag>
+              <Tag key={`p:${p}`} style={{ cursor: 'pointer', margin: 0 }} {...pressable(() => addMembers('profile', p))}>+ Profile: {p}</Tag>
             ))}
             {selected.length > 0 && <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setSelected([])}>Clear</Button>}
           </div>
@@ -541,7 +542,7 @@ export function ProvisionModal({
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
           <div>
             {label('Parent folder')}
-            <PathInput host={refHost || 'host'} value={parent} onChange={setParent} dirsOnly browseDisabled={!refHost} placeholder="/opt/venvs" />
+            <PathInput host={refHost || 'host'} value={parent} onChange={setParent} dirsOnly browseDisabled={!refHost} placeholder="/opt/venvs" ariaLabel="Parent folder" />
           </div>
           <div>
             {label('Venv name')}
@@ -563,6 +564,7 @@ export function ProvisionModal({
           {pyMode === 'path' ? (
             <Space.Compact style={{ width: '100%' }}>
               <Select
+                aria-label="Python interpreter"
                 style={{ flex: 1 }}
                 value={pyPath || undefined}
                 onChange={setPyPath}
@@ -573,7 +575,7 @@ export function ProvisionModal({
                 notFoundContent={pyLoading ? <LoadingOutlined /> : 'None found; browse for one'}
               />
               <div style={{ width: 220 }}>
-                <PathInput host={refHost || 'host'} value={browsePy} onChange={setBrowsePy} browseDisabled={!refHost} placeholder="or browse to one…" />
+                <PathInput host={refHost || 'host'} value={browsePy} onChange={setBrowsePy} browseDisabled={!refHost} placeholder="or browse to one…" ariaLabel="Python interpreter path" />
               </div>
               <Tooltip title="Check this interpreter on the host and pick it">
                 <Button disabled={!browsePy.trim().startsWith('/')} onClick={() => { loadPythons(browsePy.trim()); setBrowsePy('') }}>Use</Button>
@@ -599,18 +601,19 @@ export function ProvisionModal({
           </div>
           <div>
             {label('Become via')}
-            <Select value={become} onChange={setBecome} options={[{ value: 'sudo', label: 'sudo' }, { value: 'su', label: 'su' }]} style={{ width: '100%' }} disabled={!runAs.trim()} />
+            <Select aria-label="Become via" value={become} onChange={setBecome} options={[{ value: 'sudo', label: 'sudo' }, { value: 'su', label: 'su' }]} style={{ width: '100%' }} disabled={!runAs.trim()} />
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
           <div>
             {label('Packages (runspec is always installed)')}
-            <Select mode="tags" value={packages} onChange={setPackages} placeholder="runspec-linux, runspec-fs…" style={{ width: '100%' }} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
+            <Select aria-label="Packages" mode="tags" value={packages} onChange={setPackages} placeholder="runspec-linux, runspec-fs…" style={{ width: '100%' }} tokenSeparators={[',', ' ']} open={false} suffixIcon={null} />
           </div>
           <div>
             {label('Package index')}
             <Select
+              aria-label="Package index"
               value={repo}
               onChange={setRepo}
               style={{ width: '100%' }}
@@ -658,7 +661,7 @@ export function ProvisionModal({
           {label(`Preflight: ${readyHosts.length} of ${rows.length} ready (nothing has been changed yet)`)}
           {rows.map(r => (
             <div key={r.host} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12 }}>
-              {r.ok ? <CheckCircleFilled style={{ color: '#52c41a', marginTop: 3 }} /> : <CloseCircleFilled style={{ color: '#ff4d4f', marginTop: 3 }} />}
+              <StatusIcon status={r.ok ? 'ok' : 'failed'} style={{ marginTop: 3 }} />
               <span style={{ fontFamily: MONO_FONT, minWidth: 110 }}>{r.host}</span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 {r.python && <Text style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{r.python} {r.version && `(${r.version})`}</Text>}

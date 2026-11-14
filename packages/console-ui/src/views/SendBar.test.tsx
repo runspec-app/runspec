@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 
 import { SendBar } from './SendBar'
 import {
-  CONFIRM_OVER, describeResult, historyStep, planSend, pushHistory, signature, tickedIds,
+  CONFIRM_OVER, describeResult, historyStep, lateArrivals, planSend, pushHistory, signature, tickedIds,
 } from './sendBarModel'
 import type { TerminalWindow } from '../bridge'
 
@@ -59,6 +59,11 @@ describe('send bar helpers', () => {
     expect(planSend({ ticked: many, line: 's3cret', hidden: true, remembered: null })).toEqual({ kind: 'send' })
   })
 
+  it('treats windows that appear after the first list as late', () => {
+    expect(lateArrivals(WINS, new Set(), true)).toEqual([])
+    expect(lateArrivals(WINS, new Set(['10', '11']), false)).toEqual(['12'])
+  })
+
   it('ticks every listed window except the unticked ones', () => {
     expect(tickedIds(WINS, new Set(['11', 'gone']))).toEqual(['10', '12'])
   })
@@ -90,7 +95,7 @@ describe('SendBar', () => {
     const user = userEvent.setup()
     render(<SendBar />)
     await screen.findByText('web-01')
-    await user.click(screen.getByRole('checkbox', { name: 'db-01' }))
+    await user.click(screen.getByRole('checkbox', { name: /db-01 · not ready/ }))
     expect(screen.getByText('2 of 3 terminals ticked')).toBeTruthy()
     await user.type(screen.getByLabelText('Command'), 'uptime{Enter}')
     expect(sendToTerminals).toHaveBeenCalledWith(['10', '11'], 'uptime', true, '', false)
@@ -161,6 +166,27 @@ describe('SendBar', () => {
     await waitFor(() => expect(sendToTerminals).toHaveBeenCalledTimes(2))
     await user.type(screen.getByLabelText('Command'), 'id{Enter}')
     await waitFor(() => expect(sendToTerminals).toHaveBeenCalledTimes(3))
+  })
+
+  it('a window opened later joins unticked, marked new', async () => {
+    terminalWindows.mockResolvedValueOnce({ supported: true, windows: WINS.slice(0, 2), keys: [] })
+    render(<SendBar />)
+    await screen.findByText('web-01')
+    // the next poll lists db-01 too
+    expect(await screen.findByText(/new, tick to include/, undefined, { timeout: 3000 })).toBeTruthy()
+    expect((screen.getByRole('checkbox', { name: /db-01/ }) as HTMLInputElement).checked).toBe(false)
+    expect(screen.getByText('2 of 3 terminals ticked')).toBeTruthy()
+  })
+
+  it('a partial send is reported in the warning colour', async () => {
+    sendToTerminals.mockResolvedValue({ sent: ['web-01'], missing: ['db-01'] })
+    const user = userEvent.setup()
+    render(<SendBar />)
+    await screen.findByText('web-01')
+    await user.type(screen.getByLabelText('Command'), 'uptime{Enter}')
+    const status = await screen.findByRole('status')
+    await waitFor(() => expect(status.textContent).toMatch(/Not sent to 1/))
+    expect(status.style.fontWeight).toBe('600')
   })
 
   it('says it is Windows only elsewhere', async () => {

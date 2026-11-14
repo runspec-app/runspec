@@ -9,6 +9,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.433.0] — 2026-11-14
+
+### Changed
+
+- **The secondary windows use the theme's status colours.** Denylist, Runs
+  index, Saved transfers, Provision, Update and Deprovision venv, Copy key to
+  all hosts and Open SSH terminals drew status with Ant's preset tag colours
+  and fixed greens and reds, which ignored dark/light and the white-label
+  accent (the Terminals connection dot was 1.2:1 on dark). They now use
+  `StatusTag` and a new `StatusIcon` (named for screen readers). A test
+  (`colourDiscipline.test.ts`) stops new preset tag colours and hex literals in
+  views, with a per-file baseline for the ones left to burn down.
+- **Focus and checked states are visible on the dark theme.** A focused field's
+  border, and a checked switch, checkbox or radio, used the raw brand colour
+  (1.2:1 on the dark dialogs); they now use the readable accent.
+- **Send to terminals follows the brand.** It used the default teal and Ant's
+  link blue (2.7:1 on dark); it now uses the white-label accent, ink buttons
+  and readable links like the main window. A window opened after the bar is
+  already listing joins unticked and marked new, a window that isn't ready says
+  so in words, and a partial send is reported in the warning colour instead of
+  a cut-off grey line.
+- **Open SSH terminals.** Opening more than 16 windows asks first, including a
+  group's one-click open (which now goes through the dialog). Every layout has
+  a line of help, including Cascade and Don't arrange, and a host that isn't
+  connected says so in words. The host menu says **Open SSH terminal here** and
+  **Open SSH terminals on several hosts…**.
+- **Env files.** Reveal shows the value at once (it used to land in a field
+  that was still dots) and hides it again after 30 seconds. Closing the
+  window, or switching view or file, with unsaved edits asks first.
+- **Copy key to all hosts.** A name filter, **All**, **Not connected** and
+  **None**, and a "selected" count, for fleets of many hosts. Enter in the
+  password field no longer copies to every host; the button does.
+- **Labels and keyboard.** Fields that had only a placeholder or an unlinked
+  label now have accessible names (Denylist, Provision, Terminals, Deprovision,
+  Runs index, the chat box, the Schedules search). The **+ Group** and
+  **+ Profile** chips in Provision, Update and Deprovision work from the
+  keyboard. Counts say "1 file" / "3 files" instead of "file(s)" in Runs index,
+  Logs, History, Knowledge, Improve and Memory Sync.
+
 ## [0.432.0] — 2026-11-14
 
 ### Changed

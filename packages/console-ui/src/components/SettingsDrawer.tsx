@@ -4450,7 +4450,7 @@ export function ConfigSyncTab() {
             Wrote: {result.written?.length ? <code>{result.written.join(', ')}</code> : 'nothing'}.
             {result.skipped?.length ? <> Skipped (not in repo): <code>{result.skipped.join(', ')}</code>.</> : null}
             {result.backups?.length ? <> Backed up {plural(result.backups.length, 'file')}.</> : null}
-            {result.pruned?.length ? <> Pruned {result.pruned.length} old backup(s).</> : null}
+            {result.pruned?.length ? <> Pruned {plural(result.pruned.length, 'old backup')}.</> : null}
             {' '}Hosts and triggers reloaded — no restart needed.
           </span>} />
       )}
@@ -6620,7 +6620,7 @@ export function McpServerTab() {
               type="warning"
               showIcon
               style={{ marginBottom: 10 }}
-              message={`${status.invalid_tools.length} runnable(s) not published — invalid tool schema`}
+              message={`${plural(status.invalid_tools.length, 'runnable')} not published — invalid tool schema`}
               description={
                 <div style={{ fontSize: 13 }}>
                   <div style={{ marginBottom: 6 }}>

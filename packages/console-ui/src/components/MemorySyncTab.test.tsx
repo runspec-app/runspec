@@ -46,7 +46,7 @@ describe('refreshText', () => {
   it('describes each outcome', () => {
     expect(refreshText({ ok: true, pages: 0 }).text).toMatch(/already up to date/)
     expect(refreshText({ ok: true, pages: 3, changed: true, branch: 'refresh/runspec-docs' }).text)
-      .toMatch(/Pushed 3 changed page\(s\) to refresh\/runspec-docs/)
+      .toMatch(/Pushed 3 changed pages to refresh\/runspec-docs/)
     expect(refreshText({ ok: true, pages: 3, changed: false, branch: 'r' }).text).toMatch(/already has these changes/)
     expect(refreshText({ ok: false, error: 'nope' })).toEqual({ ok: false, text: 'nope' })
     expect(createText({ ok: false }).ok).toBe(false)

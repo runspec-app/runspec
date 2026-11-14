@@ -48,7 +48,7 @@ describe('DenylistModal', () => {
   it('queries the connected scope once on open and filters client-side when hosts are picked', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
     await screen.findByText('1 rule')
-    await screen.findByText('ALL')
+    await screen.findByText('all blocked')
     expect(denylistStatus).toHaveBeenCalledTimes(1)
     expect(denylistStatus.mock.calls[0][0]).toEqual(SCOPE)
 
@@ -59,7 +59,7 @@ describe('DenylistModal', () => {
       await user.click(picker)
       await user.click(await screen.findByTitle('prod-1 (Production)'))
     })
-    await waitFor(() => expect(screen.queryByText('ALL')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('all blocked')).toBeNull())
     expect(screen.getByText('1 rule')).toBeTruthy()
     expect(denylistStatus).toHaveBeenCalledTimes(1)
 

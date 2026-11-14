@@ -42,12 +42,14 @@ interface PathInputProps {
   // Settings). When given it replaces the default bridge.list_dir(host, …) call
   // for both inline autocomplete and the browse modal.
   lister?: (path: string, dirsOnly: boolean) => Promise<DirListing>
+  // The field's accessible name, when its visible label isn't linked to it.
+  ariaLabel?: string
   // Disable the browse button (e.g. no hostname entered yet for an unsaved host).
   // The text field stays editable so a path can still be typed by hand.
   browseDisabled?: boolean
 }
 
-export function PathInput({ host, value, placeholder, dirsOnly, error, onChange, runnable, runAs, group, lister, browseDisabled }: PathInputProps) {
+export function PathInput({ host, value, placeholder, dirsOnly, error, onChange, runnable, runAs, group, lister, browseDisabled, ariaLabel }: PathInputProps) {
   const [options, setOptions] = useState<{ value: string; label: React.ReactNode }[]>([])
   const [browseOpen, setBrowseOpen] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -113,6 +115,7 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
               undersized box in the dark theme. Default size matches the other
               form controls. */}
           <Input
+            aria-label={ariaLabel}
             placeholder={placeholder ?? (dirsOnly ? '/path/to/dir' : '/path/to/file')}
             status={error ? 'error' : undefined}
             style={inputStyle}

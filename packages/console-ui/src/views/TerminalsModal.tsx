@@ -14,10 +14,12 @@ import { Modal, Alert, Button, Checkbox, Select, Space, Typography, message } fr
 import { CodeOutlined } from '@ant-design/icons'
 import { bridge, type HostProfile, type JumpHost, type LaunchTerminalsResult } from '../bridge'
 import {
+  layoutHelp,
   GRID_MAX, LAYOUT_OPTIONS, addToSelection, hostsInGroup, hostsInProfile, launchWithLayout, readLayoutPref,
   readSendBarPref, writeLayoutPref, writeSendBarPref, type TerminalLayout,
 } from './terminals'
 import { MONO_FONT, textMuted, useIsDark } from '../ThemeContext'
+import { useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -64,17 +66,30 @@ export function TerminalsModal({ open, onClose, initial, connected }: TerminalsM
       value: h.name,
       label: (
         <span style={{ fontFamily: MONO_FONT }}>
-          <span style={{ color: connectedSet.has(h.name) ? '#52c41a' : '#595959', marginRight: 6 }}>●</span>
           {h.name}
+          {!connectedSet.has(h.name) && <span style={{ color: textMuted(isDark), fontFamily: 'inherit' }}> · not connected</span>}
         </span>
       ),
     })),
-    [jumpHosts, connectedSet],
+    [jumpHosts, connectedSet, isDark],
   )
   const allConnected = jumpHosts.map(h => h.name).filter(n => connectedSet.has(n))
 
+  const [askRisk, riskHolder] = useRiskConfirm()
   const launch = async () => {
     if (!selected.length) return
+    // Opening more windows than fit a readable grid is a lot to undo by hand.
+    if (selected.length > GRID_MAX) {
+      const a = await askRisk({
+        level: 'fleet',
+        title: `Open ${selected.length} terminal windows?`,
+        action: `Open ${selected.length} PuTTY windows on this screen`,
+        targets: selected,
+        consequence: `More than ${GRID_MAX} windows are too small to tile, so they may be cascaded.`,
+        okText: `Open ${selected.length}`,
+      })
+      if (!a.ok) return
+    }
     setBusy(true)
     writeLayoutPref(layout)
     writeSendBarPref(sendBar)
@@ -109,14 +124,16 @@ export function TerminalsModal({ open, onClose, initial, connected }: TerminalsM
           disabled={!selected.length}
           onClick={launch}
         >
-          Open {selected.length || ''} terminal{selected.length === 1 ? '' : 's'}
+          {selected.length ? `Open ${selected.length} terminal${selected.length === 1 ? '' : 's'}` : 'Open terminals'}
         </Button>,
       ]}
     >
+      {riskHolder}
       <Space direction="vertical" style={{ width: '100%' }} size={10}>
         <Space wrap size={6}>
           <Select
             size="small"
+            aria-label="Add a group"
             placeholder="Add a group…"
             value={null}
             style={{ minWidth: 150 }}
@@ -127,6 +144,7 @@ export function TerminalsModal({ open, onClose, initial, connected }: TerminalsM
           />
           <Select
             size="small"
+            aria-label="Add a profile"
             placeholder="Add a profile…"
             value={null}
             style={{ minWidth: 150 }}
@@ -163,20 +181,12 @@ export function TerminalsModal({ open, onClose, initial, connected }: TerminalsM
             popupMatchSelectWidth={false}
           />
         </Space>
-        {layout !== 'none' && layout !== 'cascade' && (
-          <Text style={{ fontSize: 12, color: textMuted(isDark) }}>
-            {layout === 'columns' ? 'Full-height windows in one row, good for an ultrawide.'
-              : layout === 'rows' ? 'Full-width windows stacked top to bottom.'
-                : layout === 'compact' ? 'Terminal-sized windows packed from the top-left corner, the same size on any screen.'
-                  : 'A near-square grid that fills the screen.'}
-            {' '}If the windows would be too small to read, a grid or cascade is used instead.
-          </Text>
-        )}
-        {layout === 'grid' && selected.length > GRID_MAX && (
-          <Text style={{ fontSize: 12, color: textMuted(isDark) }}>
-            With more than {GRID_MAX} windows a grid cell gets too small to read, so they may be cascaded instead.
-          </Text>
-        )}
+        <Text style={{ fontSize: 12, color: textMuted(isDark) }} data-testid="layout-help">
+          {layoutHelp(layout)}
+          {layout !== 'none' && layout !== 'cascade' && (selected.length > GRID_MAX
+            ? ` With more than ${GRID_MAX} windows they may be cascaded instead.`
+            : ' If the windows would be too small to read, a grid or cascade is used instead.')}
+        </Text>
         <div>
           <Checkbox checked={sendBar} onChange={e => setSendBar(e.target.checked)}>
             Open the Send to terminals bar

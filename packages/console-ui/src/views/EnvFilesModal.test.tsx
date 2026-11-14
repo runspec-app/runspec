@@ -84,6 +84,8 @@ describe('EnvFilesModal', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reveal JIRA_PAT' })) })
     expect(api.env_file_reveal).toHaveBeenCalledWith({ host: 'local', runspec_path: '/l/console/bin/runspec', key: 'JIRA_PAT' })
     await waitFor(() => expect(screen.queryByText('•••••••• (hidden)')).toBeNull())
+    // Revealed means visible: a text field, not another row of dots.
+    expect((screen.getByLabelText('Value of JIRA_PAT') as HTMLInputElement).type).toBe('text')
 
     fireEvent.change(screen.getByLabelText('Value of JIRA_URL'), { target: { value: 'https://new' } })
     const user = userEvent.setup()
@@ -102,6 +104,32 @@ describe('EnvFilesModal', () => {
     const user = userEvent.setup()
     await act(async () => { await user.click(screen.getByText('.runspec_env', { selector: '.ant-segmented-item-label *, .ant-segmented-item-label' })) })
     await waitFor(() => expect(api.env_file_read).toHaveBeenLastCalledWith({ host: 'web-01', runspec_path: '/opt/venvs/ops/bin/runspec' }))
+  })
+
+  it('asks before closing with unsaved edits; Cancel keeps them', async () => {
+    const onClose = vi.fn()
+    render(<EnvFilesModal open onClose={onClose} hosts={HOSTS} />)
+    await screen.findByText('/l/console/.runspec_env')
+    fireEvent.change(screen.getByLabelText('Value of JIRA_URL'), { target: { value: 'https://new' } })
+    fireEvent.click(document.querySelector('.ant-modal-close') as HTMLElement)
+    await screen.findAllByText('Discard 1 unsaved change?')
+    expect(document.querySelectorAll('.ant-modal-confirm').length).toBe(1)
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect((screen.getByLabelText('Value of JIRA_URL') as HTMLInputElement).value).toBe('https://new')
+    fireEvent.click(document.querySelector('.ant-modal-close') as HTMLElement)
+    // The cancelled confirm may still be closing: press the newest Discard.
+    const discards = await screen.findAllByRole('button', { name: 'Discard' })
+    fireEvent.click(discards[discards.length - 1])
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+  })
+
+  it('closes straight away with nothing unsaved', async () => {
+    const onClose = vi.fn()
+    render(<EnvFilesModal open onClose={onClose} hosts={HOSTS} />)
+    await screen.findByText('/l/console/.runspec_env')
+    fireEvent.click(document.querySelector('.ant-modal-close') as HTMLElement)
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('reloads after a conflict', async () => {

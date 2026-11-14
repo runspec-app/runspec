@@ -92,12 +92,12 @@ describe('KnowledgeView', () => {
     const box = screen.getByPlaceholderText(/Search facts/)
     fireEvent.change(box, { target: { value: 'orders' } })
     fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 })
-    await waitFor(() => expect(screen.getByText('2 result(s) for “orders”')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('2 results for “orders”')).toBeTruthy())
     fireEvent.click(screen.getAllByLabelText('Retire fact')[0])
     fireEvent.click(await screen.findByText('OK'))
     await waitFor(() => expect(retire).toHaveBeenCalledWith('k_gone'))
     await waitFor(() => expect(screen.queryByText('orders logs live in /var/log/orders')).toBeNull())
-    expect(screen.getByText('1 result(s) for “orders”')).toBeTruthy()
+    expect(screen.getByText('1 result for “orders”')).toBeTruthy()
     expect(search).toHaveBeenCalledTimes(2) // re-run after the write
   })
 

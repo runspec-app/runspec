@@ -50,6 +50,22 @@ describe('CopyKeyAllModal', () => {
     expect(pwd().value).toBe('hunter2')
   })
 
+  it('filters, picks all shown, and Enter in the password does not fire', async () => {
+    const user = userEvent.setup()
+    const hosts: BulkKeyHost[] = [
+      { name: 'web-1', connected: true }, { name: 'web-2', connected: true }, { name: 'db-1', connected: false },
+    ]
+    render(<CopyKeyAllModal open hosts={hosts} onClose={() => {}} />)
+    expect(screen.getByText('1 of 3 selected')).toBeTruthy()
+    await user.type(screen.getByLabelText('Filter hosts'), 'web')
+    await user.click(screen.getByRole('button', { name: 'All shown (2)' }))
+    expect(screen.getByText('3 of 3 selected')).toBeTruthy()
+    await user.type(pwd(), 'hunter2{Enter}')
+    expect(copySshIdAll).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Copy to 3 hosts' }))
+    expect(copySshIdAll).toHaveBeenCalledWith('hunter2', ['db-1', 'web-1', 'web-2'])
+  })
+
   it('resets the password when the dialog is closed and reopened', async () => {
     const user = userEvent.setup()
     const hosts = mkHosts()
