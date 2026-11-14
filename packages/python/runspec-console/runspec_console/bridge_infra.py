@@ -45,6 +45,12 @@ class InfraMixin:
         # Join the chat room (always-on, independent of triggers) — its connect/
         # presence dispatches need the window up too.
         self.start_chat()
+        # Follow the webhooks host entries name (runspec-scheduler hooks follow
+        # over SSH). Never blocks: each follower is its own thread.
+        try:
+            self.start_webhooks()
+        except Exception:
+            logger.exception("webhooks: start failed")
         # Abort in-flight turns the moment the window closes, so a turn parked at
         # the autonomy gate can't stall shutdown. Best-effort across pywebview
         # versions (the event may be absent).
@@ -105,6 +111,7 @@ class InfraMixin:
             self._bg_torn_down = True
         for label, teardown in (
             ("chat", self.stop_chat),  # leave the room; stop its reconnect loop
+            ("webhooks", self.stop_webhooks),  # close the hooks follow streams
             ("triggers", self.stop_triggers),  # stop the email pump + scheduler
             ("mcp-client", self._mcp.stop),
             ("mcp-server", self._mcp_server.stop),

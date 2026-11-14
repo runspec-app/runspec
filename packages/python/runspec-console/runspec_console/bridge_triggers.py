@@ -135,7 +135,7 @@ class TriggersMixin:
             # to build its APScheduler jobs) and feeds ticks in via engine.feed().
             # The paste source is inert (operator-driven): it emits nothing on its
             # own; the UI paste action dispatches via engine.fire_paste().
-            external_sources={"chat", "schedule", "paste"},
+            external_sources={"chat", "schedule", "paste", "webhook"},
             always_start=always_start,  # schedule source built from the Schedules tab below
             # Durable once_per_thread dedup — so a trigger that fired on a thread's
             # opening message doesn't re-fire on replies after a console restart.

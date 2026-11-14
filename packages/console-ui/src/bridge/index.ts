@@ -1,4 +1,9 @@
 import { recordCallStart, recordCallEnd, recordCallError } from '../devbus'
+import type {
+  WebhooksStatus, WebhookTarget, WebhookResult, WebhookHooksList, WebhookDelivery,
+  WebhookTestResult, WebhookSaveResult, WebhookEditPayload, WebhookSettings, WebhookSmtp,
+} from './webhookTypes'
+export type * from './webhookTypes'
 
 export interface ArgDef {
   name: string
@@ -1769,6 +1774,7 @@ export interface SharedSchedulesStatus {
   keeper?: SchedulerKeeper[]       // >= 0.6.0
   host_zone?: string               // >= 0.10.0: the host's own zone
   packages?: SharedSchedulesPackages  // >= 0.10.0
+  hooks?: WebhookHooksList           // >= 0.11.0: [hooks] settings + this venv's hooks
   schedules: SharedSchedule[]
   stale: { id: string; user: string; reason?: string }[]
   errors: string[]
@@ -3493,6 +3499,25 @@ export interface BridgeApi {
   // The venv's scheduler daemon itself: durations, and restart / start (0.386.0).
   host_scheduler_settings: (payload: HostSchedulerSettings) => Promise<HostSchedulerSettingsResult>
   host_scheduler_restart: (payload: { host: string; venv: string }) => Promise<HostSchedulerRestartResult>
+  // Webhooks a host's runspec-scheduler receives, followed live (0.438.0):
+  // every followed venv's connection, waiting approvals, mutes and recent
+  // deliveries. Pushed as `runspec:webhooks` ({venv} or {all: true}).
+  webhooks_status: () => Promise<WebhooksStatus>
+  webhook_decide: (payload: WebhookTarget & { id: number; verdict: 'approve' | 'deny'; note?: string }) => Promise<WebhookResult & { result?: Record<string, unknown> }>
+  // Hide a card on this console only; `undo` brings it back.
+  webhook_dismiss: (payload: WebhookTarget & { id: number; undo?: boolean }) => Promise<WebhookResult>
+  webhook_mute: (payload: WebhookTarget & { hook: string; for: string; reason?: string }) => Promise<WebhookResult>
+  webhook_unmute: (payload: WebhookTarget & { hook: string }) => Promise<WebhookResult>
+  // Which hooks this console follows on a host (`['*']` = all, `[]` = stop).
+  webhook_follow: (payload: { host: string; hooks: string[] }) => Promise<WebhookResult & { hooks?: string[] }>
+  webhook_hooks: (payload: WebhookTarget) => Promise<WebhookHooksList>
+  webhook_deliveries: (payload: WebhookTarget & { hook?: string; limit?: number }) => Promise<WebhookResult & { deliveries: WebhookDelivery[] }>
+  // Save a console-made hook; a new token / password comes back once in `secrets`.
+  webhook_hook_save: (payload: WebhookEditPayload & { new_token?: boolean; new_password?: boolean }) => Promise<WebhookSaveResult>
+  webhook_hook_remove: (payload: WebhookTarget & { name: string }) => Promise<WebhookResult>
+  // Dry run of a hook as edited; an empty body = the last one that hook received.
+  webhook_hook_test: (payload: WebhookEditPayload & { body?: string; content_type?: string }) => Promise<WebhookTestResult>
+  webhook_settings: (payload: WebhookTarget & { hooks?: Partial<WebhookSettings>; smtp?: Partial<WebhookSmtp> }) => Promise<WebhookResult & { settings?: WebhookSettings; smtp_settings?: WebhookSmtp }>
   history_db_stats: (host: string, group: string) => Promise<HistoryDbStats>
   history_db_maintain: (host: string, group: string, action: HistoryDbAction, olderThan?: string, maxRows?: number, runAs?: string) => Promise<HistoryDbResult>
   // Owner of a venv's dir — pre-fills the "Run as" field on the destructive Logs

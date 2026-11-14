@@ -14,5 +14,6 @@ from . import notifications  # noqa: F401 — registers the "notifications" sour
 from . import outlook  # noqa: F401 — registers the "outlook" source
 from . import paste  # noqa: F401 — registers the "paste" source
 from . import schedule  # noqa: F401 — registers the "schedule" source
+from . import webhook  # noqa: F401 — registers the "webhook" source
 
-__all__ = ["chat", "notifications", "outlook", "paste", "schedule"]
+__all__ = ["chat", "notifications", "outlook", "paste", "schedule", "webhook"]

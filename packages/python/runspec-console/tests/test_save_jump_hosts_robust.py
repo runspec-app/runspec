@@ -36,6 +36,9 @@ class _StubBridge:
     def restart_chat(self) -> None:
         pass
 
+    def restart_webhooks(self) -> None:  # and re-follows webhooks
+        pass
+
     def _kick_refresh(self, *, force: bool = False) -> None:
         pass
 

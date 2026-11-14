@@ -58,6 +58,7 @@ from .bridge_envfile import EnvFileMixin
 from .bridge_files import FilesMixin
 from .bridge_network import NetworkMixin
 from .bridge_turn import TurnMixin
+from .bridge_webhooks import WebhooksMixin
 from .dictation import DictationSession
 from .session import ChatSession
 
@@ -95,6 +96,7 @@ class Bridge(
     EnvFileMixin,
     FilesMixin,
     NetworkMixin,
+    WebhooksMixin,
     TurnMixin,
 ):
     def __init__(self) -> None:

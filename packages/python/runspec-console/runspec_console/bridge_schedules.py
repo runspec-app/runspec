@@ -1177,12 +1177,15 @@ class SchedulesMixin:
         remote: bool,
         env: dict[str, str] | None = None,
         timeout: int = 45,
+        data: bytes = b"",
     ) -> tuple[int, str, str]:
         """``<binary> <argv>`` as ``owner``, built like a runnable run
         (``executor.remote_exec_command``): ``sudo -n -u <owner> {venv}/bin/python
         -c <prelude> <binary> …`` with the env frame on stdin, so whatever sudoers
         rule lets the console run this venv's runnables also covers this. A
-        missing binary reports ``not found`` with exit 127 before any sudo."""
+        missing binary reports ``not found`` with exit 127 before any sudo.
+        ``data`` is the command's own stdin, sent after the env frame (the
+        prelude reads only up to the frame's end)."""
         from runspec.become import build_exec_argv
 
         parts, frame = build_exec_argv(
@@ -1192,6 +1195,7 @@ class SchedulesMixin:
             "-n",
             env={"RUNSPEC_LABEL": "console", **(env or {})},
         )
+        frame = frame + data
         if remote:
             entry = self._host_entry(host)
             if entry is None:
@@ -1560,6 +1564,7 @@ class SchedulesMixin:
         env: dict[str, str] | None = None,
         timeout: int = 60,
         program: str = "runspec-scheduler",
+        data: bytes = b"",
     ) -> dict[str, Any]:
         """``<program> <argv>`` (``runspec-scheduler`` by default, or ``runspec``)
         in ``payload``'s venv as its owner. ``{ok, error, json, stdout}`` — ok
@@ -1604,8 +1609,9 @@ class SchedulesMixin:
         else:
             binary = str(Path(rp).with_name(program))
         owner, _ = self._scheduler_owner(host, venv, remote)
+        extra: dict[str, Any] = {"data": data} if data else {}
         code, stdout, stderr = self._run_scheduler_as(
-            host, binary, argv, owner, remote, env=env, timeout=timeout
+            host, binary, argv, owner, remote, env=env, timeout=timeout, **extra
         )
         got = hs.last_json(stdout)
         if code == 0 and not (got and got.get("error")):

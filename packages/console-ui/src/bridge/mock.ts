@@ -1,4 +1,4 @@
-import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, VenvUpdatePayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv, SharedScheduleRun, RunNote, TerminalWindow } from './index'
+import type { BridgeApi, ProvisionOpRecord, ProvisionPayload, DeprovisionPayload, VenvUpdatePayload, ProvisionResult, ChatSessionInfo, MarketplaceRepo, MarketplaceEntry, MarketplaceTarget, MarketplaceInstalledTarget, MarketplaceOpRecord, MarketplaceOpPayload, MarketplaceOpResult, Host, JumpHost, Runnable, HistoryRecord, RunningRun, Schedule, InFlightRecord, TestResult, AnalyticsData, AnalyticsBucket, TriggerCard, KnowledgeFact, KnowledgeNode, KnowledgeEdge, KnowledgeFactInput, EnvFileSaveRow, SavedTransfer, SharedSchedulesVenv, SharedScheduleRun, RunNote, TerminalWindow, WebhookVenv, WebhookDelivery, WebhookHook } from './index'
 
 // Facts the knowledge_overview mock built, so knowledge_page / knowledge_search agree with it.
 let _mockKnowledgeFacts: KnowledgeFact[] = []
@@ -716,6 +716,49 @@ let _currentSession: string | null = null
 const _dispatch = (event: string, detail: unknown) =>
   window.dispatchEvent(new CustomEvent(event, { detail }))
 const _emitSession = (info: ChatSessionInfo) => _dispatch('runspec:session', { ...info })
+
+// Webhooks (dev mode): one followed venv with a delivery waiting for approval.
+const _mockIso = (agoS: number) => new Date(Date.now() - agoS * 1000).toISOString()
+const _mockHook: WebhookHook = {
+  name: 'alerts', enabled: true, description: 'Alertmanager: clean up full disks, ask before restarting services',
+  source: 'console', file: '/srv/ops/venv/runspec_scheduler.toml', managed_by: '', auth: ['token'], token_header: '',
+  allow: ['10.0.0.0/8'], fields: { alertname: 'labels.alertname', instance: 'labels.instance', status: 'status' },
+  split: 'alerts', dedup: '{{ alertname }}:{{ instance }}', require_approval: false, transform: '',
+  rules: [
+    { name: 'disk', action: 'run', run: 'cleanup-tmp', command: [], match: { alertname: '^DiskFull$' } },
+    { name: 'service', action: 'run', run: 'system-service', command: ['restart'], match: { alertname: '^(?P<service>[a-z-]+)Down$' } },
+  ],
+  overridden: false,
+  toml: '[[hook]]\nname = "alerts"\ndescription = "Alertmanager: clean up full disks, ask before restarting services"\ntoken_sha256 = "9f2c0d…"\nsplit = "alerts"\nfields = { alertname = "labels.alertname", instance = "labels.instance", status = "status" }\n\n[[hook.rule]]\nname = "service"\nmatch = { alertname = "^(?P<service>[a-z-]+)Down$" }\nrun = "system-service"\ncommand = "restart"\nargs = { name = "{{ service }}" }\n',
+  url: 'https://web-01:8730/hook/alerts',
+}
+const _mockDeployed: WebhookHook = {
+  ..._mockHook, name: 'deploys', description: 'CI deploy notices (event only)', source: 'deployed',
+  file: '/srv/ops/venv/hooks.d/deploys.toml', managed_by: 'ansible', rules: [], fields: { app: 'project.name' },
+  toml: '[[hook]]\nname = "deploys"\ndescription = "CI deploy notices (event only)"\n', url: 'https://web-01:8730/hook/deploys',
+}
+function _mockDelivery(id: number, patch: Partial<WebhookDelivery>): WebhookDelivery {
+  return {
+    id, hook: 'alerts', received: _mockIso(90), source: '10.2.4.17', state: 'pending',
+    fields: { alertname: 'nginxDown', instance: 'web-01:9100', status: 'firing', labels: { severity: 'page' } },
+    rule: 'service', runnable: 'system-service', command: ['restart'], args: { name: 'nginx' },
+    autonomy: 'confirm', reason: '', count: 1, dup_of: null, expires: _mockIso(-14 * 60),
+    decided_by: '', decided: null, note: '', started: null, finished: null, exit_code: null, ...patch,
+  }
+}
+const _mockWebhookVenv: WebhookVenv = {
+  key: 'web-01/ops', host: 'web-01', venv: 'ops', follows: ['*'], connected: true, error: '', paused: '',
+  who: 'ops', settings: { enabled: true, port: 8730, bind: '0.0.0.0', base_path: '', tls: true, approve_within: '15m', problem: null },
+  hooks: [{ name: 'alerts', enabled: true }, { name: 'deploys', enabled: true }],
+  mutes: [], dismissed: 0, away: '',
+  open: [_mockDelivery(41, {})],
+  recent: [
+    _mockDelivery(40, { state: 'ran', fields: { alertname: 'DiskFull', instance: 'web-01:9100', status: 'firing' }, rule: 'disk', runnable: 'cleanup-tmp', command: [], args: { host: 'web-01' }, autonomy: 'autonomous', received: _mockIso(3600), exit_code: 0, finished: _mockIso(3590) }),
+    _mockDelivery(39, { hook: 'deploys', state: 'event', rule: '', runnable: '', command: [], args: {}, autonomy: '', fields: { app: 'billing' }, received: _mockIso(7200) }),
+    _mockDelivery(38, { state: 'skipped', rule: 'resolved', runnable: '', command: [], args: {}, fields: { alertname: 'nginxDown', status: 'resolved' }, received: _mockIso(9000) }),
+  ],
+}
+const _mockWebhookPush = () => _dispatch('runspec:webhooks', { venv: { ..._mockWebhookVenv } })
 function _newMockSession(id?: string, label = ''): ChatSessionInfo {
   const sid = id ?? `sess-${++_sessionCounter}`
   const info: ChatSessionInfo = {
@@ -1985,6 +2028,67 @@ export const mockApi: BridgeApi = {
     },
   }),
   host_scheduler_restart: async () => ({ ok: true, manager: 'systemd-user', daemon: { state: 'running', pid: 4242, version: '0.7.0', restart_needed: false }, warnings: [] }),
+
+  webhooks_status: async () => ({
+    configured: true, away: '', venvs: [{ ..._mockWebhookVenv }], follows: { 'web-01': ['*'] },
+  }),
+  webhook_decide: async (p) => {
+    const d = _mockWebhookVenv.open.find(x => x.id === p.id)
+    if (!d) return { ok: false, error: `delivery ${p.id} is no longer waiting` }
+    _mockWebhookVenv.open = _mockWebhookVenv.open.filter(x => x.id !== p.id)
+    const settled = { ...d, state: p.verdict === 'approve' ? 'ran' : 'denied', decided_by: 'you', decided: _mockIso(0), note: p.note ?? '', exit_code: p.verdict === 'approve' ? 0 : null }
+    _mockWebhookVenv.recent = [settled, ..._mockWebhookVenv.recent].slice(0, 20)
+    _mockWebhookPush()
+    return { ok: true, result: { ok: true, state: settled.state } }
+  },
+  webhook_dismiss: async (p) => {
+    _mockWebhookVenv.dismissed += p.undo ? -1 : 1
+    _mockWebhookPush()
+    return { ok: true }
+  },
+  webhook_mute: async (p) => {
+    const secs = /^(\d+)h$/.exec(p.for) ? Number(/^(\d+)h$/.exec(p.for)![1]) * 3600 : 3600
+    _mockWebhookVenv.mutes = [..._mockWebhookVenv.mutes.filter(m => m.hook !== p.hook), { who: 'ops', hook: p.hook, until: _mockIso(-secs), reason: p.reason ?? '' }]
+    _mockWebhookPush()
+    return { ok: true }
+  },
+  webhook_unmute: async (p) => {
+    _mockWebhookVenv.mutes = _mockWebhookVenv.mutes.filter(m => m.hook !== p.hook)
+    _mockWebhookPush()
+    return { ok: true }
+  },
+  webhook_follow: async (p) => ({ ok: true, hooks: p.hooks }),
+  webhook_hooks: async (p) => ({
+    ok: true, host: p.host, config: '/srv/ops/venv/runspec_scheduler.toml',
+    settings: _mockWebhookVenv.settings,
+    smtp: { relay: '', port: 25, from: '', to: [], starttls: false },
+    hooks: [_mockHook, _mockDeployed], errors: [], pending: _mockWebhookVenv.open, mutes: _mockWebhookVenv.mutes,
+  }),
+  webhook_deliveries: async () => ({ ok: true, deliveries: [..._mockWebhookVenv.open, ..._mockWebhookVenv.recent] }),
+  webhook_hook_save: async (p) => {
+    const named = /name\s*=\s*"([^"]+)"/.exec(p.text ?? '')?.[1] ?? String(p.hook?.name ?? '')
+    if (!named) return { ok: false, error: 'The hook needs a name.' }
+    return {
+      ok: true, hook: named, url: `https://web-01:8730/hook/${named}`, replaced: named === 'alerts',
+      ...(p.new_token || p.new_password ? {
+        secrets: { ...(p.new_token ? { token: 'mock-T0k3n-shown-once-' + named } : {}), ...(p.new_password ? { password: 'mock-pa55-shown-once' } : {}) },
+        note: 'Shown once: only a hash is stored. Put it in the sending app now.',
+      } : {}),
+    }
+  },
+  webhook_hook_remove: async () => ({ ok: true }),
+  webhook_hook_test: async (p) => ({
+    ok: true, source: p.body ? 'body' : 'last delivery',
+    items: [
+      { state: 'pending', fields: { alertname: 'nginxDown', instance: 'web-01:9100', status: 'firing' }, rule: 'service', runnable: 'system-service', command: ['restart'], args: { name: 'nginx' }, autonomy: 'confirm', reason: '' },
+      { state: 'skipped', fields: { alertname: 'nginxDown', status: 'resolved' }, rule: 'resolved', reason: 'rule "resolved" skips it' },
+    ],
+  }),
+  webhook_settings: async (p) => {
+    _mockWebhookVenv.settings = { ..._mockWebhookVenv.settings, ...(p.hooks ?? {}) }
+    _mockWebhookPush()
+    return { ok: true, settings: _mockWebhookVenv.settings }
+  },
 
   history_db_stats: async (_host, group) => ({
     ok: true, group, exists: true,
