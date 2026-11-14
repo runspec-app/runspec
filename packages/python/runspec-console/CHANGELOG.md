@@ -13,6 +13,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **History's page controls work.** The table's page size was fixed in code
+  (`pageSize: 50`), so the "10 / 20 / 50 / 100 per page" changer snapped back
+  to 50 whatever you picked. The page and size are now real state:
+  - the size you pick sticks and is remembered;
+  - the page goes back to 1 when the search, range or a column filter
+    changes, and never points past the end when the list shrinks;
+  - the pager shows "51–60 of 60".
 - **Table sort and filter arrows are readable.** The CSS rule from 0.436.0
   lost to Ant's own, more specific, rule, so they stayed 2.9:1. They now come
   from the table's icon token, measured at 4.93:1.
