@@ -388,6 +388,8 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
 }
 /* The selected command: a bar and the strong text, not only a 5% tint (1.1:1). */
 .rs-cmdk [cmdk-input]::placeholder { color: var(--rs-text-muted); opacity: 1; }
+/* The palette's search box: a 2px focus line under it (it had none). */
+.rs-cmdk [cmdk-input]:focus { box-shadow: inset 0 -2px 0 var(--rs-focus); }
 /* The sorted column's arrow is the strong text; on dark Ant drew it dimmer
    than the unsorted one. */
 .ant-table-column-sorter .ant-table-column-sorter-up.active,

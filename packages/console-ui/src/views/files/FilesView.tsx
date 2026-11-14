@@ -150,6 +150,7 @@ export function FilesView({ hosts, selectedHost, active }: {
     if (!panes[to].listing) { message.error('Open a folder in that pane first'); return }
     const key = copyConsent(pd)
     if (key && hasConsent(key)) {
+      message.info("Copied without the dialog, because you chose \"don't ask again\" for these two places (Settings → Confirmations).", 5)
       startCopy(pd, { filter: '', filterArg: '', destName: '', alsoTo: [], saveAsTransfer: false })
       return
     }

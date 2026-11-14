@@ -933,6 +933,9 @@ const _mockSavedTransfers: SavedTransfer[] = [
 
 // PuTTY windows the mock "opened" — listed by the Send to terminals bar
 // (open the dev preview at #send-bar). Two to start with, one still opening.
+// Kill-switch blocks waiting for a disconnected host.
+let mockDenyPending: { host: string; reason: string; since: number }[] = []
+
 const mockTerminalWindows: TerminalWindow[] = [
   { id: '1', host: 'web-01', ready: true },
   { id: '2', host: 'web-02', ready: true },
@@ -951,6 +954,15 @@ export const mockApi: BridgeApi = {
       targets.map(t => `✓ ${t}/app: ok`).join('\n')
   },
 
+  denylist_pending: async () => mockDenyPending,
+  denylist_pending_add: async (hosts, reason = '') => {
+    for (const host of hosts) if (!mockDenyPending.some(p => p.host === host)) mockDenyPending.push({ host, reason, since: Date.now() / 1000 })
+    return mockDenyPending
+  },
+  denylist_pending_remove: async (host) => {
+    mockDenyPending = host ? mockDenyPending.filter(p => p.host !== host) : []
+    return mockDenyPending
+  },
   denylist_status: async (targets) => {
     const names = targets?.length ? targets : MOCK_HOSTS.map(h => h.name)
     return names.map(host => ({

@@ -130,7 +130,12 @@ fleet over the SSH connections it already holds — one call per venv on each ho
   **Re-enable all** set apart, and how it works folded away underneath). Re-enable
   all only undoes *Disable all*: the other rules stay. Deleting every rule is
   **Clear every rule…** under the table, which lists the rules and asks you to
-  type `clear`. Then a
+  type `clear`. **Disable all** with no hosts picked also covers the profile's
+  *disconnected* hosts: its question names them, and the console queues the same
+  block for each (kept in `runspec_denylist_pending.json` in the console's
+  folder, so it survives a restart) and applies it as soon as the host
+  reconnects. The window lists pending hosts at the top, each with **Cancel**.
+  Then a
   host picker (empty ⇒ every connected host), an
   *add specific rule* form (runnable / user / host globs + reason), and an
   enforcement-mode toggle (`enforce`/`warn`/`off`). Anything that blocks

@@ -283,9 +283,15 @@ export function SendBar() {
 
 /** The bar's window root: theme from the console's saved light/dark choice. */
 export function SendBarApp() {
-  const isDark = (() => {
-    try { return localStorage.getItem('theme') !== 'light' } catch { return true }
-  })()
+  // The console's light/dark choice, followed live: the main window writes it,
+  // and a storage event tells this window (it used to read it once).
+  const readDark = () => { try { return localStorage.getItem('theme') !== 'light' } catch { return true } }
+  const [isDark, setIsDark] = useState(readDark)
+  useEffect(() => {
+    const on = (e: StorageEvent) => { if (e.key === 'theme') setIsDark(readDark()) }
+    window.addEventListener('storage', on)
+    return () => window.removeEventListener('storage', on)
+  }, [])
   const sf = surfaces(isDark)
   // The white-label accent, as the main window uses it (it used to be the
   // default teal here, off-brand next to a branded console).

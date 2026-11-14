@@ -10,6 +10,8 @@ from typing import Any
 
 
 from . import bridge_utils as utils_mod
+from . import config as config_mod
+from . import denylist_pending as pending_mod
 from . import hosts as hosts_mod
 
 
@@ -88,6 +90,24 @@ class HostsMixin:
         re-enables and the console can never be locked out.
         """
         return self._run_manage_denylist(dict(payload or {}))
+
+    def denylist_pending(self) -> list[dict[str, Any]]:
+        """Kill-switch blocks waiting for a disconnected host to reconnect
+        (``{host, reason, since}``). The UI applies each one with
+        ``manage_denylist`` when it sees the host connected, then removes it."""
+        return pending_mod.read_pending(config_mod.app_dir())
+
+    def denylist_pending_add(
+        self, hosts: list[str], reason: str = ""
+    ) -> list[dict[str, Any]]:
+        """Queue "Disable all" for hosts the kill switch couldn't reach."""
+        return pending_mod.add_pending(
+            config_mod.app_dir(), list(hosts or []), str(reason or "")
+        )
+
+    def denylist_pending_remove(self, host: str | None = None) -> list[dict[str, Any]]:
+        """Drop one host's pending block (applied, or cancelled), or all."""
+        return pending_mod.remove_pending(config_mod.app_dir(), host or None)
 
     def denylist_status(self, targets: list[str] | None = None) -> list[dict[str, Any]]:
         """Structured denylist state per host/venv (the hosts-panel Denylist modal).

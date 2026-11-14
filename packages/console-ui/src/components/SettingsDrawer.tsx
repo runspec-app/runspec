@@ -172,7 +172,8 @@ export function ConfirmationsTab() {
     <div style={{ maxWidth: 720 }}>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         When you tick "don't ask again" on a confirmation, it's listed here. It holds only for that action on those
-        targets; a different set asks again. Deleting is never remembered.
+        targets, for 30 days; a different set asks again. Each time it skips a confirmation you get a short note.
+        Deleting is never remembered.
       </Typography.Paragraph>
       <RememberedAnswers />
     </div>
@@ -323,6 +324,7 @@ export function SoundsTab() {
           {row('Volume (synthesized + file cues)', (
             <Slider
               min={0} max={100} disabled={!enabled}
+              ariaLabelForHandle="Volume"
               value={volume} onChange={setVolume}
               style={{ width: 230, margin: '4px 6px' }}
             />
@@ -2932,7 +2934,7 @@ export function FiltersTab() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {filters.map(f => (
-          <div key={f.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingKey === f.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+          <div key={f.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)', background: editingKey === f.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
             <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{f.name}</Text>
             {isParameterized(f.pipeline) && <Tag style={{ margin: 0, fontSize: 11 }}>arg</Tag>}
             <Text type="secondary" title={f.pipeline} style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -3342,7 +3344,7 @@ export function ReposTab() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {repos.map(r => (
-          <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingKey === r.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+          <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)', background: editingKey === r.name ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
             <Text style={{ fontFamily: MONO_FONT, fontSize: 13, minWidth: 90, flexShrink: 0 }}>{r.name}</Text>
             <Tag style={{ margin: 0, fontSize: 11 }}>{r.ref}</Tag>
             {r.checked_out
@@ -3858,7 +3860,7 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {creds.map(c => (
-          <div key={c.id} data-testid={`cred-row-${c.id}`} style={{ padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a', background: editingId === c.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
+          <div key={c.id} data-testid={`cred-row-${c.id}`} style={{ padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)', background: editingId === c.id ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <KeyOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13, flexShrink: 0 }} />
             <Text style={{ fontSize: 13, minWidth: 110, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</Text>
@@ -4878,7 +4880,7 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {runbooks.length === 0 && <EmptyState message="No runbooks yet" />}
         {runbooks.map(s => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)' }}>
             <span style={{ minWidth: 200 }}>
               <Typography.Text code style={{ fontSize: 13 }}>${s.id}</Typography.Text>
             </span>
@@ -4950,7 +4952,7 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
             {(fields, { add, remove, move }) => (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
                 {fields.map((field, index) => (
-                  <div key={field.key} style={{ border: '1px solid #2a2a2a', borderRadius: RADIUS.sm, padding: 8 }}>
+                  <div key={field.key} style={{ border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: 8 }}>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
                       <span style={{ fontSize: 13, color: 'var(--rs-text-muted)', minWidth: 52 }}>Step {index + 1}</span>
                       <Form.Item name={[field.name, 'title']} noStyle>
@@ -4978,7 +4980,7 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
             {(fields, { add, remove }) => (
               <>
                 {fields.map(({ key, name, ...rest }) => (
-                  <div key={key} style={{ border: '1px solid #2a2a2a', borderRadius: RADIUS.sm, padding: '6px 8px', marginBottom: 6 }}>
+                  <div key={key} style={{ border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '6px 8px', marginBottom: 6 }}>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
                       <Form.Item {...rest} name={[name, 'name']} style={{ marginBottom: 0, width: 130 }}
                         rules={[{ required: true, message: 'name' }]}>
@@ -5314,7 +5316,7 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
         {savedRuns.length === 0 && <EmptyState message="No saved runs yet" />}
         {savedRuns.map(s => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)' }}>
             <span style={{ minWidth: 200 }}>
               <Typography.Text code style={{ fontSize: 13 }}>{s.id}</Typography.Text>
             </span>

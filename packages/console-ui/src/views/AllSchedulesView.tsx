@@ -482,6 +482,26 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
       onRefresh()
     } catch (e) { message.error(`Restart failed: ${String(e)}`) } finally { setBusy('') }
   }
+  // Restart every scheduler daemon in view, one at a time (each restart is an
+  // SSH round trip; in parallel a slow host would stall the summary anyway).
+  // One ask covers them all; the result names any that failed.
+  const restartAll = async () => {
+    setBusy('daemon::*')
+    const failed: string[] = []
+    let done = 0
+    try {
+      for (const d of daemons) {
+        try {
+          const res = await bridge.host_scheduler_restart({ host: d.host, venv: d.venv })
+          if (res.ok) done++
+          else failed.push(`${d.host} / ${d.venv}: ${res.error || 'failed'}`)
+        } catch (e) { failed.push(`${d.host} / ${d.venv}: ${String(e)}`) }
+      }
+      if (failed.length) message.error(`Restarted ${done} of ${daemons.length} schedulers. Not restarted: ${failed.join('; ')}`, 12)
+      else message.success(`Restarted all ${done} scheduler${done === 1 ? '' : 's'}.`)
+      onRefresh()
+    } finally { setBusy('') }
+  }
   // ── who is handling a failure: tick failing host schedules, then claim / resolve / release ──
   const [selected, setSelected] = useState<string[]>([])
   const [noteVerb, setNoteVerb] = useState<NoteVerb | null>(null)
@@ -841,6 +861,26 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
             <span>{daemonSummary(daemons)}</span>
             {!daemonsShown && foldedHidden > 0 && <span style={{ color: muted }}>· show all</span>}
           </button>
+          {editable && daemons.length > 1 && (
+            <div>
+              <AskFirst
+                ask={{
+                  level: 'fleet',
+                  title: `Restart all ${daemons.length} schedulers?`,
+                  action: 'Restart the runspec-scheduler daemon in each venv',
+                  targets: daemons.map(d => `${d.host} / ${d.venv}`),
+                  consequence: 'Fires already running carry on; each daemon picks up from its next tick. One that is stopped is started.',
+                  okText: `Restart ${daemons.length}`, danger: false,
+                }}
+                onConfirm={restartAll}
+              >
+                <Button size="small" icon={<ReloadOutlined />} loading={busy === 'daemon::*'} disabled={!!busy && busy !== 'daemon::*'}
+                  data-testid="restart-all-schedulers">
+                  Restart all
+                </Button>
+              </AskFirst>
+            </div>
+          )}
           {visibleDaemons.map(d => (
             <DaemonStrip key={d.key} d={d} editable={editable} busy={busy === `daemon::${d.key}`}
               onRestart={restartDaemon} onSettings={openDaemonSettings} />

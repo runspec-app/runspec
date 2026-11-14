@@ -9,6 +9,53 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.446.0] — 2026-11-14
+
+### Fixed
+
+- **A denied call looks denied.** It showed a green check and a duration, as
+  if it had run. It now shows a neutral stop mark and no duration. Run cards'
+  success, failed and stopped marks use the theme's colours and are named.
+- **Focus comes back after a confirmation.** Closing a confirmation opened from
+  inside another window left focus on the page, so Esc no longer closed that
+  window. Focus now returns to whatever had it.
+- **History's page controls are above the table too.** At 1400×900 the ones
+  below sat under the chat box.
+
+### Added
+
+- **The kill switch covers hosts that are disconnected.** Disable all (with no
+  hosts picked) names the disconnected hosts it can't reach and queues the same
+  block for them. The console applies it as soon as each one reconnects, then
+  says so. The Denylist window lists the pending hosts, each with Cancel. The
+  queue is kept in the console's own folder (`runspec_denylist_pending.json`,
+  machine-local), so it survives a restart. New bridge methods:
+  `denylist_pending`, `denylist_pending_add`, `denylist_pending_remove`.
+- **Restart all schedulers.** Automation → Schedules has a **Restart all** next
+  to the scheduler daemons when there's more than one. It asks once, listing
+  every daemon, then restarts each and names any that failed.
+
+### Changed
+
+- **"Don't ask again" lasts 30 days,** then the confirmation asks again.
+  Whenever a remembered answer skips a confirmation, a short note says so.
+  Settings → Confirmations shows the date each one expires. Answers saved
+  before this version ask once more.
+- **Confirmations say what they run.** The question for a saved run on
+  several hosts shows its arguments (`service-restart service=nginx
+  reason=CHG-1234`), not just the runnable.
+- **Model usage is behind a Usage button.** Token, cache and cost figures no
+  longer sit as three tags on every chat card's header.
+- **Accessibility and colour.**
+  - Run-dialog path fields and the volume slider have names.
+  - The Ctrl+K search box has a focus line.
+  - Off the Console, the chat box shrinks to one line (it kept the Console's
+    two-line height).
+  - Borders written as a fixed `#2a2a2a` (1.4:1 on dark, the same on light)
+    use the theme's border.
+  - A required field's error border is the theme's red, not Ant's.
+  - The Send to terminals window follows the console's light/dark choice live.
+
 ## [0.445.1] — 2026-11-14
 
 ### Fixed

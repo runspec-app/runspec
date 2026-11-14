@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Checkbox, Dropdown, Input, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Checkbox, Dropdown, Input, Popover, Tag, Tooltip, Typography, message } from 'antd'
 import type { MenuProps } from 'antd'
 import { bridge } from '../bridge'
 import { toCommandPath } from '../views/formsMatch'
@@ -1419,6 +1419,7 @@ function ToolCallBlock({
   const args = Object.entries(entry.input)
   // The row's label: search-mode wrappers show the runnable / tool they ran.
   const display = toolDisplay(entry)
+  const denied = entry.operatorDecision === 'denied'
   // Edit-and-rerun target when this call is a runnable invocation (search /
   // per_host / dedup); null for built-ins / MCP tools (no affordance).
   const rerun = !entry.running && !awaiting ? rerunFromToolEntry(entry) : null
@@ -1507,11 +1508,15 @@ function ToolCallBlock({
         }}
         {...(canExpand ? pressable(() => setExpanded(x => !x), { expanded }) : {})}
       >
+        {/* A denied call never ran: a neutral stop mark, not a green tick (the
+            transcript is the record of what happened). */}
         {awaiting
           ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)', fontSize: 14 }} />
           : entry.running
             ? <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 13 }} />
-            : <CheckCircleOutlined style={{ color: 'var(--rs-ok)', fontSize: 13 }} />}
+            : denied
+              ? <StopOutlined aria-label="denied, did not run" style={{ color: 'var(--rs-text-muted)', fontSize: 13 }} />
+              : <CheckCircleOutlined aria-label="done" style={{ color: 'var(--rs-ok)', fontSize: 13 }} />}
         {display.via ? (
           <Tooltip title={`Run via ${display.via}`}>
             <Text code style={{ fontSize: 13, flexShrink: 0 }}>{display.name}</Text>
@@ -1555,7 +1560,7 @@ function ToolCallBlock({
             {entry.progress || 'running…'}
           </Text>
         )}
-        {!entry.running && entry.durationMs !== undefined && (
+        {!entry.running && !denied && entry.durationMs !== undefined && (
           <Tooltip title="Time this tool call took">
             <Text style={{ color: c.dim, fontSize: 12, marginLeft: 'auto', flexShrink: 0, fontFamily: MONO_FONT }}>
               {fmtDurationMs(entry.durationMs)}
@@ -2161,10 +2166,10 @@ const BlockCard = memo(function BlockCard({
     : !block.done
     ? <LoadingOutlined style={{ color: 'var(--rs-text-secondary)' }} />
     : block.stopped
-      ? <PauseCircleOutlined style={{ color: '#8c8c8c' }} />
+      ? <PauseCircleOutlined aria-label="stopped" style={{ color: 'var(--rs-text-muted)' }} />
       : block.exitCode === 0
-        ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
-        : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+        ? <CheckCircleOutlined aria-label="succeeded" style={{ color: 'var(--rs-ok)' }} />
+        : <CloseCircleOutlined aria-label="failed" style={{ color: 'var(--rs-danger)' }} />
 
   // Edit-and-rerun opens the Forms run dialog pre-filled with this run's values
   // (rich typed inputs), rather than an inline plain-text arg editor. App owns the
@@ -2389,6 +2394,9 @@ const BlockCard = memo(function BlockCard({
             </StatusTag>
           )
         })()}
+        {/* Token and cost detail sits behind one quiet Usage button: it is
+            for whoever pays for the model, not for reading the run (it used
+            to be three tags on every header, ahead of what ran and where). */}
         {block.tokenUsage && (() => {
           const { input, output, cacheRead, cacheCreation } = block.tokenUsage!
           const promptTotal = input + cacheRead + cacheCreation
@@ -2398,43 +2406,30 @@ const BlockCard = memo(function BlockCard({
           // A provider that bills in its own units (Copilot) isn't priced in
           // dollars: a Claude model there would otherwise match the list prices.
           const cost = billed ? null : estimateCostUsd(block.model, block.tokenUsage!)
+          const rows: [string, string][] = [
+            ['Prompt', `${promptTotal.toLocaleString()} tokens (${input.toLocaleString()} new, ${cacheRead.toLocaleString()} cache read, ${cacheCreation.toLocaleString()} cache write)`],
+            ['Output', `${output.toLocaleString()} tokens`],
+            ...(cached > 0 ? [['Cache', `${hitPct}% of the prompt served from cache`] as [string, string]] : []),
+            ...(cost !== null ? [['Cost', `~${fmtUsd(cost)} at approximate list prices${block.model ? ` (${block.model})` : ''}`] as [string, string]] : []),
+            ...(billed ? [['Billing', billed.text] as [string, string]] : []),
+          ]
           return (
-            <>
-              <Tooltip title={
-                `Prompt ${promptTotal.toLocaleString()} tokens = ` +
-                `${input.toLocaleString()} new + ${cacheRead.toLocaleString()} cache read (~0.1×) + ` +
-                `${cacheCreation.toLocaleString()} cache write (~1.25×) · ` +
-                `Output ${output.toLocaleString()}`
-              }>
-                <Tag bordered={false} style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
-                  ↑{promptTotal.toLocaleString()} ↓{output.toLocaleString()}
-                </Tag>
-              </Tooltip>
-              {cached > 0 && (
-                <Tooltip title={
-                  `${cacheRead.toLocaleString()} tokens served from cache at ~10% cost` +
-                  (cacheCreation > 0 ? ` · ${cacheCreation.toLocaleString()} written to cache this turn` : '')
-                }>
-                  <Tag bordered={false} color="green" style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
-                    ⚡{hitPct}% cached
-                  </Tag>
-                </Tooltip>
-              )}
-              {cost !== null && (
-                <Tooltip title={`Estimated cost at approximate list prices${block.model ? ` · ${block.model}` : ''}. Rates drift — treat as a guide.`}>
-                  <Tag bordered={false} style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
-                    ~{fmtUsd(cost)}
-                  </Tag>
-                </Tooltip>
-              )}
-              {billed && (
-                <Tooltip title={billed.tip}>
-                  <Tag bordered={false} data-testid="card-billing" style={{ fontSize: 12, fontFamily: MONO_FONT, cursor: 'default', marginLeft: 4 }}>
-                    {billed.text}
-                  </Tag>
-                </Tooltip>
-              )}
-            </>
+            <Popover trigger="click" placement="bottomRight" content={
+              <div data-testid="card-usage" style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '2px 12px', fontSize: 12, maxWidth: 420 }}>
+                {rows.map(([k, v]) => (
+                  <Fragment key={k}>
+                    <span style={{ color: c.dim }}>{k}</span>
+                    <span style={{ fontFamily: MONO_FONT }}>{v}</span>
+                  </Fragment>
+                ))}
+              </div>
+            }>
+              <Button type="text" size="small" icon={<InfoCircleOutlined />} aria-label="Model usage for this turn"
+                onClick={e => e.stopPropagation()}
+                style={{ color: c.dim, fontSize: 12, marginLeft: 2, height: 22, padding: '0 4px' }}>
+                Usage
+              </Button>
+            </Popover>
           )
         })()}
         {/* Card actions: Copy output + Ask the assistant stay one click away;
