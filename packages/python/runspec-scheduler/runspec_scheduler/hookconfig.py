@@ -572,6 +572,10 @@ class HookConfig:
         for h in self.listed:
             row = h.summary()
             row["overridden"] = (h.source, h.name) in self.overridden
+            # The table as written (hashes only, never a secret) for an editor
+            # and for "Copy as TOML".
+            row["raw"] = dict(h.raw)
+            row["toml"] = render_hook(dict(h.raw)) if h.raw else ""
             out.append(row)
         return out
 

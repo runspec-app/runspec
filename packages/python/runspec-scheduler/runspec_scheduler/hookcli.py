@@ -114,6 +114,31 @@ def check(path: Path) -> dict[str, Any]:
     return {"ok": not problems, "file": str(path), "hooks": names, "problems": problems}
 
 
+#: Stands in for a draft's missing token so it parses (a draft is only tested).
+_DRAFT_TOKEN = "0" * 64
+
+
+def test_draft(config_path: Path, text: str) -> dict[str, Any]:
+    """Dry run of a hook that isn't saved yet (the console's editor): stdin is
+    ``{"hook": {table}, "body": "…" | null, "content_type": "…"}``. With no
+    body, the last one the hook (by name) received is used."""
+    try:
+        data = json.loads(text or "{}")
+    except ValueError as exc:
+        return {"ok": False, "error": f"--draft reads JSON on stdin: {exc}"}
+    raw = dict(data.get("hook") or {}) if isinstance(data, dict) else {}
+    raw.pop("token", None)
+    raw.pop("password", None)
+    if not raw.get("token_sha256") and not raw.get("username"):
+        raw["token_sha256"] = _DRAFT_TOKEN
+    try:
+        hook = hc.parse_hook(raw, source="draft")
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    body = data.get("body")
+    return _test_hook(config_path, hook, body=body.encode("utf-8") if isinstance(body, str) else None, content_type=str(data.get("content_type") or ""), delivery=None)
+
+
 def test(config_path: Path, name: str, *, body: bytes | None, content_type: str, delivery: int | None, file: Path | None) -> dict[str, Any]:
     """Dry run: what ``name`` would do with a body (stdin, ``--file``, or a
     stored delivery's). Nothing runs; nothing is stored."""
@@ -129,6 +154,10 @@ def test(config_path: Path, name: str, *, body: bytes | None, content_type: str,
         hook = cfg.hooks.get(name)
     if hook is None:
         return {"ok": False, "error": f"no hook {name!r}; set up: {', '.join(sorted(cfg.hooks)) or '(none)'}"}
+    return _test_hook(config_path, hook, body=body, content_type=content_type, delivery=delivery)
+
+
+def _test_hook(config_path: Path, hook: hc.Hook, *, body: bytes | None, content_type: str, delivery: int | None) -> dict[str, Any]:
     source = "stdin"
     if delivery is not None or body is None:
         spool = _spool_if_any(config_path)

@@ -144,6 +144,32 @@ def test_test_from_stdin_file_and_stored(config: Path, tmp_path: Path) -> None:
     assert not hookcli.test(config, "ghost", body=body, content_type="", delivery=None, file=None)["ok"]
 
 
+def test_test_draft(config: Path) -> None:
+    body = json.dumps({"labels": {"alertname": "Disk"}})
+    draft = {"name": "new", "fields": {"alertname": "labels.alertname"}, "rule": [{"name": "disk", "match": {"alertname": "^Disk$"}}]}
+    out = hookcli.test_draft(config, json.dumps({"hook": draft, "body": body, "content_type": "application/json"}))
+    assert out["ok"] and out["hook"] == "new" and out["items"][0]["rule"] == "disk"
+    # a plain token in a draft is never parsed or kept
+    out = hookcli.test_draft(config, json.dumps({"hook": {**draft, "token": "secret"}, "body": body}))
+    assert out["ok"]
+    # no body yet: the last one received under that name
+    spool = sp.Spool(sp.spool_path_for(config))
+    spool.add_delivery("new", source="x", content_type="application/json", headers={}, body=body.encode())
+    spool.close()
+    out = hookcli.test_draft(config, json.dumps({"hook": draft}))
+    assert out["source"] == "delivery 1"
+    assert not hookcli.test_draft(config, "not json")["ok"]
+    bad = hookcli.test_draft(config, json.dumps({"hook": {**draft, "rule": [{"match": {"x": "("}}]}, "body": body}))
+    assert not bad["ok"] and "match.x" in bad["error"]
+
+
+def test_listing_carries_the_table_as_toml(config: Path) -> None:
+    hookcli.save(config, HOOK_TOML, new_token=True, new_password=False)
+    row = hookcli.hooks_status(config)["hooks"][0]
+    assert row["raw"]["name"] == "alerts" and row["raw"]["token_sha256"]
+    assert row["toml"].startswith("[[hook]]") and 'name = "alerts"' in row["toml"] and "[[hook.rule]]" in row["toml"]
+
+
 def pending_delivery(config: Path) -> int:
     spool = sp.Spool(sp.spool_path_for(config))
     try:

@@ -43,12 +43,14 @@ All notable changes to `runspec-scheduler` are documented here.
   muted the hook, else after `expect_claim_within` (15 minutes).
 - **`hooks` verbs:** `list`, `deliveries`, `show`, `check` (exit 1 on any
   problem, for Ansible's `validate`), `test` (dry run on a body, the last one
-  received or a stored delivery; nothing runs or is stored), `token`, `save`
+  received or a stored delivery, or `--draft` for an unsaved hook sent as
+  JSON; nothing runs or is stored), `token`, `save`
   (`--new-token` / `--new-password` printed once), `remove`, `settings`
   (`--set`, `--smtp`), `approve` / `deny` (`manual`, recorded under
   `SUDO_USER`), `mute` / `unmute`, and `follow` (the JSON-lines event stream
   runspec-console reads over SSH: a hello line with what's waiting, then every
-  delivery and change, pings every 15 s).
+  delivery and change, pings every 15 s). `list` gives each hook's table
+  as written (`raw`, `toml`; hashes only) for an editor and Copy as TOML.
 - **Deployed hooks.** `{venv}/hooks.d/*.toml` (owned by the venv owner or
   root, not group/other-writable) win over a console-made hook of the same
   name; `save` refuses to write over one. The daemon reloads on any change.

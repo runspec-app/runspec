@@ -634,6 +634,9 @@ def _cmd_hooks(spec: rs.RunSpec, verb: str) -> None:
         run(lambda: h.show(path, int(spec.id.value)), lambda p: json.dumps(p, indent=2, default=str))
     elif verb == "check":
         run(lambda: h.check(Path(str(spec.file.value))), h.render_check)
+    elif verb == "test" and spec.draft.value:
+        draft = sys.stdin.read()
+        run(lambda: h.test_draft(path, draft), h.render_test)
     elif verb == "test":
         stdin_body: bytes | None = None
         if _opt(spec.id) is None and not spec.last.value and not sys.stdin.isatty():

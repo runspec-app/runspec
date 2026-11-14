@@ -181,6 +181,7 @@ anything:
 bin/runspec-scheduler hooks test --hook alerts < sample.json
 bin/runspec-scheduler hooks test --hook alerts --last     # the last body it received
 bin/runspec-scheduler hooks test --file hooks.d/ops.toml < sample.json   # before deploying
+echo '{"hook": {"name": "alerts", "fields": {}}, "body": null}' | bin/runspec-scheduler hooks test --draft   # an unsaved hook (what the console editor sends)
 ```
 
 ```text

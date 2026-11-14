@@ -268,6 +268,7 @@ id           = {type = "int", required = false, description = "Use this stored d
 last         = {type = "flag", default = false, description = "Use the last body the hook received instead of stdin."}
 file         = {type = "path", required = false, description = "Test the hook as written in this file (e.g. a hooks.d file before deploying it) instead of as set up."}
 content-type = {type = "str", required = false, description = "The body's Content-Type (default: worked out from the body)."}
+draft        = {type = "flag", default = false, description = "Test a hook that isn't saved: stdin is JSON {\"hook\": {…}, \"body\": \"…\", \"content_type\": \"…\"} (no body = the last one that hook received). For the console's hook editor."}
 
 [runspec-scheduler.commands.hooks.commands.token]
 description = "Make a new random token and print it with its SHA-256. Put the hash in a hook (token_sha256) and the token in the sending app. --basic makes a basic-auth password and its password_hash instead. Nothing is stored."
