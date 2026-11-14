@@ -223,8 +223,8 @@ Ansible's `validate`:
 
 runspec-console (0.438.0 and later) can follow a host's webhooks and show the
 approvals as cards. Name the hooks to follow on the host's entry in
-`runspec_hosts.toml` (or click *Follow* on the Schedules tab, which writes the
-same thing):
+`runspec_hosts.toml` (or click *Follow* on **Automation → Webhooks**, which
+writes the same thing):
 
 ```toml
 [[host]]
@@ -237,16 +237,24 @@ hooks         = ["*"]          # every hook; or ["alerts", "deploys"]
 The console then keeps `runspec-scheduler hooks follow` open to each of that
 host's venvs, as the venv owner, over the host's SSH connection. It reconnects
 by itself and catches up on what arrived while it was away, as far back as
-`[webhooks] replay` in its `config.toml` (default `15m`).
+`[webhooks] replay` in its `config.toml` (default `15m`). Venvs on that host
+that can't take webhooks (no runspec-scheduler, one older than 0.11.0) are
+listed once as "Not taking webhooks" rather than as errors; root-owned venvs
+are skipped, since runspec-scheduler never runs as root.
 
 - **Approvals.** A delivery that waits for a person shows as a card at the top
   of the Console tab: the hook, the host and venv, what it wants to run and the
   fields it was sent. Approve or Deny it there, with an optional note. The
   first decision on any console wins. Waiting webhooks also count in the
   status bar's "waiting for you". This works with the console's AI turned off.
-- **The Schedules tab** has one strip per followed venv: whether it's
-  connected, what's waiting, mutes, recent deliveries, a *Mute* menu and
-  *Hooks…*.
+- **Automation → Webhooks** (console 0.440.0; before that, the Schedules tab)
+  has one strip per followed venv: whether it's connected, what's waiting,
+  mutes, recent deliveries, a *Mute* menu and *Hooks…*. Below them, every
+  connected host in the profile that you don't follow is listed with each
+  venv's state: webhooks on, off (*Set up…* opens the listener settings), no
+  hooks yet (*Add a hook…*), or needs runspec-scheduler 0.11.0. *Follow* works
+  before any hook exists or the listener is on. The Schedules tab keeps a
+  one-line summary.
 - **Hooks…** lists the venv's hooks. Hooks made from the console can be edited
   as TOML, tried against a body (or the hook's last one) without running
   anything, saved with a new token or basic-auth password, and removed. The

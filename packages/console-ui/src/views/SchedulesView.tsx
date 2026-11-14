@@ -14,6 +14,7 @@ import { RunbookField } from './RunbookRunModal'
 import { AllSchedulesView, WhenCell } from './AllSchedulesView'
 import { EmptyState, IconAction, RowActions, StatusTag } from '../components/kit'
 import { ScheduleScopeCards } from './ScheduleScopeCards'
+import { useWebhooks } from '../webhooks'
 import { collectRows, scopeCounts, type ScheduleScope } from './allSchedules'
 import {
   ArgFieldRow, commandPathOptions, CredentialsSection, effectiveArgsForPath,
@@ -48,6 +49,51 @@ export function scheduleTargets(hosts: Host[]): string[] {
 let hostReadCache: { key: string; venvs: SharedSchedulesVenv[]; at: number } | null = null
 export function _resetHostReadCache() { hostReadCache = null }
 
+/** Every venv's runspec-scheduler status across the profile's connected hosts,
+ *  read on open, when the profile's connected set changes, and on `readHosts`.
+ *  Shared by the Schedules and Webhooks tabs (one cache, so switching between
+ *  them doesn't re-read). */
+export function useHostSchedulerReads(hosts: Host[]) {
+  const targets = useMemo(() => scheduleTargets(hosts), [hosts])
+  const targetKey = targets.join(',')
+  const [hostVenvs, setHostVenvs] = useState<SharedSchedulesVenv[]>(() => hostReadCache?.key === targetKey ? hostReadCache.venvs : [])
+  const [hostsLoaded, setHostsLoaded] = useState(() => hostReadCache?.key === targetKey)
+  const [hostsUpdatedAt, setHostsUpdatedAt] = useState<number | null>(() => hostReadCache?.key === targetKey ? hostReadCache.at : null)
+  const [hostsLoading, setHostsLoading] = useState(false)
+  const readSeq = useRef(0)
+  const readHosts = useCallback(() => {
+    const seq = ++readSeq.current
+    const list = targetKey ? targetKey.split(',') : []
+    setHostsLoading(true)
+    Promise.resolve(bridge.shared_schedules_all(list))
+      .then(venvs => {
+        if (seq !== readSeq.current) return  // a newer read (profile switch) won
+        const at = Date.now()
+        hostReadCache = { key: targetKey, venvs: venvs ?? [], at }
+        setHostVenvs(venvs ?? [])
+        setHostsUpdatedAt(at)
+      })
+      .catch(e => { if (seq === readSeq.current) message.error(`Couldn't read host schedules: ${String(e)}`) })
+      .finally(() => {
+        if (seq !== readSeq.current) return
+        setHostsLoading(false)
+        setHostsLoaded(true)
+      })
+  }, [targetKey])
+  // Hosts connect one by one after a profile switch; wait for the set to settle
+  // before fanning out, rather than re-reading on every probe.
+  useEffect(() => {
+    if (hostReadCache?.key !== targetKey) {
+      setHostVenvs([])
+      setHostsLoaded(false)
+      setHostsUpdatedAt(null)
+    }
+    const t = setTimeout(readHosts, hostReadCache?.key === targetKey ? 0 : 1200)
+    return () => clearTimeout(t)
+  }, [readHosts, targetKey])
+  return { hostVenvs, hostsLoaded, hostsUpdatedAt, hostsLoading, readHosts, targets }
+}
+
 interface SchedulesViewProps {
   hosts: Host[]
   runnables: Runnable[]
@@ -55,6 +101,8 @@ interface SchedulesViewProps {
   activeProfile?: string
   /** Open the History tab with this search (a schedule's `sched:<id>` label). */
   onOpenHistory?: (search: string) => void
+  /** Open the Webhooks tab. */
+  onOpenWebhooks?: () => void
 }
 
 const CRON_PRESETS = [
@@ -901,7 +949,7 @@ function relativeWhen(iso: string): string {
   return `in ${days}d ${hours % 24}h`
 }
 
-export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, onOpenHistory }: SchedulesViewProps) {
+export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, onOpenHistory, onOpenWebhooks }: SchedulesViewProps) {
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Schedule | null>(null)
@@ -920,45 +968,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
     try { localStorage.setItem(SCOPE_KEY, v) } catch { /* storage unavailable — fine */ }
   }
 
-  // Every venv's runspec-scheduler status across the profile's connected hosts.
-  // Read on open, when the profile's connected set changes, and on Refresh.
-  const targets = useMemo(() => scheduleTargets(hosts), [hosts])
-  const targetKey = targets.join(',')
-  const [hostVenvs, setHostVenvs] = useState<SharedSchedulesVenv[]>(() => hostReadCache?.key === targetKey ? hostReadCache.venvs : [])
-  const [hostsLoaded, setHostsLoaded] = useState(() => hostReadCache?.key === targetKey)
-  const [hostsUpdatedAt, setHostsUpdatedAt] = useState<number | null>(() => hostReadCache?.key === targetKey ? hostReadCache.at : null)
-  const [hostsLoading, setHostsLoading] = useState(false)
-  const readSeq = useRef(0)
-  const readHosts = useCallback(() => {
-    const seq = ++readSeq.current
-    const list = targetKey ? targetKey.split(',') : []
-    setHostsLoading(true)
-    Promise.resolve(bridge.shared_schedules_all(list))
-      .then(venvs => {
-        if (seq !== readSeq.current) return  // a newer read (profile switch) won
-        const at = Date.now()
-        hostReadCache = { key: targetKey, venvs: venvs ?? [], at }
-        setHostVenvs(venvs ?? [])
-        setHostsUpdatedAt(at)
-      })
-      .catch(e => { if (seq === readSeq.current) message.error(`Couldn't read host schedules: ${String(e)}`) })
-      .finally(() => {
-        if (seq !== readSeq.current) return
-        setHostsLoading(false)
-        setHostsLoaded(true)
-      })
-  }, [targetKey])
-  // Hosts connect one by one after a profile switch; wait for the set to settle
-  // before fanning out, rather than re-reading on every probe.
-  useEffect(() => {
-    if (hostReadCache?.key !== targetKey) {
-      setHostVenvs([])
-      setHostsLoaded(false)
-      setHostsUpdatedAt(null)
-    }
-    const t = setTimeout(readHosts, hostReadCache?.key === targetKey ? 0 : 1200)
-    return () => clearTimeout(t)
-  }, [readHosts, targetKey])
+  const { hostVenvs, hostsLoaded, hostsUpdatedAt, hostsLoading, readHosts, targets } = useHostSchedulerReads(hosts)
   const isDark = useIsDark()
   const [askRisk, riskHolder] = useRiskConfirm()
 
@@ -1238,6 +1248,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
     [schedules, hostVenvs, cards, hostGroups],
   )
   const counts = useMemo(() => scopeCounts(collected), [collected])
+  const webhooks = useWebhooks()
 
   const scopeToggle = (
     <ScheduleScopeCards
@@ -1264,6 +1275,8 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
           onRefresh={readHosts}
           onOpenHistory={onOpenHistory}
           runnables={runnables}
+          webhooks={webhooks.status}
+          onOpenWebhooks={onOpenWebhooks}
         />
       </div>
     )

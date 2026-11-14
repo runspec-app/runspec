@@ -26,8 +26,9 @@ import {
   DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, PACKAGE_POLICY, STATE_TONE, claimStale, daemonNeedsAttention, daemonSummary, filterRows, noteBatches, noteText, noteVerbs, noteable, packageOverridden, settingText, settingsForm, shortDuration, supportsPackages, venvSettingsChanges,
   type Collected, type VenvSettingsForm, type NoteVerb, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
 } from './allSchedules'
-import { WebhooksSection } from './WebhooksSection'
-import { useWebhooks } from '../webhooks'
+import { WebhooksSummary } from './WebhooksSection'
+import { EMPTY_WEBHOOKS } from '../webhooks'
+import type { WebhooksStatus } from '../bridge'
 import { RUN_TONE, ScheduleDetail, relTime } from './sharedSchedules'
 import { EmptyState, IconAction, StatusTag, type StatusTone } from '../components/kit'
 import { describeCron } from '../cronText'
@@ -358,6 +359,10 @@ interface AllSchedulesViewProps {
   /** Runnables known to the console, for the host-schedule editor. Without it
    *  the list stays read-only. */
   runnables?: Runnable[]
+  /** The webhooks this console follows (summarised in one line here). */
+  webhooks?: WebhooksStatus
+  /** Opens the Webhooks card. */
+  onOpenWebhooks?: () => void
 }
 
 /** A save payload that keeps a host schedule as it is, bar `enabled`. */
@@ -387,10 +392,9 @@ function report(what: string, res: HostScheduleResult) {
   for (const w of res.warnings ?? []) message.warning(w, 8)
 }
 
-export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory, runnables }: AllSchedulesViewProps) {
+export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory, runnables, webhooks = EMPTY_WEBHOOKS, onOpenWebhooks }: AllSchedulesViewProps) {
   const isDark = useIsDark()
   const { token } = theme.useToken()
-  const webhooks = useWebhooks()
   const [filters, setFiltersState] = useState<RowFilters>(readFilters)
   const setFilters = (patch: Partial<RowFilters>) => setFiltersState(prev => {
     const next = { ...prev, ...patch }
@@ -844,7 +848,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
         </div>
       )}
 
-      {scope !== 'console' && <WebhooksSection status={webhooks.status} venvs={collected.venvs} editable={editable} />}
+      {scope !== 'console' && <WebhooksSummary status={webhooks} onOpen={onOpenWebhooks} />}
 
       {notes.map(n => (
         <Alert key={n.key} type="error" showIcon style={{ marginBottom: 8 }}

@@ -1,8 +1,10 @@
 /**
  * WebhooksSection — the Schedules tab's view of the webhooks this console
  * follows: one strip per followed host + venv (connection, mutes, recent
- * deliveries, the hook editor) and a quiet offer to follow hosts whose venvs
- * take webhooks but that this console doesn't follow yet.
+ * deliveries, the hook editor), one quiet line for followed venvs that take no
+ * webhooks (no runspec-scheduler 0.11.0, root-owned), and one row per host it
+ * doesn't follow saying what each venv would need — Follow works before any
+ * hook is made.
  *
  * Waiting approvals are decided on the Console tab's cards; here a strip only
  * counts them.
@@ -25,26 +27,69 @@ export const MUTE_CHOICES = [
   { key: '24h', label: 'for a day' },
 ]
 
-/** Hosts with a venv that takes webhooks (`[hooks] enabled`) that this console
- *  doesn't follow yet, sorted. */
-export function followOffers(venvs: SchedulerVenv[], status: WebhooksStatus): string[] {
-  const hosts = venvs.filter(v => v.webhooks?.enabled && v.webhooks.hooks.length > 0).map(v => v.host)
-  return [...new Set(hosts)].filter(h => !(status.follows[h]?.length)).sort()
+/** What one venv's runspec-scheduler says about webhooks: `on` (listener on,
+ *  hooks made), `empty` (on, no hook yet), `off` (`[hooks] enabled = false`),
+ *  `old` (runspec-scheduler older than 0.11.0), `missing` (no runspec-scheduler). */
+export type VenvHookState = 'on' | 'empty' | 'off' | 'old' | 'missing'
+
+export function venvHookState(v: SchedulerVenv | undefined): VenvHookState {
+  if (!v) return 'missing'
+  if (!v.webhooks) return 'old'
+  if (!v.webhooks.enabled) return 'off'
+  return v.webhooks.hooks.length ? 'on' : 'empty'
 }
 
-/** Venvs whose runspec-scheduler takes webhooks (0.11.0+) that no followed
- *  strip covers: where "Set up webhooks…" can open the hook editor. */
-export function setupTargets(venvs: SchedulerVenv[], status: WebhooksStatus): { host: string; venv: string }[] {
-  const followed = new Set(status.venvs.map(v => `${v.host}/${v.venv}`))
-  return venvs.filter(v => v.webhooks && !followed.has(`${v.host}/${v.venv}`)).map(v => ({ host: v.host, venv: v.venv }))
+/** A venv's webhook state in a few words. */
+export function hookStateText(v: SchedulerVenv): string {
+  const st = venvHookState(v)
+  if (st === 'on') {
+    const n = v.webhooks?.hooks.length ?? 0
+    return `webhooks on, ${n} hook${n === 1 ? '' : 's'}`
+  }
+  if (st === 'empty') return 'webhooks on, no hooks yet'
+  if (st === 'off') return 'webhooks off'
+  return 'needs runspec-scheduler 0.11.0'
 }
+
+/** A host this console doesn't follow: its venvs with runspec-scheduler, and
+ *  whether following would get anything (some venv has 0.11.0 or later, even
+ *  with webhooks still off or no hook made yet). */
+export interface HostOffer { host: string; venvs: SchedulerVenv[]; canFollow: boolean }
+
+/** Every host with a runspec-scheduler venv that this console doesn't follow,
+ *  sorted: the ones it can follow first. */
+export function hostOffers(venvs: SchedulerVenv[], status: WebhooksStatus): HostOffer[] {
+  const by = new Map<string, SchedulerVenv[]>()
+  for (const v of venvs) {
+    if (status.follows[v.host]?.length) continue
+    by.set(v.host, [...(by.get(v.host) ?? []), v])
+  }
+  return [...by.entries()]
+    .map(([host, vs]) => ({ host, venvs: vs, canFollow: vs.some(v => !!v.webhooks) }))
+    .sort((a, b) => Number(b.canFollow) - Number(a.canFollow) || a.host.localeCompare(b.host))
+}
+
+/** Hosts listed before the rest fold behind a "N hosts not followed" toggle. */
+export const HOSTS_SHOWN = 8
 
 /** "follows every hook" / "follows alerts, deploys". */
 export function followsText(follows: string[]): string {
   return follows.includes('*') ? 'follows every hook' : `follows ${follows.join(', ')}`
 }
 
-function WebhookStrip({ v, editable, onHooks }: { v: WebhookVenv; editable: boolean; onHooks: (v: WebhookVenv) => void }) {
+type ModalTab = 'hooks' | 'settings'
+
+/** The quiet line under a strip when following it can't bring anything yet. */
+export function stripHint(v: WebhookVenv): { text: string; action: string; tab: ModalTab } | null {
+  if (!v.connected) return null
+  if (v.settings && v.settings.enabled === false) {
+    return { text: 'Webhooks are off in this venv, so nothing arrives yet.', action: 'Turn them on…', tab: 'settings' }
+  }
+  if (!v.hooks.length) return { text: 'No hooks in this venv yet.', action: 'Add a hook…', tab: 'hooks' }
+  return null
+}
+
+function WebhookStrip({ v, editable, onHooks }: { v: WebhookVenv; editable: boolean; onHooks: (v: WebhookVenv, tab?: ModalTab) => void }) {
   const isDark = useIsDark()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -52,6 +97,7 @@ function WebhookStrip({ v, editable, onHooks }: { v: WebhookVenv; editable: bool
   const target = { host: v.host, venv: v.venv }
   const waiting = v.open.filter(d => d.state === 'pending').length
   const last = v.recent[0]
+  const hint = stripHint(v)
 
   const mute = async (span: string, label: string) => {
     setBusy(true)
@@ -116,6 +162,16 @@ function WebhookStrip({ v, editable, onHooks }: { v: WebhookVenv; editable: bool
       {conn.detail && conn.tone !== 'ok' && (
         <div style={{ fontSize: 12, color: conn.tone === 'failed' ? textWarning(isDark) : textSecondary(isDark) }}>{conn.detail}</div>
       )}
+      {hint && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: textSecondary(isDark) }}>
+          <span>{hint.text}</span>
+          {editable && (
+            <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12 }} onClick={() => onHooks(v, hint.tab)}>
+              {hint.action}
+            </Button>
+          )}
+        </div>
+      )}
       {last ? (
         <>
           <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
@@ -144,26 +200,102 @@ function WebhookStrip({ v, editable, onHooks }: { v: WebhookVenv; editable: bool
             </ul>
           )}
         </>
-      ) : conn.tone === 'ok' && (
+      ) : conn.tone === 'ok' && !hint && (
         <div style={{ fontSize: 12, color: textMuted(isDark) }}>Nothing received yet.</div>
       )}
     </div>
   )
 }
 
-export function WebhooksSection({ status, venvs, editable }: { status: WebhooksStatus; venvs: SchedulerVenv[]; editable: boolean }) {
+/** Followed venvs that take no webhooks at all, folded into one quiet line. */
+function UnavailableLine({ venvs }: { venvs: WebhookVenv[] }) {
   const isDark = useIsDark()
-  const [editing, setEditing] = useState<{ host: string; venv: string } | null>(null)
+  return (
+    <div data-testid="webhook-unavailable" style={{ fontSize: 12, color: textMuted(isDark), display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+      <span>Not taking webhooks:</span>
+      {venvs.map((v, i) => (
+        <Tooltip key={v.key} title={v.unavailable}>
+          <span style={{ fontFamily: MONO_FONT }}>
+            {v.host} / {v.venv}
+            <span style={{ fontFamily: 'inherit' }}> ({/root-owned/i.test(v.unavailable ?? '') ? 'root-owned' : 'needs runspec-scheduler 0.11.0'})</span>
+            {i < venvs.length - 1 ? ',' : ''}
+          </span>
+        </Tooltip>
+      ))}
+    </div>
+  )
+}
+
+/** One host this console doesn't follow: each venv's webhook state, a way to
+ *  set them up, and Follow (works before any hook exists). */
+function HostOfferRow({ offer, editable, busy, onFollow, onEdit }: {
+  offer: HostOffer; editable: boolean; busy: string
+  onFollow: (host: string) => void; onEdit: (t: { host: string; venv: string; tab: ModalTab }) => void
+}) {
+  const isDark = useIsDark()
+  const { host, venvs, canFollow } = offer
+  return (
+    <div data-testid="webhook-host-offer" style={{
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '4px 10px',
+      border: '1px dashed var(--rs-border)', borderRadius: RADIUS.sm, fontSize: 12,
+    }}>
+      <StatusTag tone="neutral">not followed</StatusTag>
+      <span style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark) }}>{host}</span>
+      {venvs.map(v => {
+        const st = venvHookState(v)
+        const action = st === 'off' ? { label: 'Set up…', tab: 'settings' as const }
+          : st === 'empty' ? { label: 'Add a hook…', tab: 'hooks' as const }
+          : st === 'on' ? { label: 'Hooks…', tab: 'hooks' as const } : null
+        return (
+          <span key={v.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: st === 'old' ? textMuted(isDark) : textSecondary(isDark) }}>
+            <span style={{ fontFamily: MONO_FONT }}>{v.venv}</span>
+            <span>{hookStateText(v)}</span>
+            {editable && action && (
+              <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                aria-label={`${action.label.replace('…', '')} on ${host} / ${v.venv}`}
+                onClick={() => onEdit({ host, venv: v.venv, tab: action.tab })}>
+                {action.label}
+              </Button>
+            )}
+          </span>
+        )
+      })}
+      {editable && (
+        <Tooltip title={canFollow
+          ? 'Show its webhook deliveries and approvals on this console. Works before any hook is made.'
+          : 'Needs runspec-scheduler 0.11.0 or later in one of its venvs (Update venv… upgrades it).'}>
+          <Button size="small" style={{ marginLeft: 'auto' }} disabled={!canFollow || !!busy} loading={busy === host}
+            onClick={() => onFollow(host)} aria-label={`Follow webhooks on ${host}`}>
+            Follow
+          </Button>
+        </Tooltip>
+      )}
+    </div>
+  )
+}
+
+export function WebhooksSection({ status, venvs, editable, onChanged }: {
+  status: WebhooksStatus; venvs: SchedulerVenv[]; editable: boolean
+  /** A hook or listener setting may have changed on a host: re-read the venvs. */
+  onChanged?: () => void
+}) {
+  const isDark = useIsDark()
+  const [editing, setEditing] = useState<{ host: string; venv: string; tab?: ModalTab } | null>(null)
   const [following, setFollowing] = useState('')
-  const offers = editable ? followOffers(venvs, status) : []
-  const setupable = editable ? setupTargets(venvs, status) : []
-  if (!status.venvs.length && !offers.length && !setupable.length) return null
+  const [expanded, setExpanded] = useState<boolean | null>(null)
+  const offers = hostOffers(venvs, status)
+  const live = status.venvs.filter(v => !v.unavailable)
+  const quiet = status.venvs.filter(v => !!v.unavailable)
+  if (!status.venvs.length && !offers.length) return null
+  const showOffers = expanded ?? offers.length <= HOSTS_SHOWN
+  const followable = offers.filter(o => o.canFollow).length
 
   const follow = async (host: string) => {
     setFollowing(host)
     try {
       const r = await bridge.webhook_follow({ host, hooks: ['*'] })
       if (!r.ok) message.error(`Couldn't follow webhooks on ${host}: ${r.error}`)
+      else message.success(`Following webhooks on ${host}.`)
     } finally { setFollowing('') }
   }
 
@@ -174,31 +306,51 @@ export function WebhooksSection({ status, venvs, editable }: { status: WebhooksS
           You're away ({status.away}): webhook alerts are muted until you're back. Deliveries still wait for anyone else following.
         </div>
       )}
-      {status.venvs.map(v => (
-        <WebhookStrip key={v.key} v={v} editable={editable} onHooks={x => setEditing({ host: x.host, venv: x.venv })} />
+      {live.map(v => (
+        <WebhookStrip key={v.key} v={v} editable={editable} onHooks={(x, tab) => setEditing({ host: x.host, venv: x.venv, tab })} />
       ))}
-      {(offers.length > 0 || setupable.length > 0) && (
-        <div data-testid="webhook-follow-offer" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: textSecondary(isDark) }}>
-          {offers.length > 0 && <span>Takes webhooks, not followed here:</span>}
-          {offers.map(h => (
-            <Button key={h} size="small" loading={following === h} disabled={!!following} onClick={() => { void follow(h) }}
-              aria-label={`Follow webhooks on ${h}`}>
-              Follow <span style={{ fontFamily: MONO_FONT, marginLeft: 4 }}>{h}</span>
+      {quiet.length > 0 && <UnavailableLine venvs={quiet} />}
+      {offers.length > 0 && (
+        <h3 style={{ margin: '6px 0 0', fontSize: 13, fontWeight: 600, color: textColor(isDark), display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          Not followed here
+          {offers.length > HOSTS_SHOWN && (
+            <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12, fontWeight: 400 }} aria-expanded={showOffers}
+              onClick={() => setExpanded(!showOffers)}>
+              {showOffers ? 'Hide' : `Show ${offers.length} hosts${followable ? ` (${followable} can be followed)` : ''}`}
             </Button>
-          ))}
-          {setupable.length > 0 && (
-            <Dropdown trigger={['click']} menu={{
-              items: setupable.map(t => ({ key: `${t.host}/${t.venv}`, label: <span style={{ fontFamily: MONO_FONT }}>{t.host} / {t.venv}</span> })),
-              onClick: ({ key }) => { const t = setupable.find(x => `${x.host}/${x.venv}` === key); if (t) setEditing(t) },
-            }}>
-              <Button size="small" type="text" style={{ color: 'var(--rs-text-secondary)' }}>
-                Set up webhooks on… <DownOutlined style={{ fontSize: 10 }} />
-              </Button>
-            </Dropdown>
           )}
-        </div>
+        </h3>
       )}
-      {editing && <WebhookHooksModal target={editing} onClose={() => setEditing(null)} />}
+      {showOffers && offers.map(o => (
+        <HostOfferRow key={o.host} offer={o} editable={editable} busy={following}
+          onFollow={h => { void follow(h) }} onEdit={setEditing} />
+      ))}
+      {editing && <WebhookHooksModal target={{ host: editing.host, venv: editing.venv }} startTab={editing.tab} onClose={() => { setEditing(null); onChanged?.() }} />}
     </section>
+  )
+}
+
+/** Counts for the Webhooks tab and the one-line summary on the Schedules tab. */
+export function webhookCounts(status: WebhooksStatus): { hosts: number; waiting: number; problems: number } {
+  return {
+    hosts: Object.keys(status.follows).length,
+    waiting: status.venvs.reduce((n, v) => n + v.open.filter(d => d.state === 'pending').length, 0),
+    problems: status.venvs.filter(v => !v.unavailable && !v.connected && !!v.error).length,
+  }
+}
+
+/** One line on the Schedules tab when this console follows any webhooks. */
+export function WebhooksSummary({ status, onOpen }: { status: WebhooksStatus; onOpen?: () => void }) {
+  const isDark = useIsDark()
+  const { hosts, waiting, problems } = webhookCounts(status)
+  if (!hosts) return null
+  return (
+    <div data-testid="webhooks-summary" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: textSecondary(isDark), marginBottom: 10 }}>
+      <ApiOutlined />
+      <span>Webhooks: following {hosts} host{hosts === 1 ? '' : 's'}</span>
+      {waiting > 0 && <StatusTag tone="waiting">{waiting} waiting</StatusTag>}
+      {problems > 0 && <StatusTag tone="failed">{problems} not connected</StatusTag>}
+      {onOpen && <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12 }} onClick={onOpen}>Open Webhooks</Button>}
+    </div>
   )
 }

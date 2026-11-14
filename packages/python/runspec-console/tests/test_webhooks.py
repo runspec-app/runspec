@@ -365,6 +365,41 @@ def test_follower_run_backs_off_and_stops() -> None:
     )
 
 
+def test_follower_shows_a_venv_without_webhooks_quietly(caplog: Any) -> None:
+    vs = wh.VenvHooks("web-01", "ops-root", hooks=["*"])
+    waits: list[float] = []
+
+    def sleep(t: float) -> bool:
+        waits.append(t)
+        return len(waits) >= 2
+
+    def missing(_c: int | None) -> src.LineStream:
+        raise wh.WebhookError(
+            "runspec-scheduler isn't installed in this venv (or is older than 0.11.0)"
+        )
+
+    f = src.WebhookFollower(
+        vs, missing, on_change=lambda s: None, on_arrival=lambda s, d: None, sleep=sleep
+    )
+    with caplog.at_level("INFO"):
+        f.run()
+    snap = vs.snapshot()
+    assert snap["error"] == "" and "isn't installed" in snap["unavailable"]
+    assert waits == [src.BACKOFF_STUCK, src.BACKOFF_STUCK]
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+    assert src.unavailable(src.ROOT_OWNED) and not src.unavailable("no route to host")
+    vs.hello({"kind": "hello", "event": 0})
+    assert vs.unavailable == "" and vs.connected
+
+
+def test_root_owned_venv_is_not_followed() -> None:
+    b = FakeBridge()
+    b._host_entry = lambda host: b._hosts[0]  # type: ignore[attr-defined]
+    b._scheduler_owner = lambda host, venv, remote: ("", "root")  # type: ignore[attr-defined]
+    with pytest.raises(wh.WebhookError, match="root-owned"):
+        b._webhook_command("web-01", "ops", "/srv/ops/bin/runspec", ["hooks", "follow"])
+
+
 # ── the bridge mixin ─────────────────────────────────────────────────────────
 
 

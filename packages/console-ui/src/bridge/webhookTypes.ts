@@ -110,6 +110,9 @@ export interface WebhookVenv {
   follows: string[]
   connected: boolean
   error: string
+  /** Why this venv takes no webhooks at all (no runspec-scheduler, one older
+   *  than 0.11.0, root-owned): not a fault. '' / absent when it can. */
+  unavailable?: string
   paused: string
   who: string
   settings: WebhookSettings
