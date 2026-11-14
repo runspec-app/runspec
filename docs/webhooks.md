@@ -112,6 +112,10 @@ bin/runspec-scheduler hooks save --new-token < alerts.toml
 and give the sending app the address and the token, either as
 `Authorization: Bearer <token>` or in the `X-Runspec-Token` header.
 
+A token runspec makes is written to the terminal (or the SSH channel the
+console reads) only, never into the run's log, and runspec never prints a
+password: you choose it and only its hash is kept.
+
 ### Hook keys
 
 | Key | What it does |
@@ -119,7 +123,7 @@ and give the sending app the address and the token, either as
 | `name` | The address: `/hook/<name>`. Lowercase letters, digits, `.`, `_`, `-` |
 | `token_sha256` | SHA-256 of the token the sender uses. Never the token itself |
 | `token_header` | The header the token may also come in (default `X-Runspec-Token`) |
-| `username` + `password_hash` | Basic auth instead of (or as well as) a token. `password_hash` is a salted PBKDF2 hash (`pbkdf2_sha256$…`): `hooks save --new-password` makes one, or `hooks token --basic` prints a password and its hash for a hooks.d file |
+| `username` + `password_hash` | Basic auth instead of (or as well as) a token. `password_hash` is a salted PBKDF2 hash (`pbkdf2_sha256$…`). Choose the password yourself: put `password = "…"` in the hook you give `hooks save` (it's hashed before saving), or pipe it to `hooks token --basic` for a hooks.d file, which prints only the hash |
 | `allow` | Addresses or networks that may send, e.g. `["10.20.0.0/16"]`. Empty = any |
 | `fields` | `name = "path.to.value"`. A path starting `$.` reads the whole body even when it's split |
 | `split` | Path to a list in the body: each item is its own delivery |

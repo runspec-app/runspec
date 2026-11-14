@@ -38,13 +38,13 @@ match = { alertname = "." }
 
 
 def test_save_with_new_token_list_and_remove(config: Path) -> None:
-    out = hookcli.save(config, HOOK_TOML, new_token=True, new_password=False)
+    out = hookcli.save(config, HOOK_TOML, new_token=True)
     token = out["secrets"]["token"]
     assert out["ok"] and not out["replaced"] and out["url"].endswith(":18990/hook/alerts")
     text = config.read_text()
     assert token not in text and hc.sha256(token) in text
     # saving again without a new token keeps the stored hash
-    again = hookcli.save(config, HOOK_TOML.replace('"note"', '"tell"'), new_token=False, new_password=False)
+    again = hookcli.save(config, HOOK_TOML.replace('"note"', '"tell"'), new_token=False)
     assert again["replaced"] and "secrets" not in again
     assert tomllib.loads(config.read_text())["hook"][0]["token_sha256"] == hc.sha256(token)
     listing = hookcli.hooks_status(config)
@@ -55,24 +55,22 @@ def test_save_with_new_token_list_and_remove(config: Path) -> None:
 
 
 def test_save_json_and_basic_password(config: Path) -> None:
-    out = hookcli.save(config, json.dumps({"name": "svc", "username": "sender"}), new_token=False, new_password=True)
-    password = out["secrets"]["password"]
-    assert password and "basic" in out["hook"]["auth"]
+    out = hookcli.save(config, json.dumps({"name": "svc", "username": "sender", "password": "chosen-password"}), new_token=False)
+    # a given password is hashed and never echoed back
+    assert "basic" in out["hook"]["auth"] and out["new_secret"] == ["password"] and "secrets" not in out
+    assert "chosen-password" not in json.dumps(out) and "chosen-password" not in config.read_text()
     stored = tomllib.loads(config.read_text())["hook"][0]["password_hash"]
-    assert password not in config.read_text() and hc.verify_password(password, stored)
-    # saving again keeps the stored hash; a plain password given is hashed
-    hookcli.save(config, json.dumps({"name": "svc", "username": "sender", "description": "x"}), new_token=False, new_password=False)
+    assert hc.verify_password("chosen-password", stored)
+    # saving again keeps the stored hash
+    hookcli.save(config, json.dumps({"name": "svc", "username": "sender", "description": "x"}), new_token=False)
     assert tomllib.loads(config.read_text())["hook"][0]["password_hash"] == stored
-    hookcli.save(config, json.dumps({"name": "svc", "username": "sender", "password": "chosen-one"}), new_token=False, new_password=False)
-    assert "chosen-one" not in config.read_text()
-    assert hc.verify_password("chosen-one", tomllib.loads(config.read_text())["hook"][0]["password_hash"])
 
 
 def test_save_refuses_secretless_and_multiple(config: Path) -> None:
     with pytest.raises(ValueError, match="needs a token"):
-        hookcli.save(config, HOOK_TOML, new_token=False, new_password=False)
+        hookcli.save(config, HOOK_TOML, new_token=False)
     with pytest.raises(ValueError, match="one \\[\\[hook\\]\\] at a time"):
-        hookcli.save(config, HOOK_TOML + "\n[[hook]]\nname = 'b'\n", new_token=True, new_password=False)
+        hookcli.save(config, HOOK_TOML + "\n[[hook]]\nname = 'b'\n", new_token=True)
 
 
 def test_remove_deployed_says_where(config: Path) -> None:
@@ -94,11 +92,31 @@ def test_settings(config: Path) -> None:
         hookcli.settings(config, ["enabled"], [])
 
 
-def test_token() -> None:
+def test_token_and_basic_hash() -> None:
     out = hookcli.token()
     assert hc.sha256(out["token"]) == out["token_sha256"]
-    basic = hookcli.token(basic=True)
-    assert hc.verify_password(basic["password"], basic["password_hash"]) and "token" not in basic
+    basic = hookcli.basic_hash("a long chosen password\n")
+    assert hc.verify_password("a long chosen password", basic["password_hash"]) and set(basic) == {"ok", "password_hash", "note"}
+    assert not hookcli.basic_hash("short\n")["ok"]
+
+
+def test_save_refuses_token_and_new_token(config: Path) -> None:
+    with pytest.raises(ValueError, match="not both"):
+        hookcli.save(config, json.dumps({"name": "x", "token": "t" * 40}), new_token=True)
+
+
+def test_show_secret_skips_the_run_log(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """A token goes to the real stdout, not to runspec's tee (which copies
+    every line into the run log)."""
+    import io
+    import sys
+
+    tee = io.StringIO()
+    real = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", tee)
+    monkeypatch.setattr(sys, "__stdout__", real)
+    hookcli.show_secret("Token: abc")
+    assert real.getvalue() == "Token: abc\n" and tee.getvalue() == ""
 
 
 def test_check(tmp_path: Path) -> None:
@@ -112,7 +130,7 @@ def test_check(tmp_path: Path) -> None:
 
 
 def test_test_from_stdin_file_and_stored(config: Path, tmp_path: Path) -> None:
-    hookcli.save(config, HOOK_TOML, new_token=True, new_password=False)
+    hookcli.save(config, HOOK_TOML, new_token=True)
     body = json.dumps({"labels": {"alertname": "Disk"}}).encode()
     out = hookcli.test(config, "alerts", body=body, content_type="application/json", delivery=None, file=None)
     assert out["items"][0]["state"] == sp.EVENT and out["items"][0]["rule"] == "note"
@@ -164,7 +182,7 @@ def test_test_draft(config: Path) -> None:
 
 
 def test_listing_carries_the_table_as_toml(config: Path) -> None:
-    hookcli.save(config, HOOK_TOML, new_token=True, new_password=False)
+    hookcli.save(config, HOOK_TOML, new_token=True)
     row = hookcli.hooks_status(config)["hooks"][0]
     assert row["raw"]["name"] == "alerts" and row["raw"]["token_sha256"]
     assert row["toml"].startswith("[[hook]]") and 'name = "alerts"' in row["toml"] and "[[hook.rule]]" in row["toml"]

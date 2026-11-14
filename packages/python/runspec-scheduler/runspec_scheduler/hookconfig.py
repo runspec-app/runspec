@@ -488,7 +488,7 @@ def parse_hook(raw: Any, *, source: str = "console", file: str = "") -> Hook:
     if token_sha and not _HEX64.match(token_sha):
         raise ValueError(f"{what}: token_sha256 must be the 64-character SHA-256 hex of the token, never the token itself")
     if pw_hash and not _PW_HASH_RE.match(pw_hash):
-        raise ValueError(f"{what}: password_hash must be a pbkdf2_sha256$… hash, never the password itself; make one with: runspec-scheduler hooks token --basic")
+        raise ValueError(f"{what}: password_hash must be a pbkdf2_sha256$… hash, never the password itself; make one with: runspec-scheduler hooks token --basic (reads the password on stdin)")
     if bool(username) != bool(pw_hash):
         raise ValueError(f"{what}: basic auth needs both username and password_hash")
     if not token_sha and not username:

@@ -10,8 +10,9 @@ All notable changes to `runspec-scheduler` are documented here.
   `POST {base_path}/hook/<name>`. The daemon listens when `[hooks] enabled =
   true` (on either backend: a cron venv's daemon serves webhooks only), checks
   the sender (token or basic auth; only hashes stored: SHA-256 for random
-  tokens, salted PBKDF2 (`password_hash`, `hooks token --basic`) for
-  passwords; address
+  tokens, salted PBKDF2 (`password_hash`) for passwords a person chooses —
+  runspec never makes or prints a password, and a token it makes goes to the
+  real stdout only, never into the run log; address
   allow-list; `trusted_proxies` for `X-Forwarded-For`), writes the request to
   `{venv}/hooks/spool.sqlite` and answers `202 {"id": …}` before anything
   runs. Robust by design: a connection cap (503), read timeouts, the TLS
@@ -45,7 +46,8 @@ All notable changes to `runspec-scheduler` are documented here.
   problem, for Ansible's `validate`), `test` (dry run on a body, the last one
   received or a stored delivery, or `--draft` for an unsaved hook sent as
   JSON; nothing runs or is stored), `token`, `save`
-  (`--new-token` / `--new-password` printed once), `remove`, `settings`
+  (`--new-token` printed once; a `token` / `password` in the input is hashed
+  and never echoed), `token --basic` (hashes a password read from stdin), `remove`, `settings`
   (`--set`, `--smtp`), `approve` / `deny` (`manual`, recorded under
   `SUDO_USER`), `mute` / `unmute`, and `follow` (the JSON-lines event stream
   runspec-console reads over SSH: a hello line with what's waiting, then every

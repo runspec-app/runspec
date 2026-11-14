@@ -199,16 +199,19 @@ def _read_hook_input(text: str) -> dict[str, Any]:
     return dict(data)
 
 
-def save(config_path: Path, text: str, *, new_token: bool, new_password: bool) -> dict[str, Any]:
+def save(config_path: Path, text: str, *, new_token: bool) -> dict[str, Any]:
+    """Add or replace a console-made hook. A plain ``token`` / ``password`` in
+    the input is hashed before anything is written and is never echoed back.
+    ``new_token`` makes a token; the caller shows it once (it's in the answer
+    under ``secrets``, so print it with :func:`show_secret`, never ``print``)."""
     raw = _read_hook_input(text)
     secrets: dict[str, str] = {}
+    given = sorted(k for k in ("token", "password") if raw.get(k))
     if new_token:
+        if raw.get("token"):
+            raise ValueError("give a token or --new-token, not both")
         raw, token = hc.with_secret(raw)
         secrets["token"] = token
-    if new_password:
-        password = hc.new_token()
-        raw["password_hash"] = hc.hash_password(password)
-        secrets["password"] = password
     existing = next((dict(r) for r in read_config(config_path).get("hook") or [] if str(r.get("name") or "") == str(raw.get("name") or "")), None)
     if existing:
         # Keep the stored secrets unless new ones were made or given.
@@ -220,10 +223,13 @@ def save(config_path: Path, text: str, *, new_token: bool, new_password: bool) -
     out: dict[str, Any] = {"ok": True, "hook": hook.summary(), "replaced": existing is not None}
     if cfg.settings.port:
         out["url"] = cfg.settings.url(_host(), hook.name)
+    new_secret = sorted({*secrets, *given})
+    if new_secret:
+        out["new_secret"] = new_secret
     if secrets:
         out["secrets"] = secrets
         out["note"] = "Shown once: only a hash is stored. Put it in the sending app now."
-    hookrun.audit("hook.saved", "succeeded", target={"hook": hook.name}, detail={"by": hookrun.who_am_i(), "replaced": existing is not None, "new_secret": sorted(secrets)})
+    hookrun.audit("hook.saved", "succeeded", target={"hook": hook.name}, detail={"by": hookrun.who_am_i(), "replaced": existing is not None, "new_secret": new_secret})
     return out
 
 
@@ -268,12 +274,33 @@ def settings(config_path: Path, hooks_changes: list[str], smtp_changes: list[str
     return out
 
 
-def token(*, basic: bool = False) -> dict[str, Any]:
+def token() -> dict[str, Any]:
+    """A fresh random token and its SHA-256, for a hooks.d file. Nothing is
+    stored. The token is in the answer, so show it with :func:`show_secret`."""
     value = hc.new_token()
-    if basic:
-        note = "Put password_hash (and a username) in the hook and the password in the sending app; the password isn't stored."
-        return {"ok": True, "password": value, "password_hash": hc.hash_password(value), "note": note}
     return {"ok": True, "token": value, "token_sha256": hc.sha256(value), "note": "Put token_sha256 in the hook and the token in the sending app; the token isn't stored."}
+
+
+def basic_hash(secret: str) -> dict[str, Any]:
+    """The ``password_hash`` for a basic-auth password a person chose (read from
+    stdin, never an argument, never printed back)."""
+    secret = secret.rstrip("\r\n")
+    if len(secret) < 12:
+        return {"ok": False, "error": "use a password of at least 12 characters (read from stdin, one line)"}
+    note = "Put password_hash (and a username) in the hook and the password in the sending app; the password isn't stored."
+    return {"ok": True, "password_hash": hc.hash_password(secret), "note": note}
+
+
+def show_secret(text: str) -> None:
+    """Write output that holds a secret to the real stdout only.
+
+    After ``parse()``, ``sys.stdout`` is runspec's tee, which copies every line
+    into the run's log file; a token printed there would sit in the log. This
+    goes to the terminal (or the SSH channel the console reads) and nowhere
+    else."""
+    out = sys.__stdout__ or sys.stdout
+    out.write(text if text.endswith("\n") else text + "\n")
+    out.flush()
 
 
 def decide(config_path: Path, delivery_id: int, verdict: str, note: str) -> dict[str, Any]:

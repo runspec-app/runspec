@@ -271,20 +271,19 @@ content-type = {type = "str", required = false, description = "The body's Conten
 draft        = {type = "flag", default = false, description = "Test a hook that isn't saved: stdin is JSON {\"hook\": {…}, \"body\": \"…\", \"content_type\": \"…\"} (no body = the last one that hook received). For the console's hook editor."}
 
 [runspec-scheduler.commands.hooks.commands.token]
-description = "Make a new random token and print it with its SHA-256. Put the hash in a hook (token_sha256) and the token in the sending app. --basic makes a basic-auth password and its password_hash instead. Nothing is stored."
+description = "Make a new random token and print it with its SHA-256. Put the hash in a hook (token_sha256) and the token in the sending app. --basic reads a password you chose from stdin (one line) and prints only its password_hash. Nothing is stored, and the token never goes into the run log."
 output      = "json"
 
 [runspec-scheduler.commands.hooks.commands.token.args]
-basic = {type = "flag", default = false, description = "Make a basic-auth password and its password_hash (a salted PBKDF2 hash) instead of a token."}
+basic = {type = "flag", default = false, description = "Hash a basic-auth password read from stdin (one line, 12+ characters) into a password_hash (salted PBKDF2) instead of making a token."}
 
 [runspec-scheduler.commands.hooks.commands.save]
-description = "Add or replace a console-made hook from a JSON object or a TOML [[hook]] on stdin (checked first). --new-token makes a token and prints it once; only its hash is kept. A hook deployed in hooks.d can't be saved over."
+description = "Add or replace a console-made hook from a JSON object or a TOML [[hook]] on stdin (checked first). A plain token or password in it is hashed before saving and never printed. --new-token makes a token and prints it once; only its hash is kept. A hook deployed in hooks.d can't be saved over."
 output      = "json"
 autonomy    = "confirm"
 
 [runspec-scheduler.commands.hooks.commands.save.args]
-new-token    = {type = "flag", default = false, description = "Make a new token for the hook (printed once)."}
-new-password = {type = "flag", default = false, description = "Make a new basic-auth password for the hook's username (printed once)."}
+new-token = {type = "flag", default = false, description = "Make a new token for the hook (printed once, never into the run log)."}
 
 [runspec-scheduler.commands.hooks.commands.remove]
 description = "Remove a console-made hook. Deployed hooks are removed where they're deployed from."

@@ -617,10 +617,14 @@ def _cmd_hooks(spec: rs.RunSpec, verb: str) -> None:
             payload = fn()
         except (OSError, ValueError) as exc:
             payload = {"ok": False, "error": str(exc)}
-        if not text_mode():
-            print(json.dumps(payload, default=str))
+        shown = json.dumps(payload, default=str) if not text_mode() else text(payload)
+        if payload.get("secrets") or payload.get("token"):
+            # A new token: to the real stdout only, never into the run log.
+            h.show_secret(shown)
+        elif not text_mode():
+            print(shown)
         else:
-            print(text(payload), file=sys.stdout if payload.get("ok", True) else sys.stderr)
+            print(shown, file=sys.stdout if payload.get("ok", True) else sys.stderr)
         if not payload.get("ok", True):
             sys.exit(1)
 
@@ -647,17 +651,14 @@ def _cmd_hooks(spec: rs.RunSpec, verb: str) -> None:
             h.render_test,
         )
     elif verb == "token":
-        basic = bool(spec.basic.value)
-
-        def shown(p: dict[str, Any]) -> str:
-            if basic:
-                return f"Password:      {p['password']}\npassword_hash: {p['password_hash']}\n{p['note']}"
-            return f"Token:        {p['token']}\ntoken_sha256: {p['token_sha256']}\n{p['note']}"
-
-        run(lambda: h.token(basic=basic), shown)
+        if spec.basic.value:
+            secret = sys.stdin.readline()
+            run(lambda: h.basic_hash(secret), lambda p: f"password_hash: {p['password_hash']}\n{p['note']}" if p.get("ok") else str(p.get("error")))
+        else:
+            run(h.token, lambda p: f"Token:        {p['token']}\ntoken_sha256: {p['token_sha256']}\n{p['note']}")
     elif verb == "save":
         text = sys.stdin.read()
-        run(lambda: h.save(path, text, new_token=bool(spec.new_token.value), new_password=bool(spec.new_password.value)), h.render_save)
+        run(lambda: h.save(path, text, new_token=bool(spec.new_token.value)), h.render_save)
     elif verb == "remove":
         run(lambda: h.remove(path, str(spec.name.value)), lambda p: f"Removed hook {p.get('removed')}." if p.get("ok") else str(p.get("error")))
     elif verb == "settings":
