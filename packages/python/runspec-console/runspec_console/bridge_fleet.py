@@ -293,6 +293,7 @@ class FleetMixin:
         hosts_mod.save_hosts(config_mod.hosts_path(), entries)
         self._reload_hosts()
         self.restart_chat()  # re-join rooms with the updated host config
+        self.restart_webhooks()  # follow what the hosts now name
         # Signal host-list consumers (sidebar, the Self-Service room selector) to
         # refetch — otherwise e.g. a host whose room config was just removed still
         # shows in the room dropdown until the app restarts.

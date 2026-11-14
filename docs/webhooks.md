@@ -219,6 +219,47 @@ Ansible's `validate`:
     validate: /srv/venvs/ops-tools/bin/runspec-scheduler hooks check %s
 ```
 
+## Following from runspec-console
+
+runspec-console (0.438.0 and later) can follow a host's webhooks and show the
+approvals as cards. Name the hooks to follow on the host's entry in
+`runspec_hosts.toml` (or click *Follow* on the Schedules tab, which writes the
+same thing):
+
+```toml
+[[host]]
+name          = "web-01"
+ssh           = "deploy@web-01.internal"
+runspec_paths = ["/srv/ops/venv/bin/runspec"]
+hooks         = ["*"]          # every hook; or ["alerts", "deploys"]
+```
+
+The console then keeps `runspec-scheduler hooks follow` open to each of that
+host's venvs, as the venv owner, over the host's SSH connection. It reconnects
+by itself and catches up on what arrived while it was away, as far back as
+`[webhooks] replay` in its `config.toml` (default `15m`).
+
+- **Approvals.** A delivery that waits for a person shows as a card at the top
+  of the Console tab: the hook, the host and venv, what it wants to run and the
+  fields it was sent. Approve or Deny it there, with an optional note. The
+  first decision on any console wins. Waiting webhooks also count in the
+  status bar's "waiting for you". This works with the console's AI turned off.
+- **The Schedules tab** has one strip per followed venv: whether it's
+  connected, what's waiting, mutes, recent deliveries, a *Mute* menu and
+  *Hooks…*.
+- **Hooks…** lists the venv's hooks. Hooks made from the console can be edited
+  as TOML, tried against a body (or the hook's last one) without running
+  anything, saved with a new token or basic-auth password, and removed. The
+  console makes the token or password, sends it to the host on stdin, and shows
+  it to you once; the host keeps only a hash. Hooks deployed into `hooks.d`
+  are read-only there. *Listener & mail* edits `[hooks]` and `[smtp]`.
+- **Away means muted.** While your screen is locked, or outside your working
+  hours when the rota is on, the console mutes every hook for you and unmutes
+  when you're back. If everyone following a hook is away, its approvals are
+  mailed straight away.
+- **Triggers.** Every delivery is also a `webhook` event for the console's
+  triggers (`event` is the hook name, fields are flattened to `a.b` keys).
+
 ## Approving from the host
 
 ```bash

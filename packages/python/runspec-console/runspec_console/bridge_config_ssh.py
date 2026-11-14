@@ -492,6 +492,13 @@ class ConfigSshMixin:
         self._apply_ssh_config(old.get("ssh"), new.get("ssh"))
         if old.get("chat") != new.get("chat") or self._ssh_pool is not pool_before:
             self.restart_chat()
+        if (
+            old.get("webhooks") != new.get("webhooks")
+            or self._ssh_pool is not pool_before
+        ):
+            restart = getattr(self, "restart_webhooks", None)
+            if callable(restart):
+                restart()
         # Keep PuTTY's saved sessions in step ([putty] sync — key, user, proxy,
         # terminal look and keepalive all live in config.toml).
         sync = getattr(self, "_putty_sync_auto", None)

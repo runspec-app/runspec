@@ -41,6 +41,8 @@ import {
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { useWaitingCue, usePendingConfirms } from './useWaitingCue'
+import { useWebhooks, waitingApprovals } from './webhooks'
+import { WebhookApprovals } from './components/WebhookApprovals'
 import { matchRunnableForEdit, resolveCommandPath, toCommandPath } from './views/formsMatch'
 import { GRID_MAX, openTerminals as openGroupTerminals, openSendBar } from './views/terminals'
 import { OtherHostsSection, profileEditNote, type SyncSource } from './components/OtherHostsSection'
@@ -366,7 +368,11 @@ export default function App() {
   const inFlight = useInFlight()
   // Loop the gentle "waiting" ping while an attention badge needs the operator
   // (Triggers approvals / queue callers, or any live Approve/Deny card).
-  useWaitingCue(triggerAwaiting)
+  // Webhook deliveries a host is holding for a person: cards on the Console,
+  // counted in the status bar. Not AI-gated (nothing goes through the assistant).
+  const webhooks = useWebhooks()
+  const webhookWaiting = waitingApprovals(webhooks.status).length
+  useWaitingCue(triggerAwaiting + webhookWaiting)
   // Live Approve/Deny cards, for the status bar's "waiting for you" count.
   const pendingConfirms = usePendingConfirms()
 
@@ -1844,6 +1850,7 @@ export default function App() {
                   )
                 })()}
                 <div className="rs-view" style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                  <WebhookApprovals status={webhooks.status} />
                   <ConsoleInfoContext.Provider value={consoleInfo}>
                     <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
                   </ConsoleInfoContext.Provider>
@@ -1995,20 +2002,21 @@ export default function App() {
                   </Tooltip>
                 )
               })()}
-              {aiEnabled && (triggerAwaiting + pendingConfirms.size) > 0 && (
+              {((aiEnabled ? triggerAwaiting + pendingConfirms.size : 0) + webhookWaiting) > 0 && (
                 <span
                   role="button"
                   tabIndex={0}
                   data-testid="status-approvals"
                   onClick={() => {
-                    if (pendingConfirms.size > 0) { setView('console'); requestAnimationFrame(() => requestAnimationFrame(() => { revealPendingConfirm() })) }
+                    if (aiEnabled && pendingConfirms.size > 0) { setView('console'); requestAnimationFrame(() => requestAnimationFrame(() => { revealPendingConfirm() })) }
+                    else if (webhookWaiting > 0) setView('console')
                     else setView('triggers')
                   }}
                   onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click() } }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: textWarning(isDark) }}
                 >
                   <BellOutlined style={{ fontSize: 12 }} />
-                  {triggerAwaiting + pendingConfirms.size} waiting for you
+                  {(aiEnabled ? triggerAwaiting + pendingConfirms.size : 0) + webhookWaiting} waiting for you
                 </span>
               )}
               {/* Rooms: live connection state for every configured chat/helpdesk

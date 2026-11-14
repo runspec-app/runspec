@@ -428,6 +428,16 @@ The trigger/schedule engine's execution pool.
 |---|---|---|
 | `max_workers` | 2 | Concurrent trigger/schedule fires (clamped 1–32). Each fire holds a worker for its whole run, so a busy console — several triggers matching at once, or a burst of scheduled jobs — raises this to run more in parallel. Per-trigger serialisation (one in-flight run per trigger name) is unaffected. Mirrors `[refresh] workers` for the fleet sweep |
 
+## `[webhooks]` {#webhooks}
+
+Following hosts' webhooks (runspec-scheduler 0.11.0+). Which hooks to follow is
+set per host, as `hooks = ["*"]` (or hook names) on its `runspec_hosts.toml`
+entry; see [Webhooks → Following from runspec-console](webhooks.md#following-from-runspec-console).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `replay` | `15m` | How far back to catch up after the console starts or a connection drops. Deliveries older than this aren't shown as new. |
+
 ## `[workspace]`
 
 | Key | Default | Meaning |
