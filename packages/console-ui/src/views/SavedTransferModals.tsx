@@ -11,6 +11,7 @@ import {
   rowsFromParams, paramsFromRows, slugify, defaultValues, filterParamName, isPlaceholder,
 } from './savedTransfers'
 import { When } from '../when'
+import { useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -403,8 +404,32 @@ export function SavedTransferRunModal({ entry, hostNames, onClose }: {
     finally { setPreviewing(false) }
   }
 
+  const [askRisk, riskHolder] = useRiskConfirm()
   const run = async () => {
     if (!checkRequired()) return
+    // Copying onto hosts can replace what is there (the risk ladder's fleet
+    // level): list every file and every destination host before it runs.
+    if ((entry.direction ?? 'pull') !== 'pull') {
+      setPreviewing(true)
+      let p: SavedTransferPreview
+      try { p = await bridge.preview_saved_transfer(entry.id, values) }
+      catch (e) { p = { error: String(e) } }
+      finally { setPreviewing(false) }
+      setPreview(p)
+      if (p.error) return
+      const files = (p.sources ?? []).flatMap(s => s.files.map(f => `${s.host}:${f.path}  →  ${f.dest}`))
+      if (!files.length) { message.info('Nothing matches, so there is nothing to copy.'); return }
+      const shown = files.slice(0, 40).join('\n') + (files.length > 40 ? `\n… and ${files.length - 40} more` : '')
+      const a = await askRisk({
+        level: 'fleet',
+        title: `${verbs[2][0].toUpperCase()}${verbs[2].slice(1)} ${files.length} file${files.length === 1 ? '' : 's'} to ${(p.targets ?? []).length} host${(p.targets ?? []).length === 1 ? '' : 's'}?`,
+        action: shown,
+        targets: p.targets ?? [],
+        consequence: 'A file with the same name at the destination is replaced.',
+        okText: verbs[2][0].toUpperCase() + verbs[2].slice(1),
+      })
+      if (!a.ok) return
+    }
     setResult(null)
     setProg(null)
     const res = await bridge.run_saved_transfer(entry.id, values)
@@ -435,6 +460,7 @@ export function SavedTransferRunModal({ entry, hostNames, onClose }: {
     >
       {entry.description && <Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>{entry.description}</Text>}
       {entry.error && <Alert type="error" showIcon style={{ marginBottom: 12 }} message={`This saved transfer is misconfigured: ${entry.error}`} />}
+      {riskHolder}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
         <div>
           <Text type="secondary" style={{ fontSize: 13 }}>from </Text><Tag style={{ margin: 0 }}>{entry.source}</Tag>

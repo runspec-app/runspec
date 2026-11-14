@@ -7,11 +7,12 @@
  * host count it shows is the one you can see is green in the sidebar. Was a
  * Settings tab querying every configured host regardless of profile/state.
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Modal, Alert, Button, Divider, Input, Popconfirm, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Modal, Alert, Button, Divider, Input, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined, InfoCircleOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { bridge, type DenylistHostStatus, type DenylistPayload, type DenylistRule, type Host } from '../bridge'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
+import { useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -135,17 +136,30 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
   const badHostGlobs = unmatchedHostGlobs(hostGlobs, targetHostnames)
   const consoleNameGlobs = badHostGlobs.filter(g => scopeNames.includes(g))
 
+  const [askRisk, riskHolder] = useRiskConfirm()
+  const resultRef = useRef<HTMLDivElement>(null)
   const run = async (payload: DenylistPayload, label: string) => {
     setBusy(label)
     try {
       // A row action names its own host (+ venv); the form acts on the picker.
       setResult(await bridge.manage_denylist({ targets: effectiveTargets, ...payload }))
       await refresh()  // reflect the change in the table immediately
+      // The outcome shows at the bottom of a tall window: bring it into view.
+      setTimeout(() => resultRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50)
     } catch (err) {
       message.error((err as Error)?.message || 'denylist action failed')
     } finally {
       setBusy('')
     }
+  }
+
+  const disableAll = async () => {
+    const a = await askRisk({
+      level: 'fleet', title: `Block every runnable on ${scope}?`,
+      action: `Disable all runnables${reason ? ` (reason: ${reason})` : ''}`, targets: effectiveTargets,
+      consequence: 'Agent and manual runs are refused until you re-enable them here.', okText: 'Disable all',
+    })
+    if (a.ok) await run({ action: 'all', reason }, 'all')
   }
 
   const hostOptions = hosts.map(h => ({
@@ -170,16 +184,16 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
           <Text style={{ fontSize: 13, flex: 1, wordBreak: 'break-word' }}>
             ALL runnables disabled{r.reason ? ` — ${r.reason}` : ''}
           </Text>
-          <Popconfirm
-            title={`Re-enable ${rowKey}?`}
-            description={<span style={{ fontSize: 13 }}>Undoes “Disable all” here; the rules below stay.</span>}
-            okText="Enable"
-            onConfirm={() => run({ action: 'enable', targets: [r.host], venv: r.venv }, `enable:${rowKey}`)}
-          >
-            <Button size="small" type="text" icon={<CheckCircleOutlined />} loading={busy === `enable:${rowKey}`} aria-label={`Enable ${rowKey}`}>
-              Enable
-            </Button>
-          </Popconfirm>
+          <Button size="small" type="text" icon={<CheckCircleOutlined />} loading={busy === `enable:${rowKey}`} aria-label={`Enable ${rowKey}`}
+            onClick={async () => {
+              const a = await askRisk({
+                level: 'fleet', title: `Re-enable runnables on ${rowKey}?`,
+                action: 'Undo "Disable all" here. The rules below stay.', targets: [rowKey], okText: 'Re-enable',
+              })
+              if (a.ok) await run({ action: 'enable', targets: [r.host], venv: r.venv }, `enable:${rowKey}`)
+            }}>
+            Enable
+          </Button>
         </div>,
       )
     }
@@ -188,17 +202,14 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
       lines.push(
         <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
           <Text style={{ fontSize: 13, flex: 1, wordBreak: 'break-word' }}>{ruleText(rule)}</Text>
-          <Popconfirm
-            title="Remove this rule?"
-            description={<span style={{ fontSize: 13 }}>{ruleText(rule)}<br />on {rowKey}</span>}
-            okText="Remove"
-            onConfirm={() => run(
-              { action: 'remove', targets: [r.host], venv: r.venv, runnable: rule.runnables, user: rule.users, host: rule.hosts },
-              label,
-            )}
-          >
-            <Button size="small" type="text" danger icon={<DeleteOutlined />} loading={busy === label} aria-label={`Remove rule ${i + 1} on ${rowKey}`} />
-          </Popconfirm>
+          <Button size="small" type="text" danger icon={<DeleteOutlined />} loading={busy === label} aria-label={`Remove rule ${i + 1} on ${rowKey}`}
+            onClick={async () => {
+              const a = await askRisk({
+                level: 'fleet', title: 'Remove this deny rule?', action: ruleText(rule), targets: [rowKey],
+                consequence: 'What it blocked can run again here.', okText: 'Remove rule',
+              })
+              if (a.ok) await run({ action: 'remove', targets: [r.host], venv: r.venv, runnable: rule.runnables, user: rule.users, host: rule.hosts }, label)
+            }} />
         </div>,
       )
     })
@@ -308,33 +319,20 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
         >
           Refresh status
         </Button>
-        <Popconfirm
-          title="Disable ALL runnables?"
-          icon={<WarningOutlined style={{ color: '#faad14' }} />}
-          description={
-            <span style={{ fontSize: 13 }}>
-              Blocks every runnable on {scope}.<br />
-              Agent and manual runs are refused until you re-enable.
-            </span>
-          }
-          okText="Disable all"
-          okButtonProps={{ danger: true }}
-          onConfirm={() => run({ action: 'all', reason }, 'all')}
-        >
-          <Button size="small" danger icon={<StopOutlined />} loading={busy === 'all'}>
-            Disable all
-          </Button>
-        </Popconfirm>
-        <Popconfirm
-          title="Re-enable everything?"
-          description={<span style={{ fontSize: 13 }}>Clears the denylist on {scope}.</span>}
-          okText="Re-enable"
-          onConfirm={() => run({ action: 'clear' }, 'clear')}
-        >
-          <Button size="small" icon={<ReloadOutlined />} loading={busy === 'clear'}>
-            Re-enable all (clear)
-          </Button>
-        </Popconfirm>
+        <Button size="small" danger icon={<StopOutlined />} loading={busy === 'all'} onClick={disableAll}>
+          Disable all
+        </Button>
+        <Button size="small" icon={<ReloadOutlined />} loading={busy === 'clear'}
+          onClick={async () => {
+            const a = await askRisk({
+              level: 'fleet', title: `Clear the denylist on ${scope}?`,
+              action: 'Remove every deny rule and undo "Disable all".', targets: effectiveTargets,
+              consequence: 'Everything the denylist blocked can run again.', okText: 'Clear denylist',
+            })
+            if (a.ok) await run({ action: 'clear' }, 'clear')
+          }}>
+          Re-enable all
+        </Button>
       </Space>
 
       <Divider style={{ margin: '8px 0' }} orientation="left" plain>
@@ -377,7 +375,12 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
           size="small"
           icon={<StopOutlined />}
           loading={busy === 'add'}
-          onClick={() => run({ action: 'add', runnable: runnableGlobs, user: userGlobs, host: hostGlobs, reason }, 'add')}
+          onClick={() => {
+            // A rule with every field empty matches everything: the same as
+            // Disable all, so it asks the same way.
+            if (!runnableGlobs.length && !userGlobs.length && !hostGlobs.length) { void disableAll(); return }
+            void run({ action: 'add', runnable: runnableGlobs, user: userGlobs, host: hostGlobs, reason }, 'add')
+          }}
         >
           Add deny rule
         </Button>
@@ -397,11 +400,26 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
             { label: 'Off', value: 'off' },
           ]}
         />
-        <Button size="small" loading={busy === 'mode'} onClick={() => run({ action: 'mode', setting: mode }, 'mode')}>
+        <Button size="small" loading={busy === 'mode'} onClick={async () => {
+          if (mode !== 'enforce') {
+            const a = await askRisk({
+              level: 'fleet',
+              title: mode === 'off' ? `Turn the denylist off on ${scope}?` : `Only warn on ${scope}?`,
+              action: mode === 'off' ? 'Mode: off. Rules are kept but nothing is checked.' : 'Mode: warn. Matching runs go ahead with a warning.',
+              targets: effectiveTargets,
+              consequence: 'Blocked runnables can run until you set the mode back to Enforce.',
+              okText: mode === 'off' ? 'Turn off' : 'Only warn',
+            })
+            if (!a.ok) return
+          }
+          await run({ action: 'mode', setting: mode }, 'mode')
+        }}>
           Apply mode
         </Button>
       </Space>
 
+      {riskHolder}
+      <div ref={resultRef} />
       {result && (
         <pre style={{ fontSize: 13, background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: 10, whiteSpace: 'pre-wrap', maxHeight: 240, overflow: 'auto' }}>
           {result}

@@ -70,6 +70,31 @@ describe('LogCleanupModal', () => {
     expect(api.logs_retention_run).toHaveBeenCalledWith('web-1', 'ops', true)
   })
 
+  it('Apply now shows what it would delete, then needs the venv name typed', async () => {
+    api.logs_retention_run = vi.fn((_h: string, _g: string, dry: boolean) => Promise.resolve(
+      { ok: true, group: 'ops', dry_run: dry, compacted: 2, deleted: 5, freed_bytes: 1024 }))
+    render(<LogCleanupModal target={T} onClose={() => {}} />)
+    await screen.findByText('compress after 7d, delete after 90d')
+    fireEvent.click(screen.getByRole('button', { name: 'Apply now…' }))
+    expect((await screen.findByTestId('risk-action')).textContent).toMatch(/Delete 5 files/)
+    expect(api.logs_retention_run).toHaveBeenCalledWith('web-1', 'ops', true)
+    const ok = screen.getByTestId('risk-ok')
+    expect(ok.hasAttribute('disabled')).toBe(true)
+    fireEvent.change(screen.getByLabelText('Type ops to confirm'), { target: { value: 'ops' } })
+    expect(ok.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(ok)
+    await waitFor(() => expect(api.logs_retention_run).toHaveBeenCalledWith('web-1', 'ops', false))
+  })
+
+  it('Apply now with nothing to remove just says so', async () => {
+    api.logs_retention_run = vi.fn(() => Promise.resolve({ ok: true, group: 'ops', dry_run: true, compacted: 0, deleted: 0, freed_bytes: 0 }))
+    render(<LogCleanupModal target={T} onClose={() => {}} />)
+    await screen.findByText('compress after 7d, delete after 90d')
+    fireEvent.click(screen.getByRole('button', { name: 'Apply now…' }))
+    expect(await screen.findByText('Nothing to compress or delete right now.')).toBeTruthy()
+    expect(screen.queryByTestId('risk-action')).toBeNull()
+  })
+
   it('says to upgrade an old runspec', async () => {
     api.logs_retention = vi.fn(() => Promise.resolve({ ok: false, group: 'ops', too_old: true, error: "this venv's runspec has no log retention policy (needs runspec 0.80.0 or later)" }))
     render(<LogCleanupModal target={T} onClose={() => {}} />)

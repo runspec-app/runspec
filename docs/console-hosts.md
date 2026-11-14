@@ -117,8 +117,9 @@ To see or change the policy later, open the venv's logs on the **Logs** tab and
 click **Log cleanup…**: it shows the policy, when the last pass ran and what it
 did, lets you change the durations and add a size cap (**Keep at most**), or
 clear every field to remove the policy. **Preview now** says what a pass would
-compress and delete today; **Apply now** runs it instead of waiting for the
-next daily pass. Saving and applying run the venv's `runspec logs retention` as
+compress and delete today; **Apply now…** runs it instead of waiting for the
+next daily pass. Deleting can't be undone, so **Apply now…** first shows what
+the pass would compress and delete, and you type the venv's name to go ahead. Saving and applying run the venv's `runspec logs retention` as
 the venv owner, and each change is recorded on the venv's audit ledger.
 
 **Shared schedules** (off by default) also sets up the
@@ -820,11 +821,19 @@ interactive work as usual, and you read each window's output yourself.
 3. Untick a host to leave it out. The target button next to a host brings its
    window to the front. The key buttons press **Enter**, **Ctrl+C**, **Ctrl+D**,
    **Tab**, **Esc** and the arrow keys in every ticked terminal.
-4. For a password, click the lock button: the field is hidden, and what you type
-   is sent once and never shown, kept or recorded.
+4. For a password, click the lock button: the field is hidden (outlined, with a
+   lock), and what you type is sent and never shown, kept or recorded. It stays
+   hidden until you click the lock again, so a retyped password can't go out in
+   the clear. An empty line is never sent, hidden or not; to press Enter alone,
+   use the **Enter** key button.
 
-Sending to more than 10 terminals asks first, once for each set of ticked
-terminals. The bar lists every terminal the console opened (from any host menu)
+Sending to more than 10 terminals asks first. The dialog shows the exact line
+(or key) and every host, with **Cancel** focused; tick **Don't ask again** to
+skip it for that set of terminals. A line or key that stops, ends or removes
+something (`rm`, `kill`, `reboot`, `systemctl stop|restart`, `docker rm`,
+**Ctrl+C**, **Ctrl+D** and the like) asks every time it goes to more than one
+terminal, whatever you ticked before. A hidden send answers a prompt the line
+before it raised, so it doesn't ask. The bar lists every terminal the console opened (from any host menu)
 until you close it. **Send to terminals…** in a host or group menu, or in the
 Ctrl+K palette, opens the bar again.
 

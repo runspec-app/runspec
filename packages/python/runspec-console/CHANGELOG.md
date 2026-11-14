@@ -9,6 +9,44 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.432.0] — 2026-11-14
+
+### Changed
+
+- **One confirmation pattern per level of risk.** A shared risk ladder
+  (`components/risk.tsx`, `useRiskConfirm`) replaces the mix of popconfirms,
+  one-off dialogs and no confirmation at all:
+  - *Routine* (reversible, one place): no confirmation.
+  - *Fleet* (reaches many hosts, turns a safety off, or copies files onto
+    hosts): a dialog that shows the exact action and every target, with
+    **Cancel** focused so a reflexive Enter backs out.
+  - *Destructive* (deletes data): the same dialog, showing what will be lost,
+    and OK stays off until you type the confirmation word.
+- **Send to terminals.**
+  - The confirmation shows the exact line or key, not just the hosts.
+  - More than 10 terminals asks unless you tick **Don't ask again** for that
+    set. A line or key that stops, ends or removes something (`rm`, `kill`,
+    `reboot`, `systemctl stop|restart`, `docker rm`, **Ctrl+C**, **Ctrl+D**)
+    asks every time it goes to more than one terminal.
+  - An empty line is never sent; Enter alone has its key button.
+  - Hidden (password) mode stays on until you turn it off, refuses an empty
+    password, and is outlined with a lock so it can't be mistaken for the
+    command field.
+  - In the bar's small window the ask covers the window instead of opening a
+    dialog that wouldn't fit.
+  - The bar now sets the page's theme, so its text follows the light theme
+    too.
+- **Denylist.**
+  - An "Add deny rule" with every field empty matches everything, so it now
+    asks exactly like **Disable all**.
+  - Setting the mode to **Warn** or **Off**, **Re-enable all**, removing a
+    rule and re-enabling a venv ask first.
+  - The result scrolls into view after any action.
+- **Log clean-up.** **Apply now…** runs a dry pass first, shows what it would
+  compress and delete, and needs the venv's name typed.
+- **Saved transfers.** Running a push or relay lists every file, where it
+  goes and every destination host before anything is copied.
+
 ## [0.431.0] — 2026-11-14
 
 ### Changed
