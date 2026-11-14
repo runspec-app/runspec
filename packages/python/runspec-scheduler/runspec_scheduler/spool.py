@@ -321,11 +321,14 @@ class Spool:
         self._event(conn, "mute", None, data)
         return data
 
-    def unmute(self, who: str, hook: str) -> bool:
+    def unmute(self, who: str, hook: str | None) -> bool:
+        """Take ``who``'s mute of ``hook`` off (``"*"`` is the mute of every
+        hook, not a wildcard); ``None`` takes all of ``who``'s mutes off."""
         conn = self.conn()
-        cur = conn.execute("DELETE FROM mute WHERE who = ? AND (hook = ? OR ? = '*')", (who, hook, hook))
+        q, params = ("DELETE FROM mute WHERE who = ?", (who,)) if hook is None else ("DELETE FROM mute WHERE who = ? AND hook = ?", (who, hook))
+        cur = conn.execute(q, params)
         if cur.rowcount:
-            self._event(conn, "unmute", None, {"who": who, "hook": hook})
+            self._event(conn, "unmute", None, {"who": who, "hook": hook if hook is not None else "*", "all": hook is None})
         return cur.rowcount > 0
 
     def mutes(self, now: float | None = None) -> list[dict[str, Any]]:

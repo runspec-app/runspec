@@ -671,7 +671,7 @@ def _cmd_hooks(spec: rs.RunSpec, verb: str) -> None:
 
         run(lambda: h.mute(path, str(_opt(spec.hook) or "*"), str(spec.get("for").value), str(_opt(spec.reason) or ""), _opt(spec.who)), muted)
     elif verb == "unmute":
-        run(lambda: h.unmute(path, str(_opt(spec.hook) or "*"), _opt(spec.who)), lambda p: "Unmuted." if p.get("removed") else "Nothing was muted.")
+        run(lambda: h.unmute(path, _opt(spec.hook), _opt(spec.who)), lambda p: "Unmuted." if p.get("removed") else "Nothing was muted.")
     elif verb == "follow":
         _close_own_run()  # a follow lasts as long as a console watches
         since = _opt(spec.since)

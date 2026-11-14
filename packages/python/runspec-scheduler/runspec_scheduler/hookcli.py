@@ -327,10 +327,12 @@ def mute(config_path: Path, hook: str, duration: str, reason: str, who: str | No
     return {"ok": True, "mute": data}
 
 
-def unmute(config_path: Path, hook: str, who: str | None = None) -> dict[str, Any]:
+def unmute(config_path: Path, hook: str | None, who: str | None = None) -> dict[str, Any]:
+    """Take one mute off (``hook``; ``"*"`` = the all-hooks mute), or every one
+    of yours when ``hook`` is None."""
     spool = _spool(config_path)
     try:
-        removed = spool.unmute(who or hookrun.who_am_i(), hook or "*")
+        removed = spool.unmute(who or hookrun.who_am_i(), hook or None)
     finally:
         spool.close()
     return {"ok": True, "removed": removed}

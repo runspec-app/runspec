@@ -127,10 +127,15 @@ def test_mutes_and_watching(spool: sp.Spool) -> None:
     assert {m["who"] for m in spool.mutes()} == {"ann", "bob"}
     assert spool.unmute("ann", "alerts") and not spool.unmute("ann", "alerts")
     assert spool.watching("alerts") == ["ann"]
+    # "*" is the all-hooks mute itself, not a wildcard; None is all of them
+    spool.mute("ann", "alerts", now + 600)
+    spool.mute("ann", "*", now + 600)
+    assert spool.unmute("ann", "*") and spool.is_muted("ann", "alerts")
+    assert spool.unmute("ann", None) and not spool.is_muted("ann", "alerts")
     spool.follower_gone("t1")
     assert spool.watching("alerts") == []
     kinds = [e["kind"] for e in spool.events_since(0)]
-    assert kinds == ["mute", "mute", "unmute"]
+    assert kinds == ["mute", "mute", "unmute", "mute", "mute", "unmute", "unmute"]
 
 
 def test_stale_followers_dont_count(spool: sp.Spool) -> None:

@@ -237,7 +237,11 @@ straight away. From the host:
 ```bash
 bin/runspec-scheduler hooks mute --hook alerts --for 2h --reason "change freeze"
 bin/runspec-scheduler hooks unmute --hook alerts
+bin/runspec-scheduler hooks unmute            # all of your mutes
 ```
+
+`--hook "*"` mutes (and unmutes) every hook at once; that mute is separate from
+a mute of one hook.
 
 ## Settings reference
 

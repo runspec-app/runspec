@@ -336,7 +336,7 @@ description = "Take a mute off again."
 output      = "json"
 
 [runspec-scheduler.commands.hooks.commands.unmute.args]
-hook = {type = "str", required = false, description = "The hook (default: all of your mutes)."}
+hook = {type = "str", required = false, description = "The hook whose mute to take off (* = the mute of all hooks). Left out: all of your mutes."}
 who  = {type = "str", required = false, description = "Whose mute (default: yours)."}
 
 [runspec-scheduler.commands.hooks.commands.follow]
