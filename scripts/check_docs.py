@@ -172,6 +172,9 @@ NON_RUNSPEC_SECTIONS = {
     "eval",  # console eval fixture ([[eval]] tool-selection cases)
     "suite",  # console runspec_evals.toml ([[suite]] synced fixture store)
     "scheduler",  # runspec-scheduler runspec_scheduler.toml ([scheduler] venv settings)
+    "hooks",  # runspec-scheduler [hooks] webhook listener settings
+    "hook",  # runspec-scheduler [[hook]] webhooks (runspec_scheduler.toml, hooks.d/*.toml)
+    "smtp",  # runspec-scheduler [smtp] approval mail relay
     "logs",  # core runspec_logs_retention.toml ([logs] retention policy)
 }
 

@@ -326,7 +326,7 @@ def schedule_args(args: list[dict[str, Any]], values: Mapping[str, Any]) -> tupl
     Only values that differ from the default are kept (the rest come from the
     spec, ``.runspec_env`` and the schedule env file at fire time). A secret
     can't go in a schedule's args (they sit in the config and crontab): it
-    belongs in ``runspec_schedules.env``."""
+    belongs in ``.runspec_scheduler_env``."""
     out: dict[str, Any] = {}
     problems: list[str] = []
     for arg in args:
@@ -335,7 +335,7 @@ def schedule_args(args: list[dict[str, Any]], values: Mapping[str, Any]) -> tupl
         if raw is None or form.same_as_default(arg, raw):
             continue
         if form.widget_kind(arg) == "password":
-            problems.append(f"{name} is a secret: leave it blank here and put it in the venv's runspec_schedules.env")
+            problems.append(f"{name} is a secret: leave it blank here and put it in the venv's .runspec_scheduler_env")
             continue
         out[name] = raw
     return out, problems

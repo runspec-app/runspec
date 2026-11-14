@@ -8,6 +8,8 @@ only for runspec runnables, and every fire is recorded.
 This page covers how it works, how to set it up, every setting it has, and what
 to check when something looks wrong. For the console screens, see
 [Automation → All schedules](console-automation.md#all-schedules-this-console-and-every-host).
+The same daemon can also take [webhooks](webhooks.md): another system starts a
+runnable with an HTTP `POST`.
 
 ## Console schedules or shared schedules?
 
@@ -48,7 +50,7 @@ Every fire, from either backend and from **Run now**, runs the same command:
 ```bash
 {venv}/bin/runspec exec --label sched:<id> --trigger schedule:<cron|daemon|run-now> \
     --lock ~/.cache/runspec-scheduler/<venv>-<hash>/<id>.lock \
-    --env-file {venv}/runspec_schedules.env [--timeout <seconds>] \
+    --env-file {venv}/.runspec_scheduler_env [--timeout <seconds>] \
     <runnable> -- <args>
 ```
 
@@ -436,16 +438,19 @@ account.
 ## Credentials: the schedule-only env file
 
 Host schedules never carry secrets. Put what the fires need in
-`{venv}/runspec_schedules.env`:
+`{venv}/.runspec_scheduler_env`:
 
 ```bash
-# {venv}/runspec_schedules.env — loaded only by scheduled fires
+# {venv}/.runspec_scheduler_env — loaded only by scheduled fires and webhook runs
 JIRA_URL=https://jira.example.com
 JIRA_PERSONAL_TOKEN=…
 ```
 
 - Every fire loads it on top of `.runspec_env`, so a value here wins. This covers
-  cron, daemon and **Run now** fires.
+  cron, daemon and **Run now** fires, and [webhook](webhooks.md) runs.
+- Before runspec-scheduler 0.11.0 it was called `runspec_schedules.env`. The old
+  name isn't read any more: rename the file (`mv runspec_schedules.env
+  .runspec_scheduler_env`). `status` warns while the old one is there.
 - Nothing else in the venv reads it: console runs, the agent and runs from a
   shell only see `.runspec_env`. A service account's token in this file never
   stands in for an operator who didn't pick their own credential.
@@ -498,7 +503,8 @@ See [Who is handling a failure](console-automation.md#who-is-handling-a-failure)
 | File | What it is |
 |---|---|
 | `{venv}/runspec_scheduler.toml` | The schedules and the `[scheduler]` settings |
-| `{venv}/runspec_schedules.env` | Credentials for scheduled fires only |
+| `{venv}/.runspec_scheduler_env` | Credentials for scheduled fires and webhook runs only |
+| `{venv}/hooks.d/*.toml`, `{venv}/hooks/spool.sqlite` | [Webhooks](webhooks.md): deployed hooks and the delivery spool |
 | `{venv}/runspec_scheduler.lock` | Held by the running daemon, so only one runs per venv |
 | `{venv}/runspec_scheduler_backups/` | A copy of the crontab from before each rewrite |
 | `{venv}/logs/scheduler.log` | What the daemon did: starts, reloads, fires, warnings |
@@ -548,7 +554,7 @@ aren't recorded. A sync fixes that too.
 still running, or the daemon was down (or later than `misfire_grace`) at the
 time. Expand the row in the console to see which.
 
-**A fire failed with exit code 78.** `runspec_schedules.env` exists but is
+**A fire failed with exit code 78.** `.runspec_scheduler_env` exists but is
 group- or world-writable, or owned by another account. Fix it with
 `chmod 600` and `chown` to the account the fires run as.
 

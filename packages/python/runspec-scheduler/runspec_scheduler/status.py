@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ from runspec import logs as rs_logs
 from runspec import runsdb
 
 from .config import EffectiveConfig, SchedulerSettings, effective_config
-from .cronsync import LABEL_PREFIX, MARKER_PREFIX, _crontab_argv, _installable, job_in_venv, read_managed_users, resolve_entry, this_bin_dir
+from .cronsync import LABEL_PREFIX, MARKER_PREFIX, SCHEDULES_ENV, _crontab_argv, _installable, job_in_venv, read_managed_users, resolve_entry, this_bin_dir
 from .distname import dist_name
 from .runner import venv_name
 from .timing import host_zone_name, next_fire_time
@@ -257,6 +258,7 @@ def daemon_status(config_path: Path) -> dict[str, Any]:
     out["running"] = st.get("running") or []
     out["jobs"] = st.get("jobs") or {}
     out["fires"] = st.get("fires")
+    out["hooks"] = st.get("hooks")
     return out
 
 
@@ -282,6 +284,24 @@ def _keepers() -> list[dict[str, Any]]:
         return []
 
 
+#: The schedule-only credentials file's name before 0.11.0. Nothing reads it now.
+OLD_SCHEDULES_ENV = "runspec_schedules.env"
+
+
+def old_env_file_warnings(venv: Path | None = None) -> list[str]:
+    """A warning while the pre-0.11.0 ``runspec_schedules.env`` is still in the
+    venv: fires load ``.runspec_scheduler_env`` now, so its values are no
+    longer used."""
+    root = venv or Path(sys.prefix)
+    old = root / OLD_SCHEDULES_ENV
+    if not old.exists():
+        return []
+    new = root / SCHEDULES_ENV
+    if new.exists():
+        return [f"{old} is no longer read (fires load {new}); move anything still needed across, then delete it"]
+    return [f"{old} is no longer read: rename it to {new} (mv {old} {new}), then run sync on a cron venv"]
+
+
 def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTPUT_BYTES) -> dict[str, Any]:
     """The full status payload (see module docstring)."""
     payload: dict[str, Any] = {
@@ -294,6 +314,7 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
         "schedules": [],
         "stale": [],
         "errors": [],
+        "warnings": old_env_file_warnings(),
     }
     eff = EffectiveConfig(settings=SchedulerSettings(), entries=[])
     try:
@@ -318,6 +339,9 @@ def status(config_path: Path, *, runs: int = 5, output_bytes: int = DEFAULT_OUTP
     jobs = daemon.pop("jobs")
     payload["daemon"] = daemon
     payload["keeper"] = _keepers()
+    from .hookcli import hooks_status
+
+    payload["hooks"] = hooks_status(config_path, daemon.pop("hooks", None) if daemon.get("state") != "stopped" else None)
     on_daemon = settings.backend == "daemon"
 
     # Crontabs of every account a schedule targets + any we've managed before.

@@ -360,7 +360,7 @@ def test_host_schedule_env_check(fleet):
     # No file yet: the credential is reported as not set.
     r = stub.host_schedule_env_check(q)
     assert r["ok"] and not r["exists"] and r["runspec_path"] == a
-    assert r["path"].endswith("runspec_schedules.env")
+    assert r["path"].endswith(".runspec_scheduler_env")
     (need,) = r["needs"]
     assert (
         need["arg"] == "jira-pat" and need["set_by"] == "" and need["shared_by"] == ""
@@ -374,7 +374,7 @@ def test_host_schedule_env_check(fleet):
     assert r["needs"][0]["set_by"] == ""
     assert r["needs"][0]["shared_by"] == "RUNSPEC_JIRA_ARG_JIRA_PAT"
     # In the schedule-only file: covered.
-    (tmp / "web" / "ops" / "runspec_schedules.env").write_text(
+    (tmp / "web" / "ops" / ".runspec_scheduler_env").write_text(
         "RUNSPEC_JIRA_ARG_JIRA_PAT=svc\n"
     )
     r = stub.host_schedule_env_check(q)
@@ -390,12 +390,12 @@ def test_schedules_file_read_and_save(fleet):
     ref = {"host": "web-01", "runspec_path": a, "file": "schedules"}
     view = stub.env_file_read(ref)
     assert view["ok"] and not view["exists"] and view["file"] == "schedules"
-    assert view["path"] == str(tmp / "web" / "ops" / "runspec_schedules.env")
+    assert view["path"] == str(tmp / "web" / "ops" / ".runspec_scheduler_env")
     saved = stub.env_file_save(
         {**ref, "sha": view["sha"], "set": {"RUNSPEC_JIRA_ARG_JIRA_PAT": "svc-secret"}}
     )
     assert saved["saved"]
-    f = tmp / "web" / "ops" / "runspec_schedules.env"
+    f = tmp / "web" / "ops" / ".runspec_scheduler_env"
     assert f.read_text() == "RUNSPEC_JIRA_ARG_JIRA_PAT=svc-secret\n"
     assert oct(f.stat().st_mode & 0o777) == "0o600"
     assert not (
@@ -414,5 +414,5 @@ def test_targets_name_the_schedules_file(fleet):
     stub, tmp, _ = fleet
     rows = stub.env_file_targets(["web-01"])
     assert rows[1]["schedules_path"] == str(
-        tmp / "web" / "ops" / "runspec_schedules.env"
+        tmp / "web" / "ops" / ".runspec_scheduler_env"
     )

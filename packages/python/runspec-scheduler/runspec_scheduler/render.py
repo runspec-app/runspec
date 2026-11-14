@@ -249,7 +249,7 @@ def _daemon_line(payload: dict[str, Any], now: _dt.datetime | None) -> str:
     if daemon.get("version"):
         text += f", version {daemon['version']}"
     if backend != "daemon":
-        text += " — fires nothing, this venv uses cron"
+        text += " — serves webhooks only, schedules use cron" if ((payload.get("hooks") or {}).get("daemon") or {}).get("listening") else " — fires nothing, this venv uses cron"
     return text
 
 
@@ -291,6 +291,23 @@ def _attention_block(recs: list[dict[str, Any]], now: _dt.datetime | None) -> li
     return lines
 
 
+def hooks_line(hooks: dict[str, Any]) -> str:
+    """One line about the venv's webhooks ("" when they're off and unused)."""
+    settings = hooks.get("settings") or {}
+    names = [h.get("name") for h in hooks.get("hooks") or [] if not h.get("overridden")]
+    if not settings.get("enabled"):
+        return f"off ({len(names)} hook(s) set up)" if names else ""
+    daemon = hooks.get("daemon") or {}
+    if daemon.get("listening"):
+        where = f"listening on {daemon['listening']}"
+    elif daemon.get("error") or settings.get("problem"):
+        where = f"not listening: {daemon.get('error') or settings.get('problem')}"
+    else:
+        where = "not listening (the daemon isn't running: runspec-scheduler install-service)"
+    waiting = len(hooks.get("pending") or [])
+    return f"{where}; {len(names)} hook(s)" + (f", {waiting} waiting for approval" if waiting else "")
+
+
 def status(payload: dict[str, Any], now: _dt.datetime | None = None) -> str:
     backend = str(payload.get("backend") or "cron")
     settings = payload.get("settings") or {}
@@ -309,6 +326,7 @@ def status(payload: dict[str, Any], now: _dt.datetime | None = None) -> str:
             ),
             ("Zone", zone_line(settings, payload.get("host_zone"))),
             ("Packages", _packages_line(payload)),
+            ("Webhooks", hooks_line(payload.get("hooks") or {})),
             ("Config", str(payload.get("config") or "")),
         ]
     )
@@ -328,6 +346,8 @@ def status(payload: dict[str, Any], now: _dt.datetime | None = None) -> str:
         warnings.append(f"Running now: {', '.join(str(r.get('id') if isinstance(r, dict) else r) for r in running)}")
     for err in payload.get("errors") or []:
         warnings.append(str(err))
+    for warning in payload.get("warnings") or []:
+        warnings.append(str(warning))
 
     recs = payload.get("schedules") or []
     if recs:

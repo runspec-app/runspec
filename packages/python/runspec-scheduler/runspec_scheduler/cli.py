@@ -606,12 +606,92 @@ def _cmd_watch(spec: rs.RunSpec) -> None:
         sys.exit(0)
 
 
+def _cmd_hooks(spec: rs.RunSpec, verb: str) -> None:
+    """The ``hooks …`` verbs (see :mod:`runspec_scheduler.hookcli`)."""
+    from . import hookcli as h
+
+    path = _cfg_path(spec)
+
+    def run(fn: Callable[[], dict[str, Any]], text: Callable[[dict[str, Any]], str]) -> None:
+        try:
+            payload = fn()
+        except (OSError, ValueError) as exc:
+            payload = {"ok": False, "error": str(exc)}
+        shown = json.dumps(payload, default=str) if not text_mode() else text(payload)
+        if payload.get("secrets") or payload.get("token"):
+            # A new token: to the real stdout only, never into the run log.
+            h.show_secret(shown)
+        elif not text_mode():
+            print(shown)
+        else:
+            print(shown, file=sys.stdout if payload.get("ok", True) else sys.stderr)
+        if not payload.get("ok", True):
+            sys.exit(1)
+
+    if verb == "list":
+        from .daemon import read_state
+
+        run(lambda: h.hooks_status(path, (read_state(path) or {}).get("hooks")), h.render_list)
+    elif verb == "deliveries":
+        run(lambda: h.deliveries(path, hook=_opt(spec.hook), state=_opt(spec.state), limit=max(1, int(spec.limit.value))), h.render_deliveries)
+    elif verb == "show":
+        run(lambda: h.show(path, int(spec.id.value)), lambda p: json.dumps(p, indent=2, default=str))
+    elif verb == "check":
+        run(lambda: h.check(Path(str(spec.file.value))), h.render_check)
+    elif verb == "test" and spec.draft.value:
+        draft = sys.stdin.read()
+        run(lambda: h.test_draft(path, draft), h.render_test)
+    elif verb == "test":
+        stdin_body: bytes | None = None
+        if _opt(spec.id) is None and not spec.last.value and not sys.stdin.isatty():
+            stdin_body = sys.stdin.buffer.read()
+        file = _opt(spec.file)
+        run(
+            lambda: h.test(path, str(_opt(spec.hook) or ""), body=stdin_body, content_type=str(_opt(spec.get("content_type")) or ""), delivery=_opt(spec.id), file=Path(str(file)) if file else None),
+            h.render_test,
+        )
+    elif verb == "token":
+        if spec.basic.value:
+            secret = sys.stdin.readline()
+            run(lambda: h.basic_hash(secret), lambda p: f"password_hash: {p['password_hash']}\n{p['note']}" if p.get("ok") else str(p.get("error")))
+        else:
+            run(h.token, lambda p: f"Token:        {p['token']}\ntoken_sha256: {p['token_sha256']}\n{p['note']}")
+    elif verb == "save":
+        text = sys.stdin.read()
+        run(lambda: h.save(path, text, new_token=bool(spec.new_token.value)), h.render_save)
+    elif verb == "remove":
+        run(lambda: h.remove(path, str(spec.name.value)), lambda p: f"Removed hook {p.get('removed')}." if p.get("ok") else str(p.get("error")))
+    elif verb == "settings":
+        run(lambda: h.settings(path, list(_opt(spec.set) or []), list(_opt(spec.smtp) or [])), lambda p: json.dumps({k: v for k, v in p.items() if k != "ok"}, indent=2))
+    elif verb in ("approve", "deny"):
+        run(lambda: h.decide(path, int(spec.id.value), verb, str(_opt(spec.note) or "")), h.render_decision)
+    elif verb == "mute":
+
+        def muted(p: dict[str, Any]) -> str:
+            return "Muted {hook} for {who} until {until}.".format(**p["mute"]) if p.get("ok") else str(p.get("error"))
+
+        run(lambda: h.mute(path, str(_opt(spec.hook) or "*"), str(spec.get("for").value), str(_opt(spec.reason) or ""), _opt(spec.who)), muted)
+    elif verb == "unmute":
+        run(lambda: h.unmute(path, _opt(spec.hook), _opt(spec.who)), lambda p: "Unmuted." if p.get("removed") else "Nothing was muted.")
+    elif verb == "follow":
+        _close_own_run()  # a follow lasts as long as a console watches
+        since = _opt(spec.since)
+        sys.exit(h.follow(path, since=int(since) if since is not None else None, replay=str(spec.replay.value), who=_opt(spec.who), once=bool(spec.once.value)))
+    else:  # pragma: no cover - require-command makes this unreachable
+        _emit({"error": "hooks needs a command — try: list, deliveries, show, check, test, token, save, remove, settings, approve, deny, mute, unmute, follow"})
+        sys.exit(2)
+
+
 def main() -> None:
     global _FORCE_JSON
     _early_lock(sys.argv[1:])
     spec = rs.parse("runspec-scheduler")
     _FORCE_JSON = bool(_opt(spec.get("json")))
     command = spec.runspec_command
+    path = list(spec.runspec_command_path or [])
+    if path and path[0] == "hooks":
+        _cmd_hooks(spec, command or "")
+        return
     if command == "run":
         _cmd_run(spec)
     elif command == "add":

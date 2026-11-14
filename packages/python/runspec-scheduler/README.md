@@ -133,7 +133,7 @@ runspec-scheduler use daemon        # or: use cron
 - `run-now --detach` starts the fire as a scheduled fire would run it (the
   schedule's `run_as` on cron, the venv owner on the daemon) in its own session,
   so it carries on after you log out; its run is recorded like any other fire.
-- Credentials for scheduled fires go in `{venv}/runspec_schedules.env` (mode
+- Credentials for scheduled fires go in `{venv}/.runspec_scheduler_env` (mode
   600, owned by the account the fires run as), not `.runspec_env`: every fire
   loads it on top of `.runspec_env`, and interactive runs in the venv never
   see it. The console's Env files window edits both.
@@ -162,7 +162,7 @@ args  = {url = "https://example.com/health"}
 - Exactly one of `at` (with `on`), `every` or `cron` (5 fields or `@daily`
   etc.). Also `command` (for a runnable with verbs), `timeout`, `catch_up` and
   `description`. `args` are checked against the runnable's spec like `add`'s;
-  leave site values and secrets to `runspec_schedules.env`.
+  leave site values and secrets to `.runspec_scheduler_env`.
 - `timezone = "local"` means the venv's zone (`settings --timezone
   Australia/Sydney`), else the host's. Use `"UTC"` for a job that must run at
   the same moment on every host, or a zone name for one tied to a business's
@@ -189,6 +189,26 @@ says next to it); `remove --id <id>` puts it back to the package's.
 Uninstalling the package drops its schedules. The daemon looks for installed,
 upgraded or removed packages once a minute; on cron run `sync` after `pip
 install`.
+
+## Webhooks
+
+The daemon can also take webhooks: another system (Alertmanager, GitLab, a
+ticketing tool) `POST`s to `/hook/<name>` and a runnable in this venv runs,
+straight away when it's autonomous, after a person approves when it's
+`confirm`/`supervised`, never when it's `manual`.
+
+```bash
+runspec-scheduler hooks settings --set enabled=true --set port=8977
+runspec-scheduler hooks save --new-token < alerts.toml    # token printed once
+runspec-scheduler hooks test --hook alerts < sample.json   # dry run
+runspec-scheduler hooks approve --id 17
+```
+
+Hooks are `[[hook]]` tables (fields by path, first-match regex rules, args
+from templates with a fixed list of filters), in the config or deployed in
+`{venv}/hooks.d/*.toml`. Requests are spooled in `{venv}/hooks/spool.sqlite`
+before the `202`. Webhooks never run as root. Full guide:
+<https://runspec.app/webhooks/>.
 
 ## Config
 
@@ -246,7 +266,7 @@ running as that other account can outlive the timeout.
 
 ## Credentials
 
-Put what scheduled fires need in `{venv}/runspec_schedules.env` (mode 600, owned
+Put what scheduled fires need in `{venv}/.runspec_scheduler_env` (mode 600, owned
 by the account the fires run as). Every fire (cron, daemon and `run-now`) loads
 it on top of `.runspec_env`; console, agent and hand-run runs in the venv never
 see it. A file others can write, or that another account owns, is refused and the

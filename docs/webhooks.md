@@ -1,0 +1,309 @@
+# Webhooks (runspec-scheduler)
+
+A webhook lets another system start a runnable on a host: Alertmanager when an
+alert fires, GitLab when a pipeline finishes, a ticketing tool when a request is
+approved. The sending app makes one HTTP `POST`; the venv's
+[runspec-scheduler](shared-schedules.md) daemon checks it, works out what to
+run, and either runs it straight away or holds it for a person to approve on
+runspec-console.
+
+The rules are the same as everywhere else in runspec:
+
+- Only runnables installed in **that venv** can run, as the venv owner, recorded
+  in History like any other run (label `hook:<name>`, run by *webhook*).
+- A runnable's `autonomy` decides what happens: **autonomous** runs at once,
+  **confirm** and **supervised** wait for an approval, **manual** is refused.
+  An arg that declares a stricter level raises the call, exactly as in the
+  console.
+- The denylist applies.
+- Values from the body reach the runnable as `RUNSPEC_<RUNNABLE>_ARG_<NAME>`
+  environment variables, never on its command line.
+
+## How a delivery goes
+
+1. The app sends `POST https://<host>:<port>/hook/<name>` with a token.
+2. The listener checks the sender's address, the token, the rate limits and the
+   size, writes the request to the spool (`{venv}/hooks/spool.sqlite`) and
+   answers `202 {"id": 17, "status": "queued"}`. Nothing else happens on the
+   request, so a slow run never makes the sender wait or retry.
+3. The daemon picks out the fields it was told to, finds the first rule that
+   matches, fills in the args and works out the autonomy:
+    - **autonomous**: runs it now (up to `max_runs` at once);
+    - **confirm / supervised**: waits for an approval on a console (or
+      `hooks approve` on the host). The first approval wins; the daemon runs it
+      and records who approved it. A denial settles it for everyone;
+    - **manual**: refused;
+    - a rule with `skip = true`, or no matching rule: recorded, nothing runs;
+    - a rule with no `run`: shown on the consoles following the venv, nothing runs.
+4. Consoles following the venv see every step as it happens
+   (`hooks follow` streams them; runspec-console runs it over SSH).
+
+If nobody approves within `approve_within` (1 hour by default) the run expires.
+If nobody is following the venv, or everyone following has muted the hook, and
+`[smtp]` is set up, the approval is mailed at once. Otherwise it's mailed when
+nobody has picked it up within `expect_claim_within` (15 minutes).
+
+## Turning it on
+
+The listener lives in the scheduler daemon, so the venv needs a keeper even if
+its schedules use cron (see [Keepers](shared-schedules.md#keepers-what-keeps-the-daemon-running)).
+On a cron venv the daemon fires no schedules; it only serves webhooks.
+
+Webhooks never run as root: a root-owned venv's daemon refuses to listen.
+
+```bash
+cd /srv/venvs/ops-tools
+bin/runspec-scheduler hooks settings --set enabled=true --set port=8977
+bin/runspec-scheduler hooks list
+```
+
+Plain HTTP is only allowed on `127.0.0.1`, behind a reverse proxy that does
+TLS. Anywhere else give it a certificate:
+
+```bash
+bin/runspec-scheduler hooks settings \
+  --set bind=0.0.0.0 \
+  --set cert=/etc/pki/tls/certs/ops-01.pem \
+  --set key=/etc/pki/tls/private/ops-01.key
+```
+
+The daemon picks the change up by itself. `GET /healthz` answers `ok` with no
+token, for a load balancer.
+
+## A hook
+
+Hooks are `[[hook]]` tables. This one handles Alertmanager: one request carries
+several alerts, so it splits the body and decides per alert.
+
+```toml
+[[hook]]
+name = "alerts"
+description = "Alertmanager: clean up full disks, ask before restarting services"
+token_sha256 = "9f2c…"            # from: runspec-scheduler hooks token
+split = "alerts"                  # one delivery per alert in the body
+fields = { alertname = "labels.alertname", instance = "labels.instance", status = "status", group = "$.groupKey" }
+dedup = "{{ group }}:{{ alertname }}:{{ status }}"
+
+[[hook.rule]]
+name = "resolved"
+match = { status = "^resolved$" }
+skip = true
+
+[[hook.rule]]
+name = "disk"
+match = { alertname = "^DiskFull$" }
+run = "cleanup-tmp"
+args = { host = "{{ instance | regex('^([^:]+)', 1) }}" }
+
+[[hook.rule]]
+name = "service"
+match = { alertname = "^(?P<service>[a-z-]+)Down$" }
+run = "system-service"
+command = "restart"
+args = { name = "{{ service }}" }
+```
+
+Save it with a new token (printed once; only its SHA-256 is stored):
+
+```bash
+bin/runspec-scheduler hooks save --new-token < alerts.toml
+```
+
+and give the sending app the address and the token, either as
+`Authorization: Bearer <token>` or in the `X-Runspec-Token` header.
+
+A token runspec makes is written to the terminal (or the SSH channel the
+console reads) only, never into the run's log, and runspec never prints a
+password: you choose it and only its hash is kept.
+
+### Hook keys
+
+| Key | What it does |
+|---|---|
+| `name` | The address: `/hook/<name>`. Lowercase letters, digits, `.`, `_`, `-` |
+| `token_sha256` | SHA-256 of the token the sender uses. Never the token itself |
+| `token_header` | The header the token may also come in (default `X-Runspec-Token`) |
+| `username` + `password_hash` | Basic auth instead of (or as well as) a token. `password_hash` is a salted PBKDF2 hash (`pbkdf2_sha256$…`). Choose the password yourself: put `password = "…"` in the hook you give `hooks save` (it's hashed before saving), or pipe it to `hooks token --basic` for a hooks.d file, which prints only the hash |
+| `allow` | Addresses or networks that may send, e.g. `["10.20.0.0/16"]`. Empty = any |
+| `fields` | `name = "path.to.value"`. A path starting `$.` reads the whole body even when it's split |
+| `split` | Path to a list in the body: each item is its own delivery |
+| `rule` | `[[hook.rule]]` tables, tried in order; the first match wins |
+| `run`, `command`, `args` | A rule for when no other matches |
+| `dedup` | A template; a delivery with the same text within `dedup_window` (10m) is counted on the first one instead of running again |
+| `require_approval` | Always wait for a person, even for an autonomous runnable |
+| `approve_within`, `expect_claim_within` | Per-hook versions of the `[hooks]` settings |
+| `email_to` | Who gets this hook's approval mail (default: `[smtp] to`) |
+| `max_running` | Runs of this hook at once (default 1) |
+| `skip_if_running` | Skip an autonomous delivery while the last run is still going |
+| `timeout` | Kill a run after this long (default 6h) |
+| `rate_per_minute` | This hook's own limit (default `[hooks] rate_per_minute`) |
+| `transform` | A runnable that turns an awkward body into fields (see below) |
+| `enabled` | `false` answers 404 without removing it |
+
+### Rule keys
+
+| Key | What it does |
+|---|---|
+| `name` | Shown in deliveries and on the consoles |
+| `match` | `field = "regex"`. All must match (a search: anchor with `^…$`). Named groups become fields |
+| `skip` | Record it and do nothing |
+| `run` | The runnable to run. Leave it out to only show the delivery on consoles |
+| `command` | The runnable's command, e.g. `"restart"` or `["db", "vacuum"]` |
+| `args` | `arg = "template"`. An arg that fills in empty is left out |
+| `require_approval` | Wait for a person for this rule |
+
+## Templates
+
+`args` and `dedup` use `{{ field }}` with a short, fixed list of filters, so a
+body from another system can never run anything:
+
+| Filter | Example | Result |
+|---|---|---|
+| `lower`, `upper`, `trim` | `{{ name \| trim \| lower }}` | `diskfull` |
+| `replace(old, new)` | `{{ instance \| replace(':9100') }}` | `web-01` |
+| `regex(pattern, group)` | `{{ instance \| regex('^([^:]+)', 1) }}` | `web-01` (none when it doesn't match) |
+| `default(value)` | `{{ team \| default('ops') }}` | `ops` when empty or missing |
+| `split(sep)`, `first`, `last`, `join(sep)` | `{{ hosts \| split(',') \| first }}` | lists for a `multiple` arg |
+| `json` | `{{ labels \| json }}` | the value as JSON text |
+
+A template that is one `{{ … }}` and nothing else keeps the value's type, so a
+list stays a list for a `multiple` arg. Built-in fields are `hook`, `delivery`,
+`received`, `source`, `content_type`, `body` and `headers` (minus anything that
+carries a secret), plus `item` when the body is split.
+
+Bodies can be JSON, XML (no `DOCTYPE` or entities), form-encoded or plain text
+(plain text only gives `body`). For anything stranger, set `transform` to a
+runnable in the venv: it gets the body on stdin and prints a JSON object whose
+keys become fields.
+
+## Trying a hook before it's live
+
+`hooks test` shows what a hook would do with a body, without running or storing
+anything:
+
+```bash
+bin/runspec-scheduler hooks test --hook alerts < sample.json
+bin/runspec-scheduler hooks test --hook alerts --last     # the last body it received
+bin/runspec-scheduler hooks test --file hooks.d/ops.toml < sample.json   # before deploying
+echo '{"hook": {"name": "alerts", "fields": {}}, "body": null}' | bin/runspec-scheduler hooks test --draft   # an unsaved hook (what the console editor sends)
+```
+
+```text
+alerts with stdin:
+
+Item 1
+  outcome:  runs at once (autonomous)
+  rule:     disk
+  runs:     cleanup-tmp
+  autonomy: autonomous
+  arg host = "web-01"
+```
+
+## Deploying hooks with Ansible
+
+Hooks can also live in `{venv}/hooks.d/*.toml`, one or more `[[hook]]` tables
+per file. They win over a console-made hook of the same name and show as
+*deployed* (read-only) on the consoles. A file must belong to the venv owner (or
+root) and not be writable by group or others, or it's skipped.
+
+`hooks check` validates a file and exits 1 on any problem, so it works as
+Ansible's `validate`:
+
+```yaml
+- name: Alertmanager webhook
+  ansible.builtin.template:
+    src: alerts.toml.j2
+    dest: /srv/venvs/ops-tools/hooks.d/alerts.toml
+    owner: opsbot
+    mode: "0644"
+    validate: /srv/venvs/ops-tools/bin/runspec-scheduler hooks check %s
+```
+
+## Approving from the host
+
+```bash
+bin/runspec-scheduler hooks deliveries                  # newest first
+bin/runspec-scheduler hooks show --id 17                # one in full, with its body
+bin/runspec-scheduler hooks approve --id 17 --note "checked the disk"
+bin/runspec-scheduler hooks deny --id 18
+```
+
+Run these as the venv owner. Under `sudo -u <owner>`, the approval is recorded
+under your own name (`SUDO_USER`).
+
+## Muting
+
+Mute a hook (or every hook on a venv) for a while: you stop counting as
+someone watching it, and everyone following the venv sees who muted what until
+when. When everyone following has muted a hook, its approvals are mailed
+straight away. From the host:
+
+```bash
+bin/runspec-scheduler hooks mute --hook alerts --for 2h --reason "change freeze"
+bin/runspec-scheduler hooks unmute --hook alerts
+bin/runspec-scheduler hooks unmute            # all of your mutes
+```
+
+`--hook "*"` mutes (and unmutes) every hook at once; that mute is separate from
+a mute of one hook.
+
+## Settings reference
+
+`[hooks]` in `{venv}/runspec_scheduler.toml`, changed with
+`hooks settings --set key=value` (an empty value puts the default back):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `enabled` | `false` | Turn the listener on |
+| `port` | — | The port to listen on |
+| `bind` | `127.0.0.1` | The address to listen on. Anything but loopback needs `cert` and `key` |
+| `base_path` | — | A prefix for every address, e.g. `/runspec/ops` behind a shared proxy |
+| `cert`, `key` | — | PEM certificate and key for HTTPS (TLS 1.2 or later) |
+| `max_body` | `256k` | Bigger bodies are refused (413) |
+| `keep` | `7d` | How long settled deliveries stay in the spool |
+| `max_connections` | `64` | Open connections at once; more get 503 |
+| `rate_per_minute` | `120` | Per hook; more get 429 with `Retry-After` |
+| `source_rate_per_minute` | `600` | Per sending address |
+| `trusted_proxies` | — | Proxies whose `X-Forwarded-For` is believed (for `allow` and the per-sender limit) |
+| `approve_within` | `1h` | How long an approval can wait before it expires |
+| `expect_claim_within` | `15m` | Mail an approval nobody has picked up after this long (`0` = never) |
+| `max_runs` | `4` | Webhook runs at once, across all hooks |
+| `max_queue` | `1000` | Deliveries waiting to be worked through before new ones get 503 |
+| `min_free_mb` | `100` | Free space the spool's disk must have, or new deliveries get 503 |
+
+`[smtp]`, for mailing approvals (`hooks settings --smtp key=value`):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `relay` | — | The mail relay's host name |
+| `port` | `25` | Its port |
+| `from` | — | The sender address |
+| `to` | — | Who gets approval mail (a hook's `email_to` wins) |
+| `starttls` | `false` | Use STARTTLS |
+| `timeout` | `10` | Seconds to wait for the relay |
+
+## What the sender gets back
+
+| Code | Meaning |
+|---|---|
+| `202` | Accepted: `{"id": …, "status": "queued"}` |
+| `401` | Missing or wrong token / password |
+| `403` | The sender's address isn't in `allow` |
+| `404` | No such hook, or it's turned off |
+| `405` | Not a `POST` |
+| `411` | No `Content-Length` (chunked bodies aren't accepted) |
+| `413` | The body is over `max_body` |
+| `429` | Over a rate limit; see `Retry-After` |
+| `503` | Too many connections, too much waiting, or the disk is nearly full; see `Retry-After` |
+
+Rejections are counted in `status` and written to the audit log at most once a
+minute per reason.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `{venv}/runspec_scheduler.toml` | `[hooks]`, `[smtp]` and console-made `[[hook]]` tables |
+| `{venv}/hooks.d/*.toml` | Deployed hooks (win over console-made ones) |
+| `{venv}/hooks/spool.sqlite` | Every delivery, its events, mutes and followers (owner-only) |
+| `{venv}/.runspec_scheduler_env` | Credentials for webhook runs and scheduled fires |

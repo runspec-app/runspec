@@ -60,6 +60,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   brand colour, runbook and saved-run cards drop their fixed purple and cyan,
   and Schedules' argument names are the neutral text.
 
+## [0.436.1] — 2026-11-14
+
+### Changed
+
+- **Env files: the schedules file is `.runspec_scheduler_env`.** The Env files
+  window's *Schedules file*, the host schedule dialog's credential check and
+  their hints now use the name runspec-scheduler 0.11.0 reads (it was
+  `runspec_schedules.env`; the scheduler doesn't read the old name any more and
+  its `status` warns while one is still there). Upgrade runspec-scheduler on
+  the hosts with this release.
+
 ## [0.437.0] — 2026-11-14
 
 ### Fixed
