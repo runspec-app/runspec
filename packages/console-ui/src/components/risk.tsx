@@ -110,6 +110,7 @@ function RiskDialog({ ask, cover, onDone }: { ask: RiskAsk; cover: boolean; onDo
     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
       <Button ref={cancelRef} onClick={cancel}>{ask.cancelText ?? 'Cancel'}</Button>
       <Button type="primary" danger={ask.danger !== false} disabled={!ready} data-testid="risk-ok"
+        icon={ask.danger !== false ? <WarningOutlined aria-hidden /> : undefined}
         onClick={() => onDone({ ok: true, remember })}>
         {ask.okText}
       </Button>

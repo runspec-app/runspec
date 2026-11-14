@@ -226,13 +226,24 @@ export function useShortcuts(handlers: ShortcutHandlers, ai: boolean): void {
  * answers it ('answered'). Clicks the card's own button, so edited args and the
  * audit trail behave exactly as a mouse click.
  */
+/** Is this element on the current tab? Hidden tabs keep their views mounted
+ *  with display: none, so a gate there is waiting but not on screen. */
+export function gateShown(el: Element): boolean {
+  return !el.closest('[style*="display: none"]')
+}
+
+/** The first waiting gate on the current tab (what the keyboard answers). */
+export function firstShownGate(doc: Document = document): HTMLElement | null {
+  return [...doc.querySelectorAll<HTMLElement>('[data-rs-confirm-gate]')].find(gateShown) ?? null
+}
+
 export function answerPendingConfirm(
   action: 'approve' | 'deny',
   opts: { doc?: Document; inView?: (el: HTMLElement) => boolean } = {},
 ): 'answered' | 'revealed' | 'none' {
   const doc = opts.doc ?? document
   const inView = opts.inView ?? elementInView
-  const gate = doc.querySelector<HTMLElement>('[data-rs-confirm-gate]')
+  const gate = firstShownGate(doc)
   const btn = gate?.querySelector<HTMLElement>(`[data-rs-confirm="${action}"]`)
   if (!gate || !btn) return 'none'
   // The buttons are what the operator acts on — they must be on screen (a
@@ -247,7 +258,7 @@ export function answerPendingConfirm(
 
 /** Scroll the oldest pending confirmation into view and flash it. */
 export function revealPendingConfirm(doc: Document = document): boolean {
-  const gate = doc.querySelector<HTMLElement>('[data-rs-confirm-gate]')
+  const gate = firstShownGate(doc)
   if (!gate) return false
   gate.scrollIntoView({ block: 'center' })
   gate.classList.remove('rs-flash')

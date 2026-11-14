@@ -1043,7 +1043,9 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       level: where.length === 1 && where[0] === 'local' ? 'local' : 'fleet',
       title: `Run ${s.name ? `"${s.name}"` : 'this schedule'} now?`,
       action: scheduleSummary(s), targets: where,
-      consequence: "It runs once, now, as it would at its next time. Its timetable doesn't change.",
+      consequence: s.enabled === false
+        ? "It's paused. This runs it once anyway, now; it stays paused."
+        : "It runs once, now, as it would at its next time. Its timetable doesn't change.",
       okText: 'Run now', danger: false,
       rememberLabel: "Don't ask again for this schedule",
     })

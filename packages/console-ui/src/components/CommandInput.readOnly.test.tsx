@@ -67,3 +67,23 @@ describe('CommandInput with an automation session selected', () => {
     expect(info).not.toHaveBeenCalled()
   })
 })
+
+describe('CommandInput off the Console', () => {
+  it('is one line until focused or holding text', () => {
+    render(
+      <CommandInput runnables={[]} allRunnables={[]} selectedHost="" runbooks={[]} savedRuns={[]}
+        onRunRunnable={noop} onOpenForm={noop} onOpenRunbook={noop} onOpenSavedRun={noop}
+        onSendChat={vi.fn()} history={[]} compact />,
+    )
+    const box = screen.getByTestId('composer')
+    expect(box.getAttribute('data-slim')).toBe('true')
+    const el = screen.getByRole('textbox')
+    fireEvent.focus(el)
+    expect(box.getAttribute('data-slim')).toBe('false')
+    fireEvent.change(el, { target: { value: 'df' } })
+    fireEvent.blur(el)
+    expect(box.getAttribute('data-slim')).toBe('false')
+    fireEvent.change(el, { target: { value: '' } })
+    expect(box.getAttribute('data-slim')).toBe('true')
+  })
+})

@@ -10,7 +10,7 @@ import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { Button, Input, Tooltip } from 'antd'
 import { CaretRightOutlined } from '@ant-design/icons'
 import { approveColors, textMuted, textSecondary, useIsDark, MONO_FONT, RADIUS } from '../ThemeContext'
-import { shortcutHint } from '../shortcuts'
+import { gateShown, shortcutHint } from '../shortcuts'
 import { StatusTag } from './kit'
 
 /** The waiting panel: a warm tint, the same for every kind of approval. */
@@ -20,10 +20,11 @@ export const APPROVAL_BG = 'color-mix(in srgb, #e3b341 8%, var(--rs-surface-rais
 const GATE = '[data-rs-confirm-gate]'
 const GATES_CHANGED = 'runspec:gates_changed'
 
-/** Where a gate stands among all waiting gates, in the order the keyboard
- *  answers them (document order). Pure DOM, for tests. */
+/** Where a gate stands among the waiting gates on the current tab, in the
+ *  order the keyboard answers them (document order). Gates on hidden tabs
+ *  don't count: a card you can't see isn't in your queue. Pure DOM, for tests. */
 export function gatePosition(el: Element | null, doc: Document = document): { index: number; total: number } {
-  const all = [...doc.querySelectorAll(GATE)]
+  const all = [...doc.querySelectorAll(GATE)].filter(gateShown)
   return { index: el ? all.indexOf(el) : -1, total: all.length }
 }
 
@@ -58,7 +59,7 @@ export function QueueMark({ index, total }: { index: number; total: number }) {
         <Tooltip title={`${shortcutHint('approve')} approves and ${shortcutHint('deny')} denies this one`}>
           <span data-testid="approval-keys" style={{
             fontFamily: MONO_FONT, fontSize: 11, padding: '0 6px', borderRadius: RADIUS.sm,
-            border: '1px solid var(--rs-border)', color: textSecondary(isDark),
+            border: '1px solid var(--rs-field)', color: textSecondary(isDark),
           }}>{shortcutHint('approve')}</span>
         </Tooltip>
       )}

@@ -277,7 +277,7 @@ function RunPicker({
   const runnableNames = withCurrent(runnablesFor(kind, target).map(r => r.name), runnable)
   const dot = (name: string) => {
     const up = hosts.find(h => h.name === name)?.connected
-    return <span style={{ fontSize: 9, color: up ? '#52c41a' : '#595959', marginRight: 6 }}>●</span>
+    return <span role="img" aria-label={up ? 'connected' : 'not connected'} style={{ fontSize: 9, color: up ? 'var(--rs-ok)' : 'var(--rs-text-muted)', marginRight: 6 }}>●</span>
   }
 
   return (

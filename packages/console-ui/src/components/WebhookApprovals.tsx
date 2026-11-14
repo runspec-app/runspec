@@ -23,6 +23,8 @@ import { flatFields, inFlight, relTime, runLine, waitingApprovals, deliveryStatu
 
 // The same approval card as the assistant's (approval.tsx): same panel, same
 // buttons and reason, and Alt+A / Alt+D answer it when it's first in line.
+/** A delivery with this many fields or fewer shows them open. */
+export const FIELDS_SHOWN_OPEN = 6
 /** Cards shown before the rest fold behind "N more". */
 export const SHOWN_AT_ONCE = 3
 
@@ -37,10 +39,13 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
   const gateRef = useRef<HTMLElement>(null)
   const queue = useGatePosition(gateRef)
   const [busy, setBusy] = useState<'' | 'approve' | 'deny'>('')
-  const [showFields, setShowFields] = useState(false)
+  const fields0 = flatFields(d.fields)
+  // The fields that triggered it come from outside: show them unless there are
+  // many, so they're read before Approve, not after.
+  const [showFields, setShowFields] = useState(fields0.length <= FIELDS_SHOWN_OPEN)
   const target = { host: venv.host, venv: venv.venv }
   const line = runLine(d)
-  const fields = flatFields(d.fields)
+  const fields = fields0
   const due = d.expires ? Date.parse(d.expires) - now : NaN
   const soon = Number.isFinite(due) && due < 2 * 60_000
 
@@ -91,7 +96,7 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
           {Number.isFinite(due) && (
             <span style={{ fontSize: 12, color: soon ? textWarning(isDark) : textMuted(isDark) }}>
-              {due > 0 ? `expires ${relTime(d.expires, now)}` : 'expiring'}
+              {due > 0 ? `expires ${relTime(d.expires, now)}, then it won't run` : "expiring: it won't run"}
             </span>
           )}
           <QueueMark {...queue} />
@@ -158,6 +163,23 @@ function DecidedLine({ venv, d }: { venv: WebhookVenv; d: WebhookDelivery }) {
       <span style={{ fontWeight: 600, color: textColor(isDark) }}>{d.hook}</span>
       <span style={{ fontFamily: MONO_FONT }}>{venv.host} / {venv.venv}</span>
       <span>approved by {d.decided_by}{d.note ? ` (“${d.note}”)` : ''}</span>
+    </div>
+  )
+}
+
+/** The Console's one line about webhooks waiting on the Webhooks tab. */
+export function WebhookPointer({ count, onReview }: { count: number; onReview: () => void }) {
+  const isDark = useIsDark()
+  return (
+    <div data-testid="webhook-pointer" role="status" style={{
+      display: 'flex', alignItems: 'center', gap: 10, margin: '10px 16px 0', padding: '6px 12px', flexShrink: 0,
+      background: APPROVAL_BG, border: `1px solid ${APPROVAL_BORDER}`, borderRadius: RADIUS.md, fontSize: 13,
+    }}>
+      <StatusTag tone="waiting">webhook</StatusTag>
+      <span style={{ color: textColor(isDark), fontWeight: 600 }}>
+        {count} webhook{count === 1 ? '' : 's'} waiting for approval
+      </span>
+      <Button size="small" style={{ marginLeft: 'auto' }} onClick={onReview}>Review →</Button>
     </div>
   )
 }

@@ -30,6 +30,21 @@ describe('approval queue', () => {
     expect(gatePosition(screen.getByTestId('gate-agent'))).toEqual({ index: 1, total: 2 })
   })
 
+  it('leaves out cards on a hidden tab, for the count and the keyboard', async () => {
+    const hidden = vi.fn(), shown = vi.fn()
+    render(
+      <div>
+        <div style={{ display: 'none' }}><Gate name="other-tab" onApprove={hidden} /></div>
+        <Gate name="here" onApprove={shown} />
+      </div>,
+    )
+    await waitFor(() => expect(screen.getByTestId('gate-here').contains(screen.getAllByTestId('approval-keys')[0])).toBe(true))
+    expect(gatePosition(screen.getByTestId('gate-here'))).toEqual({ index: 0, total: 1 })
+    expect(answerPendingConfirm('approve', { inView: () => true })).toBe('answered')
+    expect(shown).toHaveBeenCalled()
+    expect(hidden).not.toHaveBeenCalled()
+  })
+
   it('says nothing about a queue when only one card waits', async () => {
     render(<Gate name="only" />)
     await waitFor(() => expect(screen.getByTestId('approval-keys')).toBeTruthy())

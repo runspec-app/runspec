@@ -15,7 +15,7 @@ function varRef(val: unknown): string | null {
 function HostTitle({ host }: { host: Host }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ fontSize: 9, color: host.connected ? '#52c41a' : '#595959' }}>●</span>
+      <span role="img" aria-label={host.connected ? 'connected' : 'not connected'} style={{ fontSize: 9, color: host.connected ? 'var(--rs-ok)' : 'var(--rs-text-muted)' }}>●</span>
       <Text strong style={{ fontFamily: MONO_FONT, fontSize: 14 }}>{host.name}</Text>
       {host.role && (
         <Tag color={host.role === 'primary' ? 'geekblue' : 'default'} style={{ fontSize: 12, margin: 0 }}>

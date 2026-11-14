@@ -45,8 +45,10 @@ describe('WebhookApprovals', () => {
     expect(screen.getByText('web-01 / ops')).toBeTruthy()
     expect(screen.getByText('system-service restart --name nginx')).toBeTruthy()
     expect(screen.getByText(/received 2m ago · from 10.2.4.17/)).toBeTruthy()
-    await userEvent.click(screen.getByRole('button', { name: /Show the 2 fields/ }))
+    // A few fields show open: they're read before Approve.
     expect(screen.getByText('labels.severity')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /Hide the 2 fields/ }))
+    expect(screen.queryByText('labels.severity')).toBeNull()
   })
 
   it('approves with the note', async () => {
@@ -77,5 +79,16 @@ describe('WebhookApprovals', () => {
     render(<WebhookApprovals status={status([d(7, { state: 'running', decided_by: 'alice' })])} />)
     expect(screen.queryByTestId('webhook-card')).toBeNull()
     expect(screen.getByTestId('webhook-decided').textContent).toContain('approved by alice')
+  })
+})
+
+describe('WebhookPointer', () => {
+  it('says how many wait and opens the Webhooks tab', async () => {
+    const { WebhookPointer } = await import('./WebhookApprovals')
+    const onReview = vi.fn()
+    render(<WebhookPointer count={2} onReview={onReview} />)
+    expect(screen.getByTestId('webhook-pointer').textContent).toContain('2 webhooks waiting for approval')
+    await userEvent.click(screen.getByRole('button', { name: 'Review →' }))
+    expect(onReview).toHaveBeenCalled()
   })
 })
