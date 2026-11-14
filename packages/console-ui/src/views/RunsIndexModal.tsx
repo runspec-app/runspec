@@ -54,10 +54,10 @@ export function checkPruneAge(raw: string): { days: number | null; error?: strin
 }
 
 const ACTION_DONE: Record<HistoryDbAction, (n: number) => string> = {
-  prune: n => `Pruned ${plural(n, 'row')} from the runs index`,
-  reap: n => `Marked ${plural(n, 'orphaned running row')} crashed`,
-  reindex: n => `Reindexed ${plural(n, 'run')} from the audit logs`,
-  sweep: n => `Swept ${plural(n, 'run')} from the logs inbox into the index`,
+  prune: n => `Removed ${plural(n, 'row')} from the runs index`,
+  reap: n => `Marked ${plural(n, 'lost run')} crashed`,
+  reindex: n => `Rebuilt ${plural(n, 'run')} from the audit logs`,
+  sweep: n => `Filed ${plural(n, 'run')} from other accounts into the index`,
 }
 
 const INBOX_PROBLEM: Record<string, string> = {
@@ -171,10 +171,7 @@ export function RunsIndexModal({ target, onClose }: {
     >
       {riskHolder}
       <Text type="secondary" style={{ fontSize: 13 }}>
-        The SQLite index (<Text code>runspec_runs.db</Text>) the History tab reads for fast loads.
-        Runspec keeps it bounded on every run ({'[config.history]'} retention); use these to
-        inspect it or force maintenance. It's derived from the audit logs, so <b>Reindex</b> is
-        always safe.
+        The list of runs History reads. It's built from the audit logs, so it can always be rebuilt.
       </Text>
 
       <div style={{ marginTop: 16, minHeight: 80 }}>
@@ -187,21 +184,21 @@ export function RunsIndexModal({ target, onClose }: {
             description="Nothing has been indexed in this dir — it's created on the next run (or by Reindex, from existing audit logs)." />
         ) : s ? (
           <Descriptions size="small" column={1} bordered
-            extra={<Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => load(target)} />}>
+            extra={<Button size="small" icon={<ReloadOutlined />} loading={loading} aria-label="Reload the runs index" onClick={() => load(target)} />}>
             <Descriptions.Item label="File">
               <span style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{s.path}</span>
             </Descriptions.Item>
             <Descriptions.Item label="Rows">
               <Space size={4} wrap>{s.rows ?? 0} {statusTags}</Space>
             </Descriptions.Item>
-            <Descriptions.Item label="Size">{humanBytes(s.size_bytes)} (incl. WAL)</Descriptions.Item>
+            <Descriptions.Item label="Size">{humanBytes(s.size_bytes)}</Descriptions.Item>
             <Descriptions.Item label="Span">
               {s.oldest ? fmtDayRange(s.oldest, s.newest) : '—'}
             </Descriptions.Item>
             {(s.stale_running ?? 0) > 0 && (
               <Descriptions.Item label="Stale">
                 <StatusTag tone="attention">{plural(s.stale_running ?? 0, 'orphaned running row')}</StatusTag>
-                <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>Reap marks them crashed.</Text>
+                <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>Their process is gone. Mark lost runs crashed, under Maintenance.</Text>
               </Descriptions.Item>
             )}
             {inbox && (
@@ -225,7 +222,11 @@ export function RunsIndexModal({ target, onClose }: {
         )}
       </div>
 
-      <Form layout="vertical" style={{ marginTop: 16 }}>
+      {/* Inspection first; the maintenance jobs fold away (open when there's
+          something to fix). */}
+      <details open={(s?.stale_running ?? 0) > 0 || !!s?.write_error} style={{ marginTop: 16 }}>
+      <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Maintenance</summary>
+      <Form layout="vertical" style={{ marginTop: 12 }}>
         {!isHome && (
           <Form.Item label="Run as" style={{ marginBottom: 12 }}
             help="Escalate to this OS user via sudo (pre-filled with the venv's owner). Blank runs as you.">
@@ -233,25 +234,21 @@ export function RunsIndexModal({ target, onClose }: {
               style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
           </Form.Item>
         )}
-        <Text strong style={{ fontSize: 13 }}>Prune now</Text>
+        <Text strong style={{ fontSize: 13 }}>Remove old rows</Text>
         <div style={{ marginBottom: 8 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            A one-off prune — nothing here is saved. Fill either field or both; both apply
-            (age first, then the row cap), so the stricter wins. Running rows are never pruned
-            and the audit logs are untouched. Automatic pruning already runs after every run,
-            per the runnable's <Text code style={{ fontSize: 12 }}>{'[config.history]'}</Text>{' '}
-            (<Text code style={{ fontSize: 12 }}>retention_days</Text>, default 90;{' '}
-            <Text code style={{ fontSize: 12 }}>max_rows</Text>, default 50,000).
+            Once, now: the run files stay (that's Log cleanup), and Rebuild brings rows back. Each
+            run already trims the index to 90 days or 50,000 rows by default.
           </Text>
         </div>
         <Space wrap align="start" size={16}>
-          <Form.Item label="Delete rows older than" style={{ marginBottom: 8 }}
+          <Form.Item label="Remove rows older than" style={{ marginBottom: 8 }}
             validateStatus={age.error ? 'error' : undefined}
             help={age.error ?? 'e.g. 30d, 2w, 72h — whole days; blank = no age limit'}>
             <Input value={olderThan} onChange={e => setOlderThan(e.target.value)} placeholder="e.g. 30d"
               aria-label="older than" style={{ width: 220, fontFamily: MONO_FONT }} />
           </Form.Item>
-          <Form.Item label="Keep only the newest" style={{ marginBottom: 8 }}
+          <Form.Item label="Keep at most" style={{ marginBottom: 8 }}
             help="rows — blank = no row cap">
             <Space.Compact>
               <InputNumber value={maxRows} onChange={v => setMaxRows(v)} min={1} placeholder="e.g. 10000"
@@ -267,27 +264,28 @@ export function RunsIndexModal({ target, onClose }: {
           <Button danger disabled={!hasPolicy || busy !== null} loading={busy === 'prune'}
             onClick={async () => {
               const a = await askRisk({
-                level: 'fleet', title: `Prune the runs index of ${group}?`,
-                action: `Delete ${pruneSummary}`, targets: [`${host} / ${group}`],
-                consequence: 'Reindex restores rows while their audit logs remain.', okText: 'Prune',
+                level: 'fleet', title: `Remove old rows from the runs index of ${group}?`,
+                action: `Remove ${pruneSummary}`, targets: [`${host} / ${group}`],
+                consequence: 'History stops listing them. The run files stay, and Rebuild index brings the rows back.', okText: 'Remove rows',
               })
               if (a.ok) await act('prune')
             }}>
-            Prune…
+            Remove rows…
           </Button>
         </Tooltip>
-        <Tooltip title="Mark 'running' rows whose process is gone (or older than max_run_hours) as crashed">
-          <Button disabled={busy !== null} loading={busy === 'reap'} onClick={() => act('reap')}>Reap orphans</Button>
+        <Tooltip title="Runs still listed as running whose process is gone are marked crashed">
+          <Button disabled={busy !== null} loading={busy === 'reap'} onClick={() => act('reap')}>Mark lost runs crashed</Button>
         </Tooltip>
-        <Tooltip title="Rebuild rows from the run_summary records in this dir's audit logs — repairs a missing or damaged index">
-          <Button disabled={busy !== null} loading={busy === 'reindex'} onClick={() => act('reindex')}>Reindex</Button>
+        <Tooltip title="Rebuild the list from this folder's audit logs: repairs a missing or damaged index">
+          <Button disabled={busy !== null} loading={busy === 'reindex'} onClick={() => act('reindex')}>Rebuild index</Button>
         </Tooltip>
         {!isHome && (
-          <Tooltip title="Index the finished runs other accounts dropped into this venv's logs inbox and move them into logs/ — runs as the venv's owner (via sudo as the owner, else root). Also happens on the owner's own runs.">
-            <Button disabled={busy !== null} loading={busy === 'sweep'} onClick={() => act('sweep')}>Sweep inbox</Button>
+          <Tooltip title="Runs made by other accounts wait in this venv's logs inbox until the owner's next run files them. This files them now, as the venv's owner.">
+            <Button disabled={busy !== null} loading={busy === 'sweep'} onClick={() => act('sweep')}>File other accounts' runs</Button>
           </Tooltip>
         )}
       </Space>
+      </details>
 
       {error && <Alert type="error" showIcon style={{ marginTop: 12 }} message={error} />}
     </Modal>

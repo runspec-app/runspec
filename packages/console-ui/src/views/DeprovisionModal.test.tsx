@@ -74,9 +74,9 @@ describe('DeprovisionModal', () => {
     const ok = await screen.findByTestId('risk-ok') as HTMLButtonElement
     expect(ok.disabled).toBe(true)
     // The field is empty: no placeholder giving the answer away.
-    const field = screen.getByLabelText('Type ops to confirm') as HTMLInputElement
+    const field = screen.getByLabelText('Type /opt/venvs/ops to confirm') as HTMLInputElement
     expect(field.placeholder).toBe('')
-    await user.type(field, 'op')
+    await user.type(field, '/opt/venvs/op')
     expect(ok.disabled).toBe(true)
     await user.type(field, 's')
     expect(ok.disabled).toBe(false)
@@ -107,7 +107,7 @@ describe('DeprovisionModal', () => {
     await user.click(await screen.findByRole('checkbox', { name: /Keep logs/ }))
     expect(await screen.findByText(/and its logs will be deleted/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /Delete on 1 host/ }))
-    await user.type(await screen.findByLabelText('Type ops to confirm'), 'ops')
+    await user.type(await screen.findByLabelText('Type /opt/venvs/ops to confirm'), '/opt/venvs/ops')
     await user.click(screen.getByTestId('risk-ok'))
     expect(api.deprovision_start).toHaveBeenCalledWith(expect.objectContaining({ keep_logs: false }))
   })

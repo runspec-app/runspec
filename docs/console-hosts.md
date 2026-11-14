@@ -418,7 +418,7 @@ runs fall back to their own `~/logs`, where History can't see them.
 
 Finished runs waiting in the inbox show in History with an **inbox** tag. The
 owner's runs sweep them into the runs index, or use **Logs → Runs index… →
-Sweep inbox**. The full walkthrough — how it works, checking it, and
+Maintenance → File other accounts' runs**. The full walkthrough — how it works, checking it, and
 troubleshooting — is [Shared venvs — the logs inbox](logs-inbox.md).
 
 The older alternative is still there: `runspec logs share --group consoles` (or

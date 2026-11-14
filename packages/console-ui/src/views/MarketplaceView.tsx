@@ -332,6 +332,15 @@ export function filterHostGroups(groups: HostGroup[], text: string, group: strin
 /** Which venvs a quick-tick button picks. */
 export type TickPick = 'outdated' | 'absent' | 'all' | 'none'
 
+/** The install button's verb for the ticked venvs: Update when each already
+ *  has it, Install when none do, both when mixed, Reinstall when forced. Pure. */
+export function installVerb(installed: boolean[], reinstall: boolean): string {
+  if (reinstall) return 'Reinstall'
+  if (installed.length && installed.every(Boolean)) return 'Update'
+  if (installed.some(Boolean)) return 'Install or update'
+  return 'Install'
+}
+
 export function tickMatches(s: TargetState, pick: TickPick): boolean {
   if (pick === 'all') return true
   if (pick === 'none') return false
@@ -579,7 +588,7 @@ function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: 
           <Button onClick={onClose} style={{ marginLeft: 'auto' }}>Cancel</Button>
           <Button type="primary" danger={action === 'uninstall'} loading={starting} onClick={start} disabled={eligible.length === 0}
             icon={action === 'install' ? <DownloadOutlined /> : <DeleteOutlined />}>
-            {action === 'install' ? `Install ${spec}` : `Uninstall ${entry.name}`} on {selected.length} venv{selected.length === 1 ? '' : 's'}
+            {action === 'install' ? `${installVerb(selected.map(s => !!s.installed), reinstall)} ${spec}` : `Uninstall ${entry.name}`} on {selected.length} venv{selected.length === 1 ? '' : 's'}
           </Button>
         </div>
       }

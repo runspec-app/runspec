@@ -52,11 +52,16 @@ describe('send bar helpers', () => {
     }
     expect(planSend({ ticked: few, key: 'ctrl-d', remembered: null }).kind).toBe('ask')
     expect(planSend({ ticked: ['1'], key: 'ctrl-c', remembered: null })).toEqual({ kind: 'send' })
-    for (const line of ['systemctl status nginx', 'grep rm notes.txt', 'echo killed', 'firmware --version']) {
-      expect(planSend({ ticked: few, line, remembered: null }), line).toEqual({ kind: 'send' })
+    // Not caught by the pattern still asks for more than one window: the
+    // pattern only decides whether "don't ask again" is offered.
+    for (const line of ['systemctl status nginx', 'grep rm notes.txt', 'echo killed', 'sed -i s/a/b/ /etc/x', 'psql -c "delete from t"']) {
+      expect(planSend({ ticked: few, line, remembered: null }), line).toEqual({ kind: 'ask', disruptive: false, canRemember: true })
+      expect(planSend({ ticked: few, line, remembered: signature(few) }), line).toEqual({ kind: 'send' })
+      expect(planSend({ ticked: ['1'], line, remembered: null }), line).toEqual({ kind: 'send' })
     }
-    // A password to a few windows goes; past the limit it asks like any line.
-    expect(planSend({ ticked: few, line: 's3cret', hidden: true, remembered: null })).toEqual({ kind: 'send' })
+    expect(planSend({ ticked: few, key: 'tab', remembered: null })).toEqual({ kind: 'send' })
+    // A password to several windows asks like any line, unless remembered.
+    expect(planSend({ ticked: few, line: 's3cret', hidden: true, remembered: signature(few) })).toEqual({ kind: 'send' })
     expect(planSend({ ticked: many, line: 's3cret', hidden: true, remembered: null })).toEqual({ kind: 'ask', disruptive: false, canRemember: true })
   })
 
@@ -99,7 +104,8 @@ describe('SendBar', () => {
     await user.click(screen.getByRole('checkbox', { name: /db-01 · not ready/ }))
     expect(screen.getByText('2 of 3 terminals ticked')).toBeTruthy()
     await user.type(screen.getByLabelText('Command'), 'uptime{Enter}')
-    expect(sendToTerminals).toHaveBeenCalledWith(['10', '11'], 'uptime', true, '', false)
+    await user.click(await screen.findByRole('button', { name: 'Send to 2' }))
+    await waitFor(() => expect(sendToTerminals).toHaveBeenCalledWith(['10', '11'], 'uptime', true, '', false))
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Sent → 2 terminals'))
     expect((screen.getByLabelText('Command') as HTMLTextAreaElement).value).toBe('')
     await user.type(screen.getByLabelText('Command'), '{ArrowUp}')
@@ -143,7 +149,8 @@ describe('SendBar', () => {
     await user.type(screen.getByLabelText('Hidden text', { selector: 'input' }), '{Enter}')
     expect(sendToTerminals).not.toHaveBeenCalled()
     await user.type(screen.getByLabelText('Hidden text', { selector: 'input' }), 's3cret{Enter}')
-    expect(sendToTerminals).toHaveBeenCalledWith(['10', '11', '12'], 's3cret', true, '', true)
+    await user.click(await screen.findByRole('button', { name: /^Send to / }))
+    await waitFor(() => expect(sendToTerminals).toHaveBeenCalledWith(['10', '11', '12'], 's3cret', true, '', true))
     // Still hidden: a retyped password can't go out in the clear.
     expect(screen.getByLabelText('Hidden text', { selector: 'input' })).toBeTruthy()
     await user.click(lock)
@@ -152,7 +159,7 @@ describe('SendBar', () => {
     expect((cmd as HTMLTextAreaElement).value).toBe('')
   })
 
-  it('asks before sending to more than 10 windows, showing the line, Cancel focused', async () => {
+  it('asks before sending to more than one window, showing the line, Cancel focused', async () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ id: String(i), host: `h${i}`, ready: true }))
     terminalWindows.mockResolvedValue({ supported: true, windows: many, keys: [] })
     const user = userEvent.setup()
@@ -189,6 +196,7 @@ describe('SendBar', () => {
     render(<SendBar />)
     await screen.findByText('web-01')
     await user.type(screen.getByLabelText('Command'), 'uptime{Enter}')
+    await user.click(await screen.findByRole('button', { name: /^Send to / }))
     const status = await screen.findByRole('status')
     await waitFor(() => expect(status.textContent).toMatch(/Not sent to 1/))
     expect(status.style.fontWeight).toBe('600')

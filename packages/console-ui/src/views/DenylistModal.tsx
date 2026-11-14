@@ -67,6 +67,11 @@ export interface DenylistModalProps {
   hosts: Host[]
 }
 
+function ruleText(rule: DenylistRule): string {
+  return `${rule.runnables.join(', ')} — users ${rule.users.join(', ')}; hosts ${rule.hosts.join(', ')}` +
+    (rule.reason ? ` — ${rule.reason}` : '')
+}
+
 export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
   const [targets, setTargets] = useState<string[]>([])
   const [runnableGlobs, setRunnableGlobs] = useState<string[]>([])
@@ -138,6 +143,9 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
   const consoleNameGlobs = badHostGlobs.filter(g => scopeNames.includes(g))
 
   const [askRisk, riskHolder] = useRiskConfirm()
+  // Every rule in the shown rows, "host/venv: rule", for the Clear ask.
+  const allRules = shownStatus.flatMap(r => (r.ok ? r.rules ?? [] : []).map(rule => `${r.host}/${r.venv}: ${ruleText(rule)}`))
+  const ruleCount = allRules.length
   const resultRef = useRef<HTMLDivElement>(null)
   const run = async (payload: DenylistPayload, label: string) => {
     setBusy(label)
@@ -168,9 +176,6 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
     label: h.group ? `${h.name} (${h.group})` : h.name,
   }))
 
-  const ruleText = (rule: DenylistRule): string =>
-    `${rule.runnables.join(', ')} — users ${rule.users.join(', ')}; hosts ${rule.hosts.join(', ')}` +
-    (rule.reason ? ` — ${rule.reason}` : '')
 
   // One line per rule, wrapped (never ellipsised — a long rule set stays fully
   // readable), each with its own remove button acting on exactly this venv.
@@ -277,14 +282,17 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
         </Button>
         <Text style={{ fontSize: 13 }}>on <strong>{scope}</strong></Text>
         <div style={{ flex: 1 }} />
-        <Button size="small" icon={<ReloadOutlined />} loading={busy === 'clear'}
+        {/* Undoes "Disable all" only: the other rules (a change freeze, say)
+            are someone's decision and stay. Clearing them is its own,
+            destructive, action below the table. */}
+        <Button size="small" icon={<CheckCircleOutlined />} loading={busy === 'enable'}
           onClick={async () => {
             const a = await askRisk({
-              level: 'fleet', title: `Clear the denylist on ${scope}?`,
-              action: 'Remove every deny rule and undo "Disable all".', targets: effectiveTargets,
-              consequence: 'Everything the denylist blocked can run again.', okText: 'Clear denylist',
+              level: 'fleet', title: `Re-enable runnables on ${scope}?`,
+              action: 'Undo "Disable all". Other deny rules stay.', targets: effectiveTargets,
+              consequence: 'Runnables the rules don\'t block can run again.', okText: 'Re-enable all',
             })
-            if (a.ok) await run({ action: 'clear' }, 'clear')
+            if (a.ok) await run({ action: 'enable' }, 'enable')
           }}>
           Re-enable all
         </Button>
@@ -293,7 +301,8 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
         <summary style={{ cursor: 'pointer' }}>How the denylist works</summary>
         <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 6 }}>
           It writes each host's venv denylist with the core <Text code>runspec deny</Text> over SSH. It stops the
-          <em> runnables</em> on those hosts, never this console, and Re-enable all always works. A host that is
+          <em> runnables</em> on those hosts, never this console, and Re-enable all always works (it undoes
+          Disable all; your other rules stay). A host that is
           disconnected right now isn't touched; reopen once it reconnects. Remote hosts need
           {' '}<Text code>runspec ≥ 0.43.0</Text>.
         </Text>
@@ -336,6 +345,25 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
         >
           Refresh status
         </Button>
+        {ruleCount > 0 && (
+          <Button size="small" danger icon={<DeleteOutlined />} loading={busy === 'clear'} onClick={async () => {
+            const a = await askRisk({
+              level: 'destructive', title: `Delete every deny rule on ${scope}?`,
+              action: (
+                <div>
+                  {allRules.slice(0, 8).map((l, i) => <div key={i}>{l}</div>)}
+                  {allRules.length > 8 && <div>and {allRules.length - 8} more</div>}
+                </div>
+              ),
+              targets: effectiveTargets, typeToConfirm: 'clear',
+              consequence: 'Everything they blocked can run again. The rules and their reasons are gone; add them again to restore them.',
+              okText: `Delete ${ruleCount} rule${ruleCount === 1 ? '' : 's'}`,
+            })
+            if (a.ok) await run({ action: 'clear' }, 'clear')
+          }}>
+            Clear every rule…
+          </Button>
+        )}
       </Space>
 
       <Divider style={{ margin: '8px 0' }} orientation="left" plain>

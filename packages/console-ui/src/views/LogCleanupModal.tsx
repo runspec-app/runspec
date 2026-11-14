@@ -16,6 +16,7 @@ import { retentionOff, retentionProblem } from './ProvisionModal'
 import { humanBytes } from './RunsIndexModal'
 import { fmtWhen, plural } from '../when'
 import { useRiskConfirm } from '../components/risk'
+import { HowItWorks } from '../components/kit'
 
 const { Text } = Typography
 
@@ -160,11 +161,11 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
     <Modal open width={620} onCancel={onClose} destroyOnHidden
       title={<span>Log cleanup · <span style={{ fontFamily: MONO_FONT }}>{host} / {group}</span></span>}
       footer={[<Button key="close" onClick={onClose}>Close</Button>]}>
-      <Text type="secondary" style={{ fontSize: 13 }}>
-        The venv's own cleanup rule for its <Text code>logs/</Text>. The venv owner's runs apply it at most once a day:
-        old run files are compressed into one archive per day, then deleted. Every change runs the venv's{' '}
-        <Text code>runspec logs retention</Text> as the venv owner and is recorded on its audit ledger.
-      </Text>
+      <HowItWorks summary="The venv's own rule for compressing and deleting old run logs, applied once a day.">
+        The venv owner's runs apply it at most once a day: old run files are compressed into one archive per day, then
+        deleted. Every change runs the venv's <Text code>runspec logs retention</Text> as the venv owner and is recorded
+        on its audit ledger. For a one-off pass with other numbers, use Clean up now on the venv.
+      </HowItWorks>
 
       <div style={{ marginTop: 14, minHeight: 60 }}>
         {loading && !info ? (

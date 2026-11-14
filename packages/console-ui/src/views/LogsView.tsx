@@ -1,10 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   Table, Typography, Button, Tooltip, message, Modal, Drawer,
-  Input, InputNumber, Switch, Form, Spin, Alert,
+  Input, InputNumber, Space, Form, Spin, Alert,
 } from 'antd'
 import {
-  ReloadOutlined, DeleteOutlined, InboxOutlined, EyeOutlined, FolderOutlined,
+  ReloadOutlined, DeleteOutlined, EyeOutlined, FolderOutlined,
   BarChartOutlined, ShareAltOutlined, DatabaseOutlined, ClearOutlined,
 } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
@@ -48,15 +48,15 @@ function humanSize(n: number | undefined): string {
 
 
 
-// ── maintenance modal (prune / compact) ──────────────────────────────────────
-
-type Verb = 'prune' | 'compact'
+// ── clean up now (one-off compress + delete) ─────────────────────────────────
+// One window for the one-off jobs that used to be two (Compact, Prune), in the
+// same words as the venv's log cleanup policy (LogCleanupModal): compress after,
+// delete after, keep at most. Nothing here is saved; the policy is.
 
 interface MaintTarget {
   host: string
   group: string
   runnable?: string   // undefined = whole venv
-  verb: Verb
 }
 
 interface MaintModalProps {
@@ -66,37 +66,36 @@ interface MaintModalProps {
   // parent refreshes that host's inventory — not whatever host the sidebar
   // happens to show now (which could differ if it was switched mid-modal).
   onApplied: (actedHost: string) => void
+  /** Open the venv's log cleanup policy instead (the standing version of this). */
+  onOpenPolicy?: (t: { host: string; group: string }) => void
 }
 
-function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
-  const [olderThan, setOlderThan] = useState('')
-  const [maxFiles, setMaxFiles] = useState<number | null>(null)
-  const [maxTotalSize, setMaxTotalSize] = useState('')
-  const [gzip, setGzip] = useState(true)
+/** What a one-off cleanup would do, from its fields. Pure, for tests. */
+export function cleanupPlan(f: { compressAfter: string; deleteAfter: string; keepFiles: number | null; keepSize: string }) {
+  const compress = f.compressAfter.trim()
+  const del = f.deleteAfter.trim() || f.keepFiles != null || f.keepSize.trim()
+  return { compress: !!compress, delete: !!del, any: !!compress || !!del }
+}
+
+export function CleanupNowModal({ target, onClose, onApplied, onOpenPolicy }: MaintModalProps) {
+  const [compressAfter, setCompressAfter] = useState('')
+  const [deleteAfter, setDeleteAfter] = useState('')
+  const [keepFiles, setKeepFiles] = useState<number | null>(null)
+  const [keepSize, setKeepSize] = useState('')
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<string | null>(null)
   // Surfaced *inside* the modal (not just a toast) so a failure — most often an
-  // older remote runspec that can't scope the prune — is visible next to the
+  // older remote runspec that can't scope the job — is visible next to the
   // button, instead of the modal appearing to "do nothing".
   const [error, setError] = useState<string | null>(null)
-  // Escalate the (destructive) action to the venv's owner via sudo — the fix for a
-  // service-account-owned venv the login user can't prune. Pre-filled with the
-  // owner (editable); blank = run as yourself. Not offered for the ~/logs scope
-  // (the operator's own dir — nothing to escalate).
+  // Run it as the venv's owner via sudo: a venv owned by a service account
+  // can't be cleaned by the login user. Pre-filled with the owner (editable);
+  // blank = yourself. Not offered for ~/logs (your own folder).
   const [runAs, setRunAs] = useState('')
 
-  // Reset form whenever a fresh target opens the modal, and pre-fill "Run as" with
-  // the venv owner when it differs from the login user (so escalation is actually
-  // needed).
   useEffect(() => {
-    setOlderThan(target?.verb === 'compact' ? '7d' : '')
-    setMaxFiles(null)
-    setMaxTotalSize('')
-    setGzip(true)
-    setPreview(null)
-    setError(null)
-    setBusy(false)
-    setRunAs('')
+    setCompressAfter(''); setDeleteAfter(''); setKeepFiles(null); setKeepSize('')
+    setPreview(null); setError(null); setBusy(false); setRunAs('')
     if (!target || target.group === '~/logs') return
     let cancelled = false
     // Promise.resolve tolerates a mock/proxy returning a non-promise.
@@ -110,146 +109,112 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
   const [askRisk, riskHolder] = useRiskConfirm()
 
   if (!target) return null
-  const { host, group, runnable, verb } = target
+  const { host, group, runnable } = target
   const isHome = group === '~/logs'
-
   const scopeLabel = runnable ? `${group}/${runnable}` : `${group} (all runnables)`
-  const hasPolicy = verb === 'compact'
-    ? olderThan.trim().length > 0
-    : (olderThan.trim().length > 0 || maxFiles != null || maxTotalSize.trim().length > 0)
+  const plan = cleanupPlan({ compressAfter, deleteAfter, keepFiles, keepSize })
+  const as = runAs.trim() || undefined
 
-  // Apply runs the same pass dry first and shows what it would do. Deleting
-  // logs can't be undone (the ladder's destructive level: type the venv's
-  // name); compacting keeps the data in archives (fleet level).
+  // Both passes, dry or real: compress first (what's compressed is still
+  // there), then delete. Returns the lines describing what happened.
+  const pass = async (dryRun: boolean): Promise<{ lines: string[]; compressed: number; deleted: number } | null> => {
+    const lines: string[] = []
+    let compressed = 0, deleted = 0
+    if (plan.compress) {
+      const r = await bridge.logs_compact(host, group, runnable, compressAfter.trim(), true, dryRun, as)
+      if (!r.ok) { setError(r.error || 'Compressing failed.'); return null }
+      compressed = r.compacted ?? 0
+      if (compressed) lines.push(`${dryRun ? 'Compress' : 'Compressed'} ${plural(compressed, 'run file')} into ${plural(r.archives?.length ?? 0, 'archive')}`)
+    }
+    if (plan.delete) {
+      const r = await bridge.logs_prune(host, group, runnable, deleteAfter.trim() || undefined, keepFiles ?? undefined, keepSize.trim() || undefined, dryRun, as)
+      if (!r.ok) { setError(r.error || 'Deleting failed.'); return null }
+      deleted = r.count ?? 0
+      if (deleted) lines.push(`${dryRun ? 'Delete' : 'Deleted'} ${plural(deleted, 'file')} (${humanSize(r.freed_bytes)} freed)`)
+    }
+    return { lines, compressed, deleted }
+  }
+
+  const doPreview = async () => {
+    setBusy(true); setError(null); setPreview(null)
+    try {
+      const r = await pass(true)
+      if (r) setPreview(r.lines.length ? `Right now it would: ${r.lines.join('; ').toLowerCase()}.` : 'Nothing matches, so there is nothing to do.')
+    } catch (e) { setError(String(e)) } finally { setBusy(false) }
+  }
+
+  // Apply previews first and shows exactly what goes. Deleting can't be undone
+  // (destructive: type the name); compressing only keeps the data in archives
+  // (fleet).
   const apply = async () => {
     setBusy(true); setError(null); setPreview(null)
-    let line = ''
-    let n = 0
-    try {
-      if (verb === 'prune') {
-        const r = await bridge.logs_prune(host, group, runnable, olderThan.trim() || undefined, maxFiles ?? undefined, maxTotalSize.trim() || undefined, true, runAs.trim() || undefined)
-        if (!r.ok) { setError(r.error || 'Prune failed.'); return }
-        n = r.count ?? 0
-        line = `Delete ${plural(n, 'file')} (${humanSize(r.freed_bytes)} freed)`
-      } else {
-        const r = await bridge.logs_compact(host, group, runnable, olderThan.trim() || undefined, gzip, true, runAs.trim() || undefined)
-        if (!r.ok) { setError(r.error || 'Compact failed.'); return }
-        n = r.compacted ?? 0
-        line = `Roll ${plural(n, 'file')} into ${plural(r.archives?.length ?? 0, 'archive')}`
-      }
-    } catch (e) { setError(String(e)); return } finally { setBusy(false) }
-    if (!n) { setPreview('Nothing matches, so there is nothing to do.'); return }
+    let dry: Awaited<ReturnType<typeof pass>>
+    try { dry = await pass(true) } catch (e) { setError(String(e)); setBusy(false); return }
+    setBusy(false)
+    if (!dry) return
+    if (!dry.lines.length) { setPreview('Nothing matches, so there is nothing to do.'); return }
+    const deleting = dry.deleted > 0
     const a = await askRisk({
-      level: verb === 'prune' ? 'destructive' : 'fleet',
-      title: verb === 'prune' ? `Delete logs in ${scopeLabel}?` : `Compact logs in ${scopeLabel}?`,
-      action: line,
+      level: deleting ? 'destructive' : 'fleet',
+      title: `Clean up the logs of ${scopeLabel} now?`,
+      action: dry.lines.join('\n'),
       targets: [`${host} / ${group}`],
-      consequence: verb === 'prune' ? 'Deleted run files are gone from History.' : 'The files stay readable inside the archives.',
-      typeToConfirm: verb === 'prune' ? (runnable || group) : undefined,
-      okText: verb === 'prune' ? 'Delete' : 'Compact',
+      consequence: deleting ? 'Deleted run files are gone from History.' : 'The files stay readable inside the archives.',
+      typeToConfirm: deleting ? (runnable || group) : undefined,
+      okText: deleting ? 'Delete' : 'Compress',
     })
-    if (a.ok) await run(false)
+    if (!a.ok) return
+    setBusy(true)
+    try {
+      const r = await pass(false)
+      if (r) { message.success(r.lines.join('; ') || 'Done'); onApplied(host); onClose() }
+    } catch (e) { setError(String(e)) } finally { setBusy(false) }
   }
 
-  const run = async (dryRun: boolean) => {
-    setBusy(true)
-    setError(null)
-    setPreview(null)
-    try {
-      if (verb === 'prune') {
-        const r = await bridge.logs_prune(host, group, runnable, olderThan.trim() || undefined, maxFiles ?? undefined, maxTotalSize.trim() || undefined, dryRun, runAs.trim() || undefined)
-        if (!r.ok) { setError(r.error || 'Prune failed.'); return }
-        if (dryRun) {
-          setPreview(`${plural(r.count ?? 0, 'file')} would be deleted — ${humanSize(r.freed_bytes)} freed.`)
-        } else {
-          message.success(`Deleted ${plural(r.count ?? 0, 'file')} — ${humanSize(r.freed_bytes)} freed`)
-          onApplied(host); onClose()
-        }
-      } else {
-        const r = await bridge.logs_compact(host, group, runnable, olderThan.trim() || undefined, gzip, dryRun, runAs.trim() || undefined)
-        if (!r.ok) { setError(r.error || 'Compact failed.'); return }
-        if (dryRun) {
-          setPreview(`${plural(r.compacted ?? 0, 'file')} would roll into ${plural(r.archives?.length ?? 0, 'archive')}.`)
-        } else {
-          message.success(`Compacted ${plural(r.compacted ?? 0, 'file')} into ${plural(r.archives?.length ?? 0, 'archive')}`)
-          onApplied(host); onClose()
-        }
-      }
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const row = (label: string, help: string, input: ReactNode) => (
+    <Form.Item label={label} help={help} style={{ marginBottom: 14 }}>{input}</Form.Item>
+  )
 
   return (
     <Modal
       open
-      title={verb === 'prune' ? 'Prune logs' : 'Compact logs'}
+      title={<span>Clean up now · <span style={{ fontFamily: MONO_FONT }}>{host} / {scopeLabel}</span></span>}
       onCancel={onClose}
       footer={[
         <Button key="cancel" onClick={onClose} disabled={busy}>Cancel</Button>,
-        <Button key="preview" onClick={() => run(true)} loading={busy} disabled={!hasPolicy}>
-          Preview (dry-run)
-        </Button>,
-        <Tooltip key="apply" title={hasPolicy ? '' : 'Set an age, a count or a size above first'}>
-          <Button type="primary" danger={verb === 'prune'} disabled={!hasPolicy || busy} onClick={() => { void apply() }}>
-            Apply…
-          </Button>
+        <Button key="preview" onClick={() => { void doPreview() }} loading={busy} disabled={!plan.any}>Preview</Button>,
+        <Tooltip key="apply" title={plan.any ? '' : 'Fill in at least one field first'}>
+          <Button type="primary" disabled={!plan.any || busy} onClick={() => { void apply() }}>Apply…</Button>
         </Tooltip>,
       ]}
     >
       {riskHolder}
       <Text type="secondary" style={{ fontSize: 13 }}>
-        Target: <Text code>{scopeLabel}</Text> on <Text code>{host}</Text>
+        A one-off pass; nothing here is saved.
+        {!isHome && onOpenPolicy && (
+          <> To do this every day, set the venv's <Button type="link" size="small" style={{ padding: 0, height: 'auto' }}
+            onClick={() => { onClose(); onOpenPolicy({ host, group }) }}>log cleanup policy</Button>.</>
+        )}
       </Text>
       <Form layout="vertical" style={{ marginTop: 16 }}>
-        <Form.Item
-          label="Older than"
-          help={verb === 'compact' ? 'Required — e.g. 7d, 24h, 2w' : 'e.g. 90d (optional if another policy is set)'}
-          required={verb === 'compact'}
-          style={{ marginBottom: 16 }}
-        >
-          <Input value={olderThan} onChange={e => setOlderThan(e.target.value)} placeholder="7d" style={{ maxWidth: 160 }} />
-        </Form.Item>
-
-        {verb === 'compact' ? (
-          <Form.Item label="Gzip archive" style={{ marginBottom: 8 }}>
-            <Switch checked={gzip} onChange={setGzip} />
-          </Form.Item>
-        ) : (
-          <>
-            <Form.Item label="Keep newest N files" help="Per runnable (optional)" style={{ marginBottom: 16 }}>
-              <InputNumber value={maxFiles} onChange={v => setMaxFiles(v)} min={0} placeholder="50" style={{ width: 160 }} />
-            </Form.Item>
-            <Form.Item label="Max total size" help="Delete oldest over budget — e.g. 5GB (optional)" style={{ marginBottom: 16 }}>
-              <Input value={maxTotalSize} onChange={e => setMaxTotalSize(e.target.value)} placeholder="5GB" style={{ maxWidth: 160 }} />
-            </Form.Item>
-          </>
-        )}
-
-        {!isHome && (
-          <Form.Item
-            label="Run as"
-            help="For the group share: escalate to this OS user via sudo (pre-filled with the venv's owner). The inbox always runs as the owner."
-            style={{ marginBottom: 8 }}
-          >
-            <Input value={runAs} onChange={e => setRunAs(e.target.value)} placeholder="(yourself)" style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
-          </Form.Item>
-        )}
+        {row('Compress after', 'Run files older than this go into a gzip archive, one per day. e.g. 7d', (
+          <Input aria-label="Compress after" value={compressAfter} onChange={e => setCompressAfter(e.target.value)} placeholder="7d" style={{ maxWidth: 160, fontFamily: MONO_FONT }} />
+        ))}
+        {row('Delete after', 'Run files and archives older than this are deleted. e.g. 90d', (
+          <Input aria-label="Delete after" value={deleteAfter} onChange={e => setDeleteAfter(e.target.value)} placeholder="90d" style={{ maxWidth: 160, fontFamily: MONO_FONT }} />
+        ))}
+        {row('Keep at most', 'Then the oldest are deleted until it fits: a number of files per runnable, a size, or both.', (
+          <Space>
+            <InputNumber aria-label="Keep at most files" value={keepFiles} onChange={v => setKeepFiles(v)} min={0} placeholder="50" style={{ width: 110 }} addonAfter="files" />
+            <Input aria-label="Keep at most size" value={keepSize} onChange={e => setKeepSize(e.target.value)} placeholder="5GB" style={{ width: 110, fontFamily: MONO_FONT }} />
+          </Space>
+        ))}
+        {!isHome && row('Run as', "Pre-filled with the venv's owner, who can change its logs. Blank = yourself.", (
+          <Input aria-label="Run as" value={runAs} onChange={e => setRunAs(e.target.value)} placeholder="(yourself)" style={{ maxWidth: 200, fontFamily: MONO_FONT }} />
+        ))}
       </Form>
-
-      {preview && (
-        <Alert type="info" showIcon style={{ marginTop: 8 }} message={preview} />
-      )}
-      {error && (
-        <Alert type="error" showIcon style={{ marginTop: 8 }} message={error} />
-      )}
-      {!hasPolicy && (
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {verb === 'compact' ? 'Set an age threshold to continue.' : 'Set at least one policy to continue.'}
-        </Text>
-      )}
+      {preview && <Alert type="info" showIcon style={{ marginTop: 8 }} message={preview} />}
+      {error && <Alert type="error" showIcon style={{ marginTop: 8 }} message={error} />}
     </Modal>
   )
 }
@@ -399,24 +364,23 @@ function StreamDrawer({ target, onClose }: { target: ViewTarget | null; onClose:
 // A venv's actions: the cleanup policy is what the operator comes here for, the
 // runs index sits beside it, and the one-off jobs (make shared, compact, prune)
 // wait behind More, so Prune is never one stray click from the main action.
-function VenvActions({ group, home, onShare, onIndex, onCleanup, onCompact, onPrune }: {
+function VenvActions({ group, home, onShare, onIndex, onCleanup, onCleanNow }: {
   group: string
   home: boolean
-  onShare: () => void; onIndex: () => void; onCleanup: () => void; onCompact: () => void; onPrune: () => void
+  onShare: () => void; onIndex: () => void; onCleanup: () => void; onCleanNow: () => void
 }) {
   const cleanup: RowAction = {
     key: 'cleanup', label: 'Log cleanup…', icon: <ClearOutlined />, onClick: onCleanup,
-    tip: "This venv's log cleanup policy: compress and delete old runs automatically (runspec 0.80.0+). View, change, preview or apply it.",
+    tip: "This venv's log cleanup policy: compress and delete old runs every day (runspec 0.80.0+). View, change, preview or apply it.",
   }
   const index: RowAction = {
     key: 'index', label: 'Runs index…', icon: <DatabaseOutlined />, onClick: onIndex,
-    tip: "Inspect and maintain this dir's runs index (runspec_runs.db) — the fast History read: prune, reap orphans, reindex",
+    tip: "The list of runs History reads: inspect it, remove old rows, mark lost runs crashed or rebuild it",
   }
   const more: RowAction[] = []
   if (!home) more.push({ key: 'share', label: 'Make shared…', icon: <ShareAltOutlined />, onClick: onShare })
   more.push(
-    { key: 'compact', label: 'Compact…', icon: <InboxOutlined />, onClick: onCompact },
-    { key: 'prune', label: 'Prune…', icon: <DeleteOutlined />, danger: true, onClick: onPrune },
+    { key: 'clean', label: 'Clean up now…', icon: <DeleteOutlined />, danger: true, onClick: onCleanNow },
   )
   return home
     ? <RowActions primary={index} more={more} testId={`venv-actions-${group}`} />
@@ -515,10 +479,8 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
         <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
           <IconAction label={`View ${r.runnable} log`} tip="View the merged log" icon={<EyeOutlined />}
             onClick={() => setViewTarget({ host, group: v.group, runnable: r.runnable })} />
-          <RowActions more={[
-            { key: 'compact', label: 'Compact…', icon: <InboxOutlined />, onClick: () => setMaintTarget({ host, group: v.group, runnable: r.runnable, verb: 'compact' }) },
-            { key: 'prune', label: 'Prune…', icon: <DeleteOutlined />, danger: true, onClick: () => setMaintTarget({ host, group: v.group, runnable: r.runnable, verb: 'prune' }) },
-          ]} />
+          <IconAction label={`Clean up ${r.runnable} logs now`} tip="Clean up now: compress or delete this runnable's old runs" icon={<DeleteOutlined />}
+            onClick={() => setMaintTarget({ host, group: v.group, runnable: r.runnable })} />
         </div>
       ),
     },
@@ -567,8 +529,7 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
                 onShare={() => setShareTarget({ host, venv: v.group })}
                 onIndex={() => setIndexTarget({ host, group: v.group })}
                 onCleanup={() => setCleanupTarget({ host, group: v.group })}
-                onCompact={() => setMaintTarget({ host, group: v.group, verb: 'compact' })}
-                onPrune={() => setMaintTarget({ host, group: v.group, verb: 'prune' })}
+                onCleanNow={() => setMaintTarget({ host, group: v.group })}
               />}
             </div>
             {v.ok && (
@@ -587,9 +548,10 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
         ))
       )}
 
-      <MaintenanceModal
+      <CleanupNowModal
         target={maintTarget}
         onClose={() => setMaintTarget(null)}
+        onOpenPolicy={t => setCleanupTarget(t)}
         // Refresh only when the host that was acted on is still the one in view,
         // so a mid-modal host switch can't paint the acted host's inventory under
         // a different host's title.

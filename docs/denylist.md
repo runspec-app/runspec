@@ -127,7 +127,10 @@ fleet over the SSH connections it already holds — one call per venv on each ho
 - **The Denylist button (the no-entry icon) at the bottom of the hosts panel, or Ctrl+K → Denylist** — a modal scoped to
   the hosts *connected right now* in the active profile (greyed out until the
   fleet sweep has settled). It opens on **Disable all runnables** (with
-  **Re-enable all** set apart, and how it works folded away underneath), then a
+  **Re-enable all** set apart, and how it works folded away underneath). Re-enable
+  all only undoes *Disable all*: the other rules stay. Deleting every rule is
+  **Clear every rule…** under the table, which lists the rules and asks you to
+  type `clear`. Then a
   host picker (empty ⇒ every connected host), an
   *add specific rule* form (runnable / user / host globs + reason), and an
   enforcement-mode toggle (`enforce`/`warn`/`off`). Anything that blocks

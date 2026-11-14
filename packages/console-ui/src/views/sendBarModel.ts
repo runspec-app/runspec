@@ -5,12 +5,15 @@
 import type { SendToTerminalsResult, TerminalWindow } from '../bridge'
 
 /** Sending to more windows than this asks first (the risk ladder's fleet
- *  level). The person may tick "don't ask again" for that set of windows. */
-export const CONFIRM_OVER = 10
+ *  level): any send that reaches more than one window. The person may tick
+ *  "don't ask again" for exactly that set of windows. */
+export const CONFIRM_OVER = 1
 
 // Lines and keys that stop, remove or end something: the command word at the
 // start of the line or after ; & | (, optionally behind sudo. These ask every
-// time they go to more than one window, whatever was remembered.
+// time they go to more than one window, whatever was remembered. The pattern
+// is only a hint for that: it is not the gate (a line it misses, `sed -i` say,
+// still asks unless you said not to for this set).
 const DISRUPTIVE_LINE = /(^\s*|[;&|(]\s*)(sudo\s+(-\S+\s+)*)?(rm|rmdir|reboot|shutdown|halt|poweroff|kill|pkill|killall|mkfs(\.\w+)?|dd|truncate|userdel|groupdel|wipefs|shred|init\s+[06]|systemctl\s+(stop|restart|disable|mask|kill|reboot|poweroff|halt)|service\s+\S+\s+(stop|restart)|docker\s+(rm|stop|kill|system\s+prune)|kubectl\s+delete|iptables\s+-F|drop\s+(table|database)|chmod\s+-R|chown\s+-R|mv|apt(-get)?\s+(remove|purge|autoremove)|(yum|dnf)\s+(remove|erase)|pip3?\s+uninstall|crontab\s+-r)(?=$|[\s;&|)])/i
 const DISRUPTIVE_KEYS = new Set(['ctrl-c', 'ctrl-d'])
 
@@ -40,6 +43,9 @@ export function planSend(opts: {
   }
   const disruptive = key ? DISRUPTIVE_KEYS.has(key) : DISRUPTIVE_LINE.test(line)
   if (disruptive && ticked.length > 1) return { kind: 'ask', disruptive: true, canRemember: false }
+  // Moving around (Tab, arrows, Enter, Esc) goes without asking: only a line
+  // or hidden text carries a command.
+  if (key) return { kind: 'send' }
   if (ticked.length > over && signature(ticked) !== remembered) return { kind: 'ask', disruptive: false, canRemember: true }
   return { kind: 'send' }
 }

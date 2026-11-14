@@ -9,6 +9,57 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.438.0] — 2026-11-14
+
+### Fixed
+
+- **Re-enable all no longer deletes your deny rules.** In the Denylist window it
+  ran `clear`, which also removed unrelated rules such as a change freeze. It
+  now only undoes "Disable all". Deleting every rule is a separate **Clear
+  every rule…**, which lists each rule and its reason and asks you to type
+  "clear".
+
+### Changed
+
+- **Nothing skips the confirmation any more; "don't ask again" replaces the
+  shortcuts.** You answer once and tick "don't ask again", which holds for that
+  action on that exact set of targets. Settings → Notifications shows how many
+  answers are remembered and can forget them.
+  - A saved run or a runnable with nothing to fill in asks first, naming where
+    it runs. A runnable marked autonomous still runs on click.
+  - Files: Shift-drag no longer copies without the dialog. The dialog can
+    remember plain copies between two places.
+  - Schedules' **Run now** and the run inbox's **Stop** ask first.
+  - Send to terminals asks for any line or hidden text going to more than one
+    window. The disruptive-command pattern now only decides whether "don't ask
+    again" is offered. Moving keys (Tab, arrows, Enter) still go at once.
+- **One way to clean up logs.** A venv's ⋯ menu and each runnable's row have
+  one **Clean up now…** window in place of Compact and Prune. It uses the log
+  cleanup policy's words (compress after, delete after, keep at most) and
+  previews what it would do before you confirm. The runs index's maintenance
+  folds away under **Maintenance**, in plain words: Remove rows, Mark lost runs
+  crashed, Rebuild index, File other accounts' runs.
+- **Confirmations match the risk.**
+  - Removing a repo whose checkout is in the app's data folder now asks you to
+    type its name: the assistant's edits there are never pushed.
+  - Deprovision asks you to type the venv's full path, not just its name.
+  - Marketplace's button says Update, Install, Install or update, or Reinstall,
+    to match the ticked venvs.
+  - Settings → Hosts leads with Add host. Import, Export and Deprovision venv
+    sit under More. Generate new key is quieter than Rotate key.
+- **Accessibility.**
+  - Table filter buttons, page arrows, alert close buttons and input clear
+    buttons have names.
+  - Nav tabs say their badge in words ("Console, 2 runs in progress").
+  - Forms' connection dot is named.
+  - The runs index's refresh button is named.
+  - The SSH key-age warning uses the theme's warning style; it was 4:1 on dark.
+- **Less to read.** Env files and Log cleanup open with one line and fold the
+  rest under "How this works". The Repos tab's code-graph tip is two lines.
+- **The brand colour stays on identity.** Forms cards no longer hover in the
+  brand colour, runbook and saved-run cards drop their fixed purple and cyan,
+  and Schedules' argument names are the neutral text.
+
 ## [0.437.0] — 2026-11-14
 
 ### Fixed

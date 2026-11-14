@@ -17,7 +17,7 @@ import {
   type DragPayload, type PaneTarget, type Side,
 } from './filesModel'
 import { StatusTag } from '../../components/kit'
-import { useRiskConfirm } from '../../components/risk'
+import { consentKey, hasConsent, rememberConsent, useRiskConfirm } from '../../components/risk'
 
 const { Text } = Typography
 const RAIL_KEY = 'runspec.files.rail'
@@ -138,11 +138,18 @@ export function FilesView({ hosts, selectedHost, active }: {
     }
   }
 
-  const onDrop = (to: Side) => (payload: DragPayload, shift: boolean) => {
+  // The dialog is the confirmation. It's skipped only for a plain copy between
+  // two places you ticked "don't ask again" for.
+  const copyConsent = (pd: PendingDrop) => {
+    const a = panes[pd.from].target, b = panes[pd.to].target
+    return a && b ? consentKey('copy', [`from:${targetKey(a)}`, `to:${targetKey(b)}`]) : ''
+  }
+  const onDrop = (to: Side) => (payload: DragPayload) => {
     const pd = { from: payload.side, to, paths: payload.paths }
     if (!pd.paths.length) { message.info('Only files can be copied for now, not folders.'); return }
     if (!panes[to].listing) { message.error('Open a folder in that pane first'); return }
-    if (shift) {
+    const key = copyConsent(pd)
+    if (key && hasConsent(key)) {
       startCopy(pd, { filter: '', filterArg: '', destName: '', alsoTo: [], saveAsTransfer: false })
       return
     }
@@ -155,7 +162,7 @@ export function FilesView({ hosts, selectedHost, active }: {
   const selectedPaths = selectedFiles.map(e => joinPath(fp.listing!.cwd, e.name))
   const copySelected = () => {
     if (!selectedPaths.length) return
-    onDrop(otherSide(focused))({ side: focused, paths: selectedPaths }, false)
+    onDrop(otherSide(focused))({ side: focused, paths: selectedPaths })
   }
   const saveSelected = () => {
     const other = panes[otherSide(focused)]
@@ -202,7 +209,7 @@ export function FilesView({ hosts, selectedHost, active }: {
           <Button size="small" icon={<EyeOutlined />} disabled={!canView} onClick={() => setViewing({ side: focused, path: selectedPaths[0] })}>View</Button>
         </Tooltip>
         <div style={{ flex: 1 }} />
-        <Text type="secondary" style={{ fontSize: 12 }}>Drag files between the panes to copy. Hold Shift to copy without the dialog.</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>Drag files between the panes to copy.</Text>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: rail ? '250px minmax(0,1fr)' : 'minmax(0,1fr)' }}>
@@ -290,7 +297,11 @@ export function FilesView({ hosts, selectedHost, active }: {
           srcAs={panes[drop.from].asUser}
           dstAs={panes[drop.to].asUser}
           onCancel={() => setDrop(null)}
-          onCopy={choice => { const pd = drop; setDrop(null); startCopy(pd, choice) }}
+          onCopy={choice => {
+            const pd = drop; setDrop(null)
+            if (choice.remember) { const key = copyConsent(pd); if (key) rememberConsent(key) }
+            startCopy(pd, choice)
+          }}
         />
       )}
       {viewing && panes[viewing.side].target && (

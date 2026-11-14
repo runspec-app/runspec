@@ -3,7 +3,7 @@
  * hint, and the host picker on a card found on several hosts.
  */
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 
 import { FormsView } from './FormsView'
 import { FeaturesContext } from '../features'
@@ -101,9 +101,11 @@ describe('Forms → search across the profile', () => {
     expect((onRun.mock.calls[0][4] as Runnable[]).map(t => t.host)).toEqual(['web-01', 'web-02'])
   })
 
-  it('a card on one host runs there directly', () => {
+  it('a card on one host asks first, then runs there', async () => {
     const onRun = renderForms()
     fireEvent.click(screen.getByText('uptime'))
-    expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ host: 'local' }), {}, [])
+    expect(onRun).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByTestId('risk-ok'))
+    await waitFor(() => expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ host: 'local' }), {}, []))
   })
 })

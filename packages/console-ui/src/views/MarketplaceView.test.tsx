@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress, parseSearch, targetFilter, countUpdates, groupByHost, filterHostGroups, tickMatches, hostSummary, targetStatus, statusCounts, lastLine } from './MarketplaceView'
+import { MarketplaceView, cmpVersion, targetStates, filterEntries, defaultRunAs, opLabel, opOutcome, applyProgress, parseSearch, targetFilter, countUpdates, groupByHost, filterHostGroups, tickMatches, installVerb, hostSummary, targetStatus, statusCounts, lastLine } from './MarketplaceView'
 import type { MarketplaceEntry, MarketplaceInstalled, MarketplaceInstalledTarget, MarketplaceOpRecord } from '../bridge'
 
 const { catalog, installed, install, uninstall, cancel, opRec, opsList } = vi.hoisted(() => ({
@@ -271,7 +271,7 @@ describe('MarketplaceView', () => {
     expect(boxes.map(b => (b as HTMLInputElement).checked)).toEqual([false, true])  // local absent, web-01 outdated
     // run-as pre-filled from the venv owner (svc ≠ ops).
     expect(within(dialog).getByDisplayValue('svc')).toBeTruthy()
-    await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Install runspec-linux on 1 venv$/ })) })
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Update runspec-linux on 1 venv$/ })) })
     await waitFor(() => expect(install).toHaveBeenCalled())
     expect(install.mock.calls[0][0]).toEqual({
       package: 'runspec-linux', upgrade: true, reinstall: false, repo: 'pypi', upgrade_runspec: false,
@@ -304,7 +304,7 @@ describe('MarketplaceView', () => {
     await act(async () => { await user.click(screen.getByRole('button', { name: /Update…/ })) })
     const dialog = await screen.findByRole('dialog')
     await act(async () => { await user.click(within(dialog).getByRole('switch', { name: 'Also upgrade runspec' })) })
-    await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Install runspec-linux on 1 venv$/ })) })
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Update runspec-linux on 1 venv$/ })) })
     await waitFor(() => expect(install).toHaveBeenCalled())
     expect(install.mock.calls[0][0].upgrade_runspec).toBe(true)
   })
@@ -470,7 +470,7 @@ describe('MarketplaceView', () => {
     await act(async () => { await user.type(within(dialog).getByPlaceholderText('Filter host, group or venv'), 'h3') })
     expect(within(dialog).getAllByRole('checkbox')).toHaveLength(3)  // h3 + its two venvs
     await act(async () => { await user.click(within(dialog).getByRole('checkbox', { name: 'h3 a' })) })
-    await act(async () => { await user.click(within(dialog).getByRole('button', { name: /Install runspec-linux on 6 venvs$/ })) })
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: /(Install|Update|Install or update) runspec-linux on 6 venvs$/ })) })
     await waitFor(() => expect(install).toHaveBeenCalled())
     expect(install.mock.calls[0][0].targets.map((t: { id: string }) => t.id).sort()).toEqual(
       ['h2::/opt/b', 'h3::/opt/a', 'h3::/opt/b', 'h4::/opt/b', 'h5::/opt/b', 'h6::/opt/b'])
@@ -518,5 +518,14 @@ describe('op helpers', () => {
     expect(statusCounts(ts)).toEqual({ ok: 1, failed: 1, running: 1, queued: 2, skipped: 1 })
     expect(lastLine({ ...base, lines: ['Collecting x', 'Installing y', '  '] })).toBe('Installing y')
     expect(lastLine({ ...base, lines: [], summary: 'skipped: no pip' })).toBe('skipped: no pip')
+  })
+})
+
+describe('installVerb', () => {
+  it('says what the button does to the ticked venvs', () => {
+    expect(installVerb([true, true], false)).toBe('Update')
+    expect(installVerb([false], false)).toBe('Install')
+    expect(installVerb([true, false], false)).toBe('Install or update')
+    expect(installVerb([true], true)).toBe('Reinstall')
   })
 })

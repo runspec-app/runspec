@@ -4,6 +4,7 @@ import { StopOutlined } from '@ant-design/icons'
 import { type RunCard } from '../bridge'
 import { useIsDark, textColor, textMuted, MONO_FONT, RADIUS } from '../ThemeContext'
 import { Markdown } from './Markdown'
+import { AskFirst } from './risk'
 import { ChatTranscript, StructuredOutput, parseOutput, transcriptToText, type BlockSegment } from './OutputPanel'
 import { StatusBadge, CopyButton, fmtTime, COLUMN_COLOR, RUNNING_STATUSES } from './runShared'
 
@@ -134,12 +135,18 @@ export function RunInbox({
                 {card.detail?.owner ? <span style={{ color: dim }}>· owner {String(card.detail.owner)}</span> : null}
                 <span style={{ color: dim, fontFamily: MONO_FONT, marginLeft: 'auto' }}>{fmtTime(card.created_at)}</span>
                 {onStop && RUNNING_STATUSES.has(card.column) && (
-                  <Button
-                    size="small" danger icon={<StopOutlined />}
-                    onClick={() => { onStop(card.card_id); message.info('Stopping run…') }}
+                  // Asks like the Console's Stop does; neutral until then
+                  // (the danger colour is for the confirm button).
+                  <AskFirst
+                    ask={{
+                      level: 'local', title: 'Stop this run?', action: `${card.trigger} · ${card.source}:${card.event_type}`,
+                      consequence: 'It stops where it is; anything it already changed stays changed.',
+                      okText: 'Stop run', cancelText: 'Keep running',
+                    }}
+                    onConfirm={() => { onStop(card.card_id); message.info('Stopping run…') }}
                   >
-                    Stop
-                  </Button>
+                    <Button size="small" icon={<StopOutlined />}>Stop</Button>
+                  </AskFirst>
                 )}
               </div>
 

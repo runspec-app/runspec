@@ -53,7 +53,7 @@ describe('RunsIndexModal', () => {
   it('reaps as the pre-filled venv owner and reloads stats', async () => {
     render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
     await waitFor(() => expect((screen.getByPlaceholderText('(yourself)') as HTMLInputElement).value).toBe('svc'))
-    fireEvent.click(screen.getByRole('button', { name: /Reap orphans/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Mark lost runs crashed/ }))
     await waitFor(() => expect(maintain).toHaveBeenCalledWith('web-01', 'ops-tools', 'reap', undefined, undefined, 'svc'))
     await waitFor(() => expect(stats).toHaveBeenCalledTimes(2))
   })
@@ -61,10 +61,10 @@ describe('RunsIndexModal', () => {
   it('disables prune until a policy is set', async () => {
     render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
     await screen.findByText('/opt/venvs/ops-tools/logs/runspec_runs.db')
-    const prune = screen.getByRole('button', { name: /Prune/ }) as HTMLButtonElement
+    const prune = screen.getByRole('button', { name: /Remove rows/ }) as HTMLButtonElement
     expect(prune.disabled).toBe(true)
     fireEvent.change(screen.getByLabelText('older than'), { target: { value: '30d' } })
-    expect((screen.getByRole('button', { name: /Prune/ }) as HTMLButtonElement).disabled).toBe(false)
+    expect((screen.getByRole('button', { name: /Remove rows/ }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('rejects an age it cannot use, keeping prune disabled', async () => {
@@ -73,7 +73,7 @@ describe('RunsIndexModal', () => {
     fireEvent.change(screen.getByLabelText('older than'), { target: { value: 'older than 3 days' } })
     expect(screen.getByText(/Use a number plus a unit/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('max rows'), { target: { value: '500' } })
-    expect((screen.getByRole('button', { name: /Prune/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /Remove rows/ }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('prunes with both limits after confirming', async () => {
@@ -82,7 +82,7 @@ describe('RunsIndexModal', () => {
     await waitFor(() => expect((screen.getByPlaceholderText('(yourself)') as HTMLInputElement).value).toBe('svc'))
     fireEvent.change(screen.getByLabelText('older than'), { target: { value: '3d' } })
     fireEvent.change(screen.getByLabelText('max rows'), { target: { value: '1000' } })
-    fireEvent.click(screen.getByRole('button', { name: /Prune/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Remove rows/ }))
     expect((await screen.findByTestId('risk-action')).textContent).toMatch(/older than 3 days, then all but the newest 1,000/)
     fireEvent.click(screen.getByTestId('risk-ok'))
     await waitFor(() => expect(maintain).toHaveBeenCalledWith('web-01', 'ops-tools', 'prune', '3d', 1000, 'svc'))
@@ -92,7 +92,7 @@ describe('RunsIndexModal', () => {
     maintain.mockResolvedValue({ ok: false, group: 'ops-tools', error: 'needs runspec >= 0.62.0' })
     render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
     await screen.findByText('/opt/venvs/ops-tools/logs/runspec_runs.db')
-    fireEvent.click(screen.getByRole('button', { name: /Reindex/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Rebuild index/ }))
     expect(await screen.findByText('needs runspec >= 0.62.0')).toBeTruthy()
   })
 
@@ -127,13 +127,13 @@ describe('logs inbox', () => {
     maintain.mockResolvedValue({ ok: true, group: 'ops-tools', verb: 'sweep', count: 2, as_user: 'svc' })
     render(<RunsIndexModal target={TARGET} onClose={() => {}} />)
     expect(await screen.findByText('2 pending files, 2 awaiting sweep')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /Sweep inbox/ }))
+    fireEvent.click(screen.getByRole('button', { name: /File other accounts/ }))
     await waitFor(() => expect(maintain).toHaveBeenCalledWith('web-01', 'ops-tools', 'sweep', undefined, undefined, 'svc'))
   })
 
   it('offers no sweep for ~/logs', async () => {
     render(<RunsIndexModal target={{ host: 'web-01', group: '~/logs' }} onClose={() => {}} />)
     await screen.findByText('/opt/venvs/ops-tools/logs/runspec_runs.db')
-    expect(screen.queryByRole('button', { name: /Sweep inbox/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /File other accounts/ })).toBeNull()
   })
 })
