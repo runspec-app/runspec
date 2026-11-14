@@ -222,9 +222,10 @@ system  = {type = "flag", default = false, description = "With --manager supervi
 # The daemon listens on [hooks] port when [hooks] enabled = true (on either
 # backend). Apps POST to {base_path}/hook/<name>; each request is checked
 # (token or basic auth), spooled in {venv}/hooks/spool.sqlite, matched against
-# the hook's rules, and either run here (autonomous runnables), held for an
-# approval from a console (confirm/supervised), refused (manual) or passed to
-# the consoles following this venv as an event. Hooks live in
+# the hook's rules, and either run here (setting up the hook is the approval,
+# whatever the runnable's autonomy), held for an approval from a console (a
+# hook or rule with require_approval = true), refused (manual) or passed to the
+# consoles following this venv as an event. Hooks live in
 # runspec_scheduler.toml ([[hook]], written by `hooks save`) and in
 # {config dir}/hooks.d/*.toml (deployed, e.g. by Ansible; those win).
 [runspec-scheduler.commands.hooks]

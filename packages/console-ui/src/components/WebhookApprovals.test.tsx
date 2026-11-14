@@ -18,7 +18,7 @@ vi.mock('antd', async (orig) => {
   return { ...real, message: { ...real.message, info, error: vi.fn(), open: vi.fn(), destroy: vi.fn() } }
 })
 
-import { WebhookApprovals, SHOWN_AT_ONCE } from './WebhookApprovals'
+import { WebhookApprovals, SHOWN_AT_ONCE, approvalWhy } from './WebhookApprovals'
 
 const d = (id: number, patch: Partial<WebhookDelivery> = {}): WebhookDelivery => ({
   id, hook: 'alerts', received: new Date(Date.now() - 120_000).toISOString(), source: '10.2.4.17', state: 'pending',
@@ -32,6 +32,17 @@ const venv = (open: WebhookDelivery[]): WebhookVenv => ({
 const status = (open: WebhookDelivery[]): WebhooksStatus => ({ configured: true, away: '', venvs: [venv(open)], follows: {} })
 
 beforeEach(() => { decide.mockReset(); dismiss.mockReset(); info.mockReset() })
+
+describe('approvalWhy', () => {
+  it('names the hook when it asked for the approval, whatever the level', () => {
+    expect(approvalWhy({ autonomy: 'autonomous', reason: 'the hook asks for an approval' })).toBe('This hook asks for a person to approve each run.')
+    expect(approvalWhy({ autonomy: 'confirm', reason: 'the hook asks for an approval' })).toBe('This hook asks for a person to approve each run.')
+  })
+  it("falls back to the runnable's level (runspec-scheduler 0.11.0)", () => {
+    expect(approvalWhy({ autonomy: 'confirm', reason: 'demo needs an approval (confirm)' })).toBe('The runnable asks for approval before it runs.')
+    expect(approvalWhy({ autonomy: 'autonomous', reason: '' })).toBe('')
+  })
+})
 
 describe('WebhookApprovals', () => {
   it('renders nothing when nothing waits', () => {

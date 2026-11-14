@@ -2,6 +2,22 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.12.0] — 2026-11-14
+
+### Changed
+
+- **Setting up a webhook is the approval.** A hook now runs whatever its
+  rules pick without asking each time, like a host schedule or an emitted
+  Rundeck job: `autonomous`, `confirm` and `supervised` runnables all run at
+  once (0.11.0 held confirm/supervised ones for `hooks approve`). What a sender
+  can make it do is still limited by the hook's rules, fixed templates and
+  token. `manual` runnables are still refused, also when the hook asks for an
+  approval.
+- `require_approval = true` on a hook or rule now holds every run for a person
+  to approve, whatever the runnable's level. A delivery's `autonomy` stays the
+  runnable's own level (0.11.0 showed `confirm` for a raised autonomous one).
+- `hooks test` / `deliveries` say "runs at once" (no "(autonomous)").
+
 ## [0.11.0] — 2026-11-14
 
 ### Added

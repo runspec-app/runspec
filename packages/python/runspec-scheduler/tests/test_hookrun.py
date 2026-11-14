@@ -47,7 +47,7 @@ def alerts_hook(**over: Any) -> hc.Hook:
         "rule": [
             {"name": "resolved", "match": {"status": "^resolved$"}, "skip": True},
             {"name": "safe", "match": {"alertname": "^(?P<kind>Disk)"}, "run": "demo", "args": {"marker": "{{ kind | lower }}", "host": "{{ instance | regex('^([^:]+)', 1) }}"}},
-            {"name": "careful", "match": {"alertname": "^Careful"}, "run": "demo", "args": {"careful": "{{ alertname }}"}},
+            {"name": "careful", "match": {"alertname": "^Careful"}, "run": "demo", "args": {"careful": "{{ alertname }}"}, "require_approval": True},
         ],
     }
     raw.update(over)
@@ -90,6 +90,9 @@ def test_dry_run_bad_body_and_empty_split() -> None:
 
 
 def test_manual_and_unknown_are_refused() -> None:
+    # manual stays refused even when the hook asks for an approval
+    hook = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "args": {"reckless": "yes"}, "require_approval": True})
+    assert hookrun.plan_item(hook, {}, resolve=fake_resolve).state == sp.REFUSED
     hook = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "args": {"reckless": "yes"}})
     plan = hookrun.plan_item(hook, {}, resolve=fake_resolve)
     assert plan.state == sp.REFUSED and "manual" in plan.reason
@@ -98,10 +101,20 @@ def test_manual_and_unknown_are_refused() -> None:
     assert plan.state == sp.REFUSED and "isn't installed" in plan.reason
 
 
-def test_require_approval_raises_autonomous() -> None:
+def test_setting_up_the_hook_is_the_approval() -> None:
+    # A confirm (or supervised) runnable runs like an autonomous one: the
+    # hook's rules and token are what a person agreed to.
+    hook = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "args": {"careful": "yes"}})
+    plan = hookrun.plan_item(hook, {}, resolve=fake_resolve)
+    assert (plan.state, plan.autonomy, plan.reason) == (sp.WAITING, "confirm", "")
+
+
+def test_require_approval_waits_whatever_the_level() -> None:
     hook = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "require_approval": True})
     plan = hookrun.plan_item(hook, {}, resolve=fake_resolve)
-    assert (plan.state, plan.autonomy) == (sp.PENDING, "confirm")
+    assert (plan.state, plan.autonomy, plan.reason) == (sp.PENDING, "autonomous", "the hook asks for an approval")
+    careful = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "run": "demo", "args": {"careful": "yes"}, "require_approval": True})
+    assert hookrun.plan_item(careful, {}, resolve=fake_resolve).state == sp.PENDING
     rule_level = hc.parse_hook({"name": "h", "token_sha256": TOKEN_SHA, "rule": [{"run": "demo", "require_approval": True}]})
     assert hookrun.plan_item(rule_level, {}, resolve=fake_resolve).state == sp.PENDING
 

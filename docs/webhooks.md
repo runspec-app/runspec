@@ -4,17 +4,23 @@ A webhook lets another system start a runnable on a host: Alertmanager when an
 alert fires, GitLab when a pipeline finishes, a ticketing tool when a request is
 approved. The sending app makes one HTTP `POST`; the venv's
 [runspec-scheduler](shared-schedules.md) daemon checks it, works out what to
-run, and either runs it straight away or holds it for a person to approve on
-runspec-console.
+run, and runs it straight away (or, if you ask for it, holds it for a person to
+approve on runspec-console).
 
 The rules are the same as everywhere else in runspec:
 
 - Only runnables installed in **that venv** can run, as the venv owner, recorded
   in History like any other run (label `hook:<name>`, run by *webhook*).
-- A runnable's `autonomy` decides what happens: **autonomous** runs at once,
-  **confirm** and **supervised** wait for an approval, **manual** is refused.
-  An arg that declares a stricter level raises the call, exactly as in the
-  console.
+- **Setting up a hook is the approval.** Like a host schedule or an emitted
+  Rundeck job, a hook runs whatever its rules pick without asking each time:
+  **autonomous**, **confirm** and **supervised** runnables all run at once.
+  What a sender can make it do is limited by the hook's rules, its fixed
+  templates and its token.
+- **manual** runnables are always refused (an arg that declares `manual`
+  counts, as in the console): only a person runs them.
+- `require_approval = true` on a hook or a rule makes each of its runs wait for
+  a person to approve it on a console. Use it for hooks fed by input from
+  outside your team, such as a ticket anyone can raise.
 - The denylist applies.
 - Values from the body reach the runnable as `RUNSPEC_<RUNNABLE>_ARG_<NAME>`
   environment variables, never on its command line.
@@ -28,11 +34,12 @@ The rules are the same as everywhere else in runspec:
    request, so a slow run never makes the sender wait or retry.
 3. The daemon picks out the fields it was told to, finds the first rule that
    matches, fills in the args and works out the autonomy:
-    - **autonomous**: runs it now (up to `max_runs` at once);
-    - **confirm / supervised**: waits for an approval on a console (or
-      `hooks approve` on the host). The first approval wins; the daemon runs it
-      and records who approved it. A denial settles it for everyone;
     - **manual**: refused;
+    - **`require_approval`** on the hook or rule: waits for an approval on a
+      console (or `hooks approve` on the host). The first approval wins; the
+      daemon runs it and records who approved it. A denial settles it for
+      everyone;
+    - anything else: runs it now (up to `max_runs` at once);
     - a rule with `skip = true`, or no matching rule: recorded, nothing runs;
     - a rule with no `run`: shown on the consoles following the venv, nothing runs.
 4. Consoles following the venv see every step as it happens
@@ -130,11 +137,11 @@ password: you choose it and only its hash is kept.
 | `rule` | `[[hook.rule]]` tables, tried in order; the first match wins |
 | `run`, `command`, `args` | A rule for when no other matches |
 | `dedup` | A template; a delivery with the same text within `dedup_window` (10m) is counted on the first one instead of running again |
-| `require_approval` | Always wait for a person, even for an autonomous runnable |
+| `require_approval` | Wait for a person to approve each run (by default a hook runs without asking) |
 | `approve_within`, `expect_claim_within` | Per-hook versions of the `[hooks]` settings |
 | `email_to` | Who gets this hook's approval mail (default: `[smtp] to`) |
 | `max_running` | Runs of this hook at once (default 1) |
-| `skip_if_running` | Skip an autonomous delivery while the last run is still going |
+| `skip_if_running` | Skip a delivery that would run at once while the last run is still going |
 | `timeout` | Kill a run after this long (default 6h) |
 | `rate_per_minute` | This hook's own limit (default `[hooks] rate_per_minute`) |
 | `transform` | A runnable that turns an awkward body into fields (see below) |
@@ -192,7 +199,7 @@ echo '{"hook": {"name": "alerts", "fields": {}}, "body": null}' | bin/runspec-sc
 alerts with stdin:
 
 Item 1
-  outcome:  runs at once (autonomous)
+  outcome:  runs at once
   rule:     disk
   runs:     cleanup-tmp
   autonomy: autonomous

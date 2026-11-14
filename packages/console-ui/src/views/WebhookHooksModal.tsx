@@ -29,6 +29,9 @@ name = "new-hook"
 description = "What sends this, and what it's for"
 # Fields read from the body (dotted paths): usable in match and args.
 fields = { status = "status" }
+# Saving the hook is the approval: its runs go ahead without asking (manual
+# runnables are always refused). For a person to approve each run, add:
+# require_approval = true
 
 [[hook.rule]]
 name = "default"

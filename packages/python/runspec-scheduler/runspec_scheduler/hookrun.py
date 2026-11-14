@@ -13,9 +13,11 @@ daemon's hook worker then, for each queued delivery:
 4. drops a repeat (same ``dedup`` key within ``dedup_window``): a waiting
    approval counts the copies instead;
 5. works out the run's autonomy like the console's gate does — the runnable's
-   (or its command's) level, raised by any arg that declares a stricter one:
-   ``autonomous`` runs now; ``confirm``/``supervised`` waits for someone to
-   approve it on a console (``hooks approve``); ``manual`` is refused.
+   (or its command's) level, raised by any arg that declares a stricter one.
+   Setting up the hook is the approval, as for a host schedule: anything but
+   ``manual`` runs now; ``manual`` is refused. A hook or rule with
+   ``require_approval = true`` waits for someone to approve each run on a
+   console (``hooks approve``) instead.
 
 Runs go through ``runspec exec`` (:mod:`.hookexec`) as the venv owner, label
 ``hook:<name>``, trigger ``webhook`` (``webhook:approved`` after an approval),
@@ -55,7 +57,6 @@ logger = logging.getLogger("runspec_scheduler.hooks")
 #: never the ones that carry credentials.
 _SECRET_HEADERS = {"authorization", "cookie", "proxy-authorization", "x-runspec-token"}
 
-AUTONOMY_RANK = {"autonomous": 0, "supervised": 1, "confirm": 2, "manual": 3}
 
 #: Variables the daemon's own process has that a run mustn't inherit.
 _DROP_ENV = (
@@ -181,17 +182,16 @@ def _rule_plan(hook: Hook, rule: Rule, plan: Plan, fields: dict[str, Any], resol
     if problem:
         plan.state, plan.reason = sp.REFUSED, problem
         return plan
-    if (hook.require_approval or rule.require_approval) and AUTONOMY_RANK.get(autonomy, 2) < AUTONOMY_RANK["confirm"]:
-        autonomy = "confirm"
-        plan.reason = "the hook asks for an approval"
     plan.autonomy = autonomy
     if autonomy == "manual":
         plan.state, plan.reason = sp.REFUSED, f"{rule.run} is manual: only a person runs it, never a webhook"
-    elif autonomy == "autonomous":
-        plan.state = sp.WAITING
+    elif hook.require_approval or rule.require_approval:
+        # Opt-in per hook or rule: a person approves each run. Otherwise
+        # setting up the hook was the approval (like a host schedule), so
+        # confirm/supervised runnables run as autonomous ones do.
+        plan.state, plan.reason = sp.PENDING, "the hook asks for an approval"
     else:
-        plan.state = sp.PENDING
-        plan.reason = plan.reason or f"{rule.run} needs an approval ({autonomy})"
+        plan.state = sp.WAITING
     return plan
 
 
@@ -634,7 +634,8 @@ class HookWorker:
             return
         self._runs[row["id"]] = _Run(delivery=row["id"], hook=hook.name, proc=proc, started=time.time())
         self.spool.update(row["id"], state=sp.RUNNING, started_ts=time.time(), pid=proc.pid)
-        logger.info("webhook %s delivery %d: running %s (%s)", hook.name, row["id"], row["runnable"], "approved by " + row["decided_by"] if approved else "autonomous")
+        how = "approved by " + row["decided_by"] if approved else f"{row.get('autonomy') or 'autonomous'}, set up by the hook"
+        logger.info("webhook %s delivery %d: running %s (%s)", hook.name, row["id"], row["runnable"], how)
 
     def reap(self) -> None:
         for delivery, run in list(self._runs.items()):

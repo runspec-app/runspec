@@ -85,6 +85,13 @@ def config(venv: Path, port: int) -> str:
     match = {{ alertname = "^Careful" }}
     run = "demo"
     args = {{ careful = "{{{{ alertname }}}}", marker = "{marks}/careful" }}
+    require_approval = true
+
+    [[hook.rule]]
+    name = "trusted"
+    match = {{ alertname = "^Trusted" }}
+    run = "demo"
+    args = {{ careful = "{{{{ alertname }}}}", marker = "{marks}/trusted" }}
 
     [[hook.rule]]
     name = "never"
@@ -150,19 +157,23 @@ def test_webhook_end_to_end(venv: Any) -> None:
                 {"status": "firing", "labels": {"alertname": "CarefulThing"}},
                 {"status": "resolved", "labels": {"alertname": "DiskFull"}},
                 {"status": "firing", "labels": {"alertname": "RecklessThing"}},
+                {"status": "firing", "labels": {"alertname": "TrustedThing"}},
             ]
         },
     )
     assert status == 202 and json.loads(text)["status"] == "queued"
 
-    # the autonomous item runs at once, recorded like any run
+    # the autonomous item runs at once, recorded like any run; so does a
+    # confirm one (setting up the hook is the approval)
     pe.wait_for(lambda: (path / "marks" / "disk").exists(), 30, what="the autonomous run")
+    pe.wait_for(lambda: (path / "marks" / "trusted").exists(), 30, what="the confirm run")
     runs = pe.wait_for(lambda: [r for r in hook_runs(path) if r.get("status") != "running"], 30, what="the run row")
     assert runs[0]["runnable"] == "demo" and runs[0]["exit_code"] == 0
 
     listing = pe.wait_for(lambda: [d for d in verb(path, "hooks", "deliveries")["deliveries"] if d["state"] not in ("queued", "running", "waiting")] or None, 20, what="planned deliveries")
     by_rule = {d["rule"]: d for d in verb(path, "hooks", "deliveries")["deliveries"]}
     assert by_rule["careful"]["state"] == "pending" and by_rule["careful"]["autonomy"] == "confirm"
+    assert by_rule["trusted"]["state"] in ("running", "ran") and by_rule["trusted"]["autonomy"] == "confirm"
     assert by_rule["resolved"]["state"] == "skipped"
     assert by_rule["never"]["state"] == "refused" and "manual" in by_rule["never"]["reason"]
     assert listing

@@ -1,7 +1,8 @@
 /**
  * WebhookApprovals — the cards at the top of the Console for webhook deliveries
- * a host's runspec-scheduler is holding for a person (a hook rule whose run is
- * `confirm` / `supervised`, or `require_approval`).
+ * a host's runspec-scheduler is holding for a person: a hook or rule with
+ * `require_approval = true` (from runspec-scheduler 0.12.0 a hook otherwise
+ * runs without asking; 0.11.0 also held `confirm` / `supervised` runnables).
  *
  * Each card says which hook, on which host and venv, what it wants to run and
  * the fields it was sent, and takes one decision. The first decision on any
@@ -31,6 +32,14 @@ export const SHOWN_AT_ONCE = 3
 const AUTONOMY_WHY: Record<string, string> = {
   confirm: 'The runnable asks for approval before it runs.',
   supervised: 'The runnable asks for approval before it runs (supervised).',
+}
+
+/** Why this delivery waits for a person: the hook asked for it
+ *  (`require_approval`), or, on runspec-scheduler 0.11.0, the runnable's own
+ *  `confirm` / `supervised` level. */
+export function approvalWhy(d: Pick<WebhookDelivery, 'autonomy' | 'reason'>): string {
+  if ((d.reason || '').includes('the hook asks for an approval')) return 'This hook asks for a person to approve each run.'
+  return AUTONOMY_WHY[d.autonomy] || ''
 }
 
 export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; d: WebhookDelivery; now?: number }) {
@@ -112,7 +121,7 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
             display: 'block', fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark), whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             background: 'var(--rs-surface-sunken)', borderRadius: RADIUS.sm, padding: '6px 8px',
           }}>{line}</code>
-          {AUTONOMY_WHY[d.autonomy] && <div style={{ fontSize: 12, color: textMuted(isDark), marginTop: 2 }}>{AUTONOMY_WHY[d.autonomy]}</div>}
+          {approvalWhy(d) && <div style={{ fontSize: 12, color: textMuted(isDark), marginTop: 2 }}>{approvalWhy(d)}</div>}
         </div>
       ) : (
         <div style={{ fontSize: 13, color: textSecondary(isDark) }}>{d.reason || 'This hook asks for approval before it does anything.'}</div>
