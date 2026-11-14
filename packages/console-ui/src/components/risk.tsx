@@ -50,6 +50,9 @@ export interface RiskAsk {
   typeToConfirm?: string
   /** Offer "don't ask again" with this label (fleet only). */
   rememberLabel?: string
+  /** The Cancel button's words, when "Cancel" would be ambiguous (e.g. for
+   *  "Stop this run?": "Keep running"). */
+  cancelText?: string
   /** OK in the danger colour (the default). False for an ask that doesn't
    *  remove or stop anything ("Discard and reload" isn't danger; "Delete" is). */
   danger?: boolean
@@ -65,9 +68,14 @@ export function targetList(targets: string[], shown = SHOWN_TARGETS): string {
   return `${targets.slice(0, shown).join(', ')} and ${targets.length - shown} more`
 }
 
-/** What a destructive ask makes you type. */
+/** What a destructive ask makes you type: the word given, else the one
+ *  target's name, else the number of targets (never a bare "1", which is
+ *  typed by reflex). */
 export function confirmWord(ask: RiskAsk): string {
-  return ask.typeToConfirm ?? String(ask.targets?.length ?? 1)
+  if (ask.typeToConfirm) return ask.typeToConfirm
+  const t = ask.targets ?? []
+  if (t.length === 1) return t[0]
+  return t.length ? String(t.length) : 'delete'
 }
 
 function RiskDialog({ ask, cover, onDone }: { ask: RiskAsk; cover: boolean; onDone: (a: RiskAnswer) => void }) {
@@ -100,7 +108,7 @@ function RiskDialog({ ask, cover, onDone }: { ask: RiskAsk; cover: boolean; onDo
   )
   const footer = (
     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-      <Button ref={cancelRef} onClick={cancel}>Cancel</Button>
+      <Button ref={cancelRef} onClick={cancel}>{ask.cancelText ?? 'Cancel'}</Button>
       <Button type="primary" danger={ask.danger !== false} disabled={!ready} data-testid="risk-ok"
         onClick={() => onDone({ ok: true, remember })}>
         {ask.okText}

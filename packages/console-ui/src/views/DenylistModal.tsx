@@ -270,22 +270,34 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
       title={<span><StopOutlined style={{ marginRight: 8 }} />Denylist — fleet kill switch</span>}
       destroyOnHidden
     >
-      <Alert
-        type="warning"
-        showIcon
-        icon={<WarningOutlined />}
-        style={{ marginBottom: 12 }}
-        message="Kill switch"
-        description={
-          <Text type="secondary" style={{ fontSize: 13 }}>
-            Disable or re-enable runspec runnables on <strong>{scopeLabel}</strong> of the
-            active profile. This writes each host's venv denylist via the core <Text code>runspec deny</Text> over SSH —
-            it stops the <em>runnables</em> on those hosts, never this console, and
-            “Re-enable all” always works. A host that is disconnected right now is not touched; reopen once it
-            reconnects. Remote hosts need <Text code>runspec ≥ 0.43.0</Text>.
-          </Text>
-        }
-      />
+      {/* The emergency action first; how it works folds away underneath. */}
+      <div data-testid="kill-switch" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+        <Button type="primary" danger icon={<StopOutlined />} loading={busy === 'all'} onClick={disableAll}>
+          Disable all runnables
+        </Button>
+        <Text style={{ fontSize: 13 }}>on <strong>{scope}</strong></Text>
+        <div style={{ flex: 1 }} />
+        <Button size="small" icon={<ReloadOutlined />} loading={busy === 'clear'}
+          onClick={async () => {
+            const a = await askRisk({
+              level: 'fleet', title: `Clear the denylist on ${scope}?`,
+              action: 'Remove every deny rule and undo "Disable all".', targets: effectiveTargets,
+              consequence: 'Everything the denylist blocked can run again.', okText: 'Clear denylist',
+            })
+            if (a.ok) await run({ action: 'clear' }, 'clear')
+          }}>
+          Re-enable all
+        </Button>
+      </div>
+      <details style={{ marginBottom: 12, fontSize: 13 }}>
+        <summary style={{ cursor: 'pointer' }}>How the denylist works</summary>
+        <Text type="secondary" style={{ fontSize: 13, display: 'block', marginTop: 6 }}>
+          It writes each host's venv denylist with the core <Text code>runspec deny</Text> over SSH. It stops the
+          <em> runnables</em> on those hosts, never this console, and Re-enable all always works. A host that is
+          disconnected right now isn't touched; reopen once it reconnects. Remote hosts need
+          {' '}<Text code>runspec ≥ 0.43.0</Text>.
+        </Text>
+      </details>
 
       <div style={{ marginBottom: 8 }}>
         <Text style={{ fontSize: 13 }}>Target hosts</Text>
@@ -295,7 +307,7 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
           allowClear
           size="small"
           style={{ width: '100%', marginTop: 4 }}
-          placeholder={`Apply to all in scope — ${scopeLabel} (leave empty for every one)`}
+          placeholder={`Every connected host (${scopeLabel}), or pick some`}
           value={targets}
           onChange={setTargets}
           options={hostOptions}
@@ -323,20 +335,6 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
           onClick={refresh}
         >
           Refresh status
-        </Button>
-        <Button size="small" danger icon={<StopOutlined />} loading={busy === 'all'} onClick={disableAll}>
-          Disable all
-        </Button>
-        <Button size="small" icon={<ReloadOutlined />} loading={busy === 'clear'}
-          onClick={async () => {
-            const a = await askRisk({
-              level: 'fleet', title: `Clear the denylist on ${scope}?`,
-              action: 'Remove every deny rule and undo "Disable all".', targets: effectiveTargets,
-              consequence: 'Everything the denylist blocked can run again.', okText: 'Clear denylist',
-            })
-            if (a.ok) await run({ action: 'clear' }, 'clear')
-          }}>
-          Re-enable all
         </Button>
       </Space>
 

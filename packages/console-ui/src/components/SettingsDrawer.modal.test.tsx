@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import { SettingsDrawer, SettingsTabBar, groupSettingsTabs, matchSettingsTab } from './SettingsDrawer'
+import { SettingsDrawer, SettingsTabBar, elsewhere, groupSettingsTabs, matchSettingsTab } from './SettingsDrawer'
 
 vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
@@ -58,6 +58,12 @@ describe('Settings search', () => {
     expect(onSelect).toHaveBeenCalledWith('telemetry')
     fireEvent.change(box, { target: { value: 'zzzz' } })
     expect(screen.getByText('No section matches.')).toBeTruthy()
+  })
+
+  it('points to features that live outside Settings', () => {
+    expect(elsewhere('denylist')).toMatch(/hosts list/)
+    expect(elsewhere('kill')).toMatch(/kill switch/)
+    expect(elsewhere('zzzz')).toBeNull()
   })
 
   it('matches every word against the name and the keywords', () => {

@@ -162,7 +162,8 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 
   if (inFlight.length === 0) return null
 
-  // Theme surfaces, not a fixed green: "running" is the accent everywhere else.
+  // Theme surfaces, not a fixed green. Running is motion in the neutral ink;
+  // colour is kept for waiting-for-you and failed (the brand is identity only).
   const bg     = 'var(--rs-surface-raised)'
   const border = 'var(--rs-border)'
   const nameCol = textColor(isDark)
@@ -185,7 +186,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
         const isTool = r.kind === 'builtin_tool'
         return (
         <span key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 12 }} spin />
+          <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 12 }} spin />
           <Text style={{ fontFamily: MONO_FONT, fontSize: 13, color: nameCol }}>{isTool ? r.runnable : `/${r.runnable}`}</Text>
           {isTool && (
             <StatusTag tone="info">agent</StatusTag>
@@ -198,13 +199,16 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
           {r.host && <Tag style={{ fontSize: 12, margin: 0 }}>{r.host}</Tag>}
           {r.group && <Text style={{ fontSize: 12, fontFamily: MONO_FONT, color: 'var(--rs-text-muted)' }}>{r.group}</Text>}
           <Text type="secondary" style={{ fontSize: 12 }}>{r.operator}</Text>
-          <Text style={{ fontSize: 12, color: 'var(--rs-accent)', fontFamily: MONO_FONT }}>{elapsed(r.startedAt)}</Text>
+          <Text style={{ fontSize: 12, color: 'var(--rs-text-secondary)', fontFamily: MONO_FONT }}>{elapsed(r.startedAt)}</Text>
           <IconAction label={`Cancel ${isTool ? r.runnable : '/' + r.runnable}`} icon={<CloseOutlined style={{ fontSize: 11 }} />}
-            danger style={{ padding: '0 4px', height: 18, lineHeight: 1 }}
+            // Neutral: the danger colour is for the confirm button, not for
+            // every running job's × (a console full of red ×s looked mid-incident).
+            style={{ padding: '0 4px', height: 18, lineHeight: 1 }}
             onClick={async () => {
               const a = await askRisk({
-                level: 'local', title: 'Cancel this run?', action: `${isTool ? r.runnable : '/' + r.runnable}${r.host ? ` on ${r.host}` : ''}`,
-                consequence: 'It stops where it is; anything it already changed stays changed.', okText: 'Cancel run',
+                level: 'local', title: 'Stop this run?', action: `${isTool ? r.runnable : '/' + r.runnable}${r.host ? ` on ${r.host}` : ''}`,
+                consequence: 'It stops where it is; anything it already changed stays changed.',
+                okText: 'Stop run', cancelText: 'Keep running',
               })
               if (a.ok) handleCancel(r.id)
             }} />

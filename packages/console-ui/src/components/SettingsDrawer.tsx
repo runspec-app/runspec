@@ -1315,8 +1315,9 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
                     targets: allRemoteHosts.length > 0 ? allRemoteHosts : undefined,
                     consequence: (
                       <>
-                        The current key is backed up and replaced immediately. Hosts not yet given the new
-                        public key will refuse this machine until you add it to each one by hand.
+                        The current key is moved to a backup file and a new one takes its place at once. Hosts
+                        not yet given the new public key will refuse this machine until you add it to each one
+                        by hand; that lockout is what you can't undo from here.
                         Use <strong>Rotate key</strong> instead if your remote hosts are reachable.
                       </>
                     ),
@@ -3853,7 +3854,18 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
             <Button aria-label={`Edit ${c.label}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(c)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             <Button aria-label={`Remove ${c.label}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger
               onClick={async () => {
-                const a = await askRisk({ level: 'local', title: `Remove ${c.label}?`, action: c.label, okText: 'Remove' })
+                // Say what stops working: the runnables and features that read it.
+                const use = guide?.usage[c.id]
+                const users = [
+                  ...(use?.runnables ?? []).map(r => `${r.name} (${r.hosts.length === 1 ? r.hosts[0] : `${r.hosts.length} hosts`})`),
+                  ...(use?.features ?? []).map(f => f.feature),
+                ]
+                const a = await askRisk({
+                  level: 'local', title: `Remove ${c.label}?`, action: c.label, okText: 'Remove',
+                  consequence: users.length
+                    ? `Its secret is deleted from the keychain, and these stop getting it: ${users.join(', ')}.`
+                    : 'Its secret is deleted from the keychain. Nothing uses it now.',
+                })
                 if (a.ok) remove(c.id)
               }} />
           </div>
@@ -6333,7 +6345,7 @@ export function McpTab() {
 
       <Space size="large" style={{ marginBottom: 12 }} wrap>
         <Space>
-          <Switch size="small" checked={sectionEnabled} onChange={v => { setSectionEnabled(v); persist(servers, v) }} />
+          <Switch size="small" aria-label="Enable external MCP servers" checked={sectionEnabled} onChange={v => { setSectionEnabled(v); persist(servers, v) }} />
           <Text style={{ fontSize: 13 }}>Enable external MCP servers</Text>
         </Space>
         <Space>
@@ -6949,6 +6961,22 @@ const SETTINGS_KEYWORDS: Record<string, string> = {
   telemetry: 'opentelemetry otel traces metrics langsmith phoenix grafana',
 }
 
+// Things people look for in Settings that live elsewhere: the search says
+// where instead of "No section matches".
+const ELSEWHERE: { words: string[]; where: string }[] = [
+  { words: ['denylist', 'deny', 'kill switch', 'block', 'disable all'], where: 'The denylist (kill switch) is the ⊘ button under the hosts list, or Ctrl+K → Denylist.' },
+  { words: ['env', 'env file', 'runspec_env', 'environment'], where: 'Env files is the button under the hosts list.' },
+  { words: ['terminal', 'putty', 'send to terminals'], where: 'Open SSH terminals is on a host’s right-click menu; Send to terminals is in Ctrl+K.' },
+  { words: ['log cleanup', 'retention', 'prune', 'runs index'], where: 'Log cleanup and the runs index are in History → Log files.' },
+]
+
+/** Where a feature lives when it isn't in Settings, or null. Pure, for tests. */
+export function elsewhere(query: string): string | null {
+  const q = query.trim().toLowerCase()
+  if (!q) return null
+  return ELSEWHERE.find(e => e.words.some(w => w.includes(q) || q.includes(w)))?.where ?? null
+}
+
 /** Whether a Settings section matches a search: its name or what it holds,
  *  every word. Pure, for tests. */
 export function matchSettingsTab(item: { key: string; label: ReactNode }, query: string): boolean {
@@ -6976,7 +7004,9 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
         onPressEnter={() => { if (shown[0]) onSelect(shown[0].key) }}
       />
       {shown.length === 0 && (
-        <div style={{ fontSize: 13, color: textMuted(isDark) }}>No section matches.</div>
+        <div style={{ fontSize: 13, color: textMuted(isDark) }}>
+          {elsewhere(query) ?? 'No section matches.'}
+        </div>
       )}
       <div role="tablist" aria-label="Settings sections" aria-orientation="vertical" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {groupSettingsTabs(shown).map(group => (

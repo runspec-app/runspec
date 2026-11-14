@@ -63,20 +63,25 @@ describe('DeprovisionModal', () => {
     api.deprovision_start.mockReset().mockResolvedValue({ op: 'op1', hosts: ['web-01'] })
   })
 
-  it('requires the typed venv name before Delete', async () => {
+  it('asks through the shared dialog, typing the venv name, before Delete', async () => {
     const user = userEvent.setup()
     render(<DeprovisionModal open initialTargets={[{ host: 'web-01', runspec_path: RP }]} onClose={() => {}} />)
     await waitFor(() => expect(api.deprovision_preview).toHaveBeenCalledWith({ targets: [{ host: 'web-01', runspec_path: RP }] }))
     expect(await screen.findByText(/may be used by your schedules/)).toBeTruthy()
 
-    const del = () => screen.getByRole('button', { name: /Delete on 1 host/ }) as HTMLButtonElement
-    expect(del().disabled).toBe(true)
-    await user.type(screen.getByLabelText('Confirm venv name'), 'op')
-    expect(del().disabled).toBe(true)
-    await user.type(screen.getByLabelText('Confirm venv name'), 's')
-    expect(del().disabled).toBe(false)
+    await user.click(screen.getByRole('button', { name: /Delete on 1 host/ }))
+    expect(api.deprovision_start).not.toHaveBeenCalled()
+    const ok = await screen.findByTestId('risk-ok') as HTMLButtonElement
+    expect(ok.disabled).toBe(true)
+    // The field is empty: no placeholder giving the answer away.
+    const field = screen.getByLabelText('Type ops to confirm') as HTMLInputElement
+    expect(field.placeholder).toBe('')
+    await user.type(field, 'op')
+    expect(ok.disabled).toBe(true)
+    await user.type(field, 's')
+    expect(ok.disabled).toBe(false)
 
-    await user.click(del())
+    await user.click(ok)
     expect(api.deprovision_start).toHaveBeenCalledWith({
       targets: [{ host: 'web-01', runspec_path: RP }],
       confirm: 'ops',
@@ -101,8 +106,9 @@ describe('DeprovisionModal', () => {
     render(<DeprovisionModal open initialTargets={[{ host: 'web-01', runspec_path: RP }]} onClose={() => {}} />)
     await user.click(await screen.findByRole('checkbox', { name: /Keep logs/ }))
     expect(await screen.findByText(/and its logs will be deleted/)).toBeTruthy()
-    await user.type(screen.getByLabelText('Confirm venv name'), 'ops')
     await user.click(screen.getByRole('button', { name: /Delete on 1 host/ }))
+    await user.type(await screen.findByLabelText('Type ops to confirm'), 'ops')
+    await user.click(screen.getByTestId('risk-ok'))
     expect(api.deprovision_start).toHaveBeenCalledWith(expect.objectContaining({ keep_logs: false }))
   })
 
