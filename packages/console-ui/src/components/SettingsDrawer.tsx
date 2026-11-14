@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, Popconfirm, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Table, Slider, Progress } from 'antd'
+import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
 import { EmptyState, OnceHint, SaveBar, StatusTag, withLabel, type StatusTone } from './kit'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
@@ -28,6 +28,7 @@ import {
 import { useFeatures, visibleSettingsTabs } from '../features'
 import { ConfigSyncPreviewModal } from './ConfigSyncPreview'
 import { MemorySyncTab } from './MemorySyncTab'
+import { useRiskConfirm } from './risk'
 import { SettingsColumns } from './SettingsColumns'
 import { CredentialFeatureProblems, CredentialMatchPreview, CredentialNeedsPanel, CredentialUsageLine, type CredentialPrefill } from './CredentialGuide'
 import { TokenCommandInput } from './TokenCommandInput'
@@ -166,6 +167,7 @@ const soundOptions = (def: string, current: string, named: NamedSound[]) => [
 ]
 
 export function SoundsTab() {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [enabled, setEnabled] = useState(true)
   const [choices, setChoices] = useState<Record<string, string>>({})
   const [volume, setVolume] = useState(100)
@@ -292,6 +294,7 @@ export function SoundsTab() {
 
   return (
     <div>
+      {riskHolder}
       <SettingsColumns>
         <div>
           <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
@@ -366,15 +369,18 @@ export function SoundsTab() {
               <Tooltip title="Preview this sound">
                 <Button aria-label={`Preview ${s.label}`} size="small" type="text" icon={<SoundOutlined />} onClick={() => bridge.preview_sound(`sound:${s.id}`).catch(() => {})} />
               </Tooltip>
-              <Popconfirm title={`Remove "${s.label}"?`} onConfirm={() => deleteNamedSound(s.id)} okText="Remove" okButtonProps={{ danger: true }}>
-                <Button aria-label={`Remove ${s.label}`} size="small" type="text" danger icon={<DeleteOutlined />} />
-              </Popconfirm>
+              <Button aria-label={`Remove ${s.label}`} size="small" type="text" danger icon={<DeleteOutlined />}
+                onClick={async () => {
+                  const a = await askRisk({ level: 'local', title: `Remove "${s.label}"?`, action: s.label, okText: 'Remove' })
+                  if (a.ok) deleteNamedSound(s.id)
+                }} />
             </div>
           ))}
           <Space size={4} style={{ marginTop: named.length ? 2 : 0 }}>
             <Input
               size="small"
               placeholder="Name (optional)"
+              aria-label="Sound name (optional)"
               value={newName}
               onChange={e => setNewName(e.target.value)}
               onPressEnter={addNamedSound}
@@ -917,6 +923,7 @@ export function quickConnectOptions(
 }
 
 export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [], activeProfile = '' }: { onKeyChanged?: () => void; connectedHosts?: string[]; allRemoteHosts?: string[]; activeProfile?: string }) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -1097,6 +1104,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
 
   return (
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
+      {riskHolder}
       <SettingsColumns>
         <div>
           <Form.Item name="ssh_user" label="Default username">
@@ -1147,7 +1155,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
                     label="Connect timeout (s)"
                     help="TCP connect timeout. Default 10."
                   >
-                    <InputNumber min={1} style={{ width: '100%' }} placeholder="10" />
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="10" aria-label="Connect timeout (s)" />
                   </Form.Item>
                   <Form.Item
                     name="ssh_banner_timeout"
@@ -1295,27 +1303,31 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
                 Generate key
               </Button>
             ) : (
-              <Popconfirm
-                title="Generate new key?"
-                description={
-                  <span style={{ fontSize: 13 }}>
-                    The current key will be backed up and replaced immediately.<br />
-                    You'll need to add the new public key to each host manually.<br />
-                    Use <strong>Rotate key</strong> instead if your remote hosts are reachable.
-                  </span>
-                }
-                onConfirm={handleGenerate}
-                okText="Generate" cancelText="Cancel"
-                placement="bottom"
+              <Button
+                size="small"
+                icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+                disabled={generating}
+                onClick={async () => {
+                  const a = await askRisk({
+                    level: 'destructive',
+                    title: 'Generate new key?',
+                    action: `Replace ${keyPath}`,
+                    targets: allRemoteHosts.length > 0 ? allRemoteHosts : undefined,
+                    consequence: (
+                      <>
+                        The current key is backed up and replaced immediately. Hosts not yet given the new
+                        public key will refuse this machine until you add it to each one by hand.
+                        Use <strong>Rotate key</strong> instead if your remote hosts are reachable.
+                      </>
+                    ),
+                    okText: 'Generate',
+                    typeToConfirm: 'generate',
+                  })
+                  if (a.ok) handleGenerate()
+                }}
               >
-                <Button
-                  size="small"
-                  icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
-                  disabled={generating}
-                >
-                  Generate new key
-                </Button>
-              </Popconfirm>
+                Generate new key
+              </Button>
             )}
             {keyPath && activeProfile ? (
               // A scoped host profile hides its out-of-profile hosts, which would be
@@ -1328,42 +1340,38 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
                 </span>
               </Tooltip>
             ) : keyPath && (
-              <Popconfirm
-                title="Rotate SSH key?"
-                icon={disconnected.length > 0 ? <KeyOutlined style={{ color: 'var(--rs-warn)' }} /> : undefined}
-                description={
-                  disconnected.length === 0 ? (
-                    <span style={{ fontSize: 13 }}>
-                      A new key will be pushed to every connected host using the current key,<br />
-                      then verified before swapping. Active sessions stay alive throughout.
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 13, maxWidth: 320, display: 'inline-block' }}>
-                      <strong style={{ color: 'var(--rs-warn)' }}>
-                        {disconnected.length} host{disconnected.length !== 1 ? 's' : ''} disconnected:
-                      </strong>{' '}
-                      <span style={{ fontFamily: MONO_FONT }}>{disconnected.join(', ')}</span>.<br />
-                      {disconnected.length !== 1 ? 'They' : 'It'} will <strong>not</strong> receive the new key —
-                      you may be locked out until you update {disconnected.length !== 1 ? 'them' : 'it'} manually.<br />
-                      Connected hosts rotate now. Continue?
-                    </span>
-                  )
-                }
-                onConfirm={handleRotate}
-                okText={disconnected.length > 0 ? 'Rotate anyway' : 'Rotate'}
-                okButtonProps={disconnected.length > 0 ? { danger: true } : undefined}
-                cancelText="Cancel"
-                placement="bottom"
+              <Button
+                size="small"
+                icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
+                disabled={generating}
+                loading={generating}
+                onClick={async () => {
+                  const a = await askRisk({
+                    level: 'fleet',
+                    title: 'Rotate SSH key?',
+                    action: 'Push a new key to every connected host, verify it, then swap',
+                    targets: connectedHosts,
+                    consequence: disconnected.length === 0 ? (
+                      'The new key is verified on each host before the swap. Active sessions stay alive throughout.'
+                    ) : (
+                      <>
+                        <strong style={{ color: 'var(--rs-warn)' }}>
+                          {disconnected.length} host{disconnected.length !== 1 ? 's' : ''} disconnected:
+                        </strong>{' '}
+                        <span style={{ fontFamily: MONO_FONT }}>{disconnected.join(', ')}</span>.{' '}
+                        {disconnected.length !== 1 ? 'They' : 'It'} will <strong>not</strong> receive the new key —
+                        you may be locked out until you update {disconnected.length !== 1 ? 'them' : 'it'} manually.
+                        Connected hosts rotate now.
+                      </>
+                    ),
+                    okText: disconnected.length > 0 ? 'Rotate anyway' : 'Rotate',
+                    danger: disconnected.length > 0,
+                  })
+                  if (a.ok) handleRotate()
+                }}
               >
-                <Button
-                  size="small"
-                  icon={generating ? <LoadingOutlined /> : <KeyOutlined />}
-                  disabled={generating}
-                  loading={generating}
-                >
-                  {generating ? 'Rotating…' : 'Rotate key'}
-                </Button>
-              </Popconfirm>
+                {generating ? 'Rotating…' : 'Rotate key'}
+              </Button>
             )}
             {keyPath && allRemoteHosts.length > 0 && (
               <Tooltip title="Authorize this machine on every host at once over a one-off password — for bootstrapping a freshly synced fleet">
@@ -1650,6 +1658,7 @@ function GroupsManager({
   onClose: () => void
   onChanged: () => void
 }) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [rows, setRows] = useState<HostGroup[]>([])
   const [newName, setNewName] = useState('')
 
@@ -1690,6 +1699,7 @@ function GroupsManager({
 
   return (
     <Modal open={open} title="Host groups" onCancel={onClose} footer={null} width={520}>
+      {riskHolder}
       <Text type="secondary" style={{ fontSize: 13 }}>
         Groups are shared across consoles (Config Sync) so a runbook targeting a
         group behaves the same everywhere. Hosts pick their group from this list.
@@ -1713,13 +1723,12 @@ function GroupsManager({
               onChange={e => setRows(r => r.map((x, j) => j === i ? { ...x, description: e.target.value } : x))}
               onBlur={commitDescription}
             />
-            <Popconfirm
-              title={`Delete group "${g.name}"?`}
-              description="Hosts in it become Ungrouped."
-              onConfirm={() => removeGroup(g.name)}
-            >
-              <MinusCircleOutlined style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
-            </Popconfirm>
+            <Button type="text" size="small" aria-label={`Delete group ${g.name}`} style={{ padding: '0 4px' }}
+              icon={<MinusCircleOutlined style={{ color: 'var(--rs-text-muted)' }} />}
+              onClick={async () => {
+                const a = await askRisk({ level: 'local', title: `Delete group "${g.name}"?`, action: g.name, consequence: 'Hosts in it become Ungrouped.', okText: 'Delete' })
+                if (a.ok) removeGroup(g.name)
+              }} />
           </Space>
         ))}
         {rows.length === 0 && <EmptyState message="No groups yet" />}
@@ -1753,6 +1762,7 @@ function ProfilesManager({
   onClose: () => void
   onChanged: () => void
 }) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [rows, setRows] = useState<HostProfile[]>([])
   const [newName, setNewName] = useState('')
 
@@ -1793,6 +1803,7 @@ function ProfilesManager({
 
   return (
     <Modal open={open} title="Host profiles" onCancel={onClose} footer={null} width={520}>
+      {riskHolder}
       <Text type="secondary" style={{ fontSize: 13 }}>
         A profile is a named working-set of hosts. You load one at a time — only its
         hosts stay connected. Definitions are shared across consoles (Config Sync);
@@ -1817,13 +1828,12 @@ function ProfilesManager({
               onChange={e => setRows(r => r.map((x, j) => j === i ? { ...x, description: e.target.value } : x))}
               onBlur={commitDescription}
             />
-            <Popconfirm
-              title={`Delete profile "${p.name}"?`}
-              description="Hosts lose this tag; if it was loaded, you drop to All hosts."
-              onConfirm={() => removeProfile(p.name)}
-            >
-              <MinusCircleOutlined style={{ color: 'var(--rs-text-muted)', cursor: 'pointer' }} />
-            </Popconfirm>
+            <Button type="text" size="small" aria-label={`Delete profile ${p.name}`} style={{ padding: '0 4px' }}
+              icon={<MinusCircleOutlined style={{ color: 'var(--rs-text-muted)' }} />}
+              onClick={async () => {
+                const a = await askRisk({ level: 'local', title: `Delete profile "${p.name}"?`, action: p.name, consequence: 'Hosts lose this tag; if it was loaded, you drop to All hosts.', okText: 'Delete' })
+                if (a.ok) removeProfile(p.name)
+              }} />
           </Space>
         ))}
         {rows.length === 0 && <EmptyState message="No profiles yet" />}
@@ -1897,6 +1907,7 @@ function LocalVenvsTab() {
                 <Input
                   value={g}
                   onChange={e => setGlob(i, e.target.value)}
+                  aria-label={`Venv search glob ${i + 1}`}
                   placeholder="C:\venvs\*"
                   style={{ width: 420, fontFamily: MONO_FONT }}
                 />
@@ -2085,6 +2096,7 @@ function AgentToolsTab() {
           allowClear
           prefix={<SearchOutlined />}
           placeholder="Filter runnables…"
+          aria-label="Filter runnables"
           value={query}
           onChange={e => setQuery(e.target.value)}
           style={{ width: 280 }}
@@ -2152,6 +2164,7 @@ const HOST_EDITOR_Z = 1200
 const VENV_MODAL_Z = HOST_EDITOR_Z + 100
 
 function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const accent = useAccent()
   const [hosts, setHosts] = useState<JumpHost[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -2338,6 +2351,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
 
   return (
     <div>
+      {riskHolder}
       <input ref={fileInputRef} type="file" accept=".toml" style={{ display: 'none' }} onChange={handleImport} />
       <GroupsManager
         open={groupsOpen}
@@ -2645,9 +2659,11 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
               <Button type="text" size="small" icon={<CloudServerOutlined />} onClick={() => setProvisionHosts([h.name])} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} aria-label={`Provision a venv on ${h.name}`} />
             </Tooltip>
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} aria-label={`Edit ${h.name}`} />
-            <Popconfirm title={`Remove ${h.name}?`} onConfirm={() => remove(h.name)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger aria-label={`Remove ${h.name}`} />
-            </Popconfirm>
+            <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger aria-label={`Remove ${h.name}`}
+              onClick={async () => {
+                const a = await askRisk({ level: 'local', title: `Remove ${h.name}?`, action: h.name, okText: 'Remove' })
+                if (a.ok) remove(h.name)
+              }} />
           </div>
         )
 
@@ -2785,6 +2801,7 @@ function filterToToml(filters: Filter[]): string {
 }
 
 export function FiltersTab() {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [filters, setFilters] = useState<Filter[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [form] = Form.useForm<FilterFormValues>()
@@ -2842,6 +2859,7 @@ export function FiltersTab() {
 
   return (
     <div>
+      {riskHolder}
       <input ref={fileInputRef} type="file" accept=".toml" style={{ display: 'none' }} onChange={handleImport} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
@@ -2899,9 +2917,11 @@ export function FiltersTab() {
               {f.pipeline}
             </Text>
             <Button aria-label={`Edit ${f.name}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(f)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-            <Popconfirm title={`Remove ${f.name}?`} onConfirm={() => remove(f.name)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button aria-label={`Remove ${f.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
-            </Popconfirm>
+            <Button aria-label={`Remove ${f.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger
+              onClick={async () => {
+                const a = await askRisk({ level: 'local', title: `Remove ${f.name}?`, action: f.name, okText: 'Remove' })
+                if (a.ok) remove(f.name)
+              }} />
           </div>
         ))}
       </div>
@@ -3144,6 +3164,7 @@ interface RepoFormValues { name: string; url: string; ref?: string; credential_i
 const GRAPH_MCP_NOTE_KEY = 'repos:graph-mcp-note-dismissed'
 
 export function ReposTab() {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const { ai } = useFeatures()
   const [repos, setRepos] = useState<Repo[]>([])
   const [creds, setCreds] = useState<Credential[]>([])
@@ -3225,6 +3246,7 @@ export function ReposTab() {
 
   return (
     <div>
+      {riskHolder}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
           Repositories the agent may read and <strong>locally</strong> edit (the <code>repo_*</code> tools). This list is the allowlist — a repo not here is unreachable. Saved to <code>runspec_repos.toml</code>; rides Config Sync. Edits are local only (no commit/push).
@@ -3316,9 +3338,14 @@ export function ReposTab() {
               <Button aria-label={`Sync ${r.name} now`} type="text" size="small" icon={syncing === r.name ? <LoadingOutlined /> : <ReloadOutlined />} onClick={() => sync(r.name)} disabled={isEditing || engineMissing || syncing !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
             </Tooltip>
             <Button aria-label={`Edit ${r.name}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-            <Popconfirm title={`Remove ${r.name}?`} description={r.path ? 'Your custom dev-folder checkout is left untouched.' : 'The app-data checkout on disk is also deleted.'} onConfirm={() => remove(r.name)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button aria-label={`Remove ${r.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
-            </Popconfirm>
+            <Button aria-label={`Remove ${r.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger
+              onClick={async () => {
+                const a = await askRisk({
+                  level: 'local', title: `Remove ${r.name}?`, action: r.name, okText: 'Remove',
+                  consequence: r.path ? 'Your custom dev-folder checkout is left untouched.' : 'The app-data checkout on disk is also deleted.',
+                })
+                if (a.ok) remove(r.name)
+              }} />
           </div>
         ))}
       </div>
@@ -3350,6 +3377,7 @@ const PIP_ARG_OPTIONS = [
 const splitList = (v?: string) => (v || '').split(/[\s,]+/).map(x => x.trim()).filter(Boolean)
 
 export function MarketplaceTab() {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [cfg, setCfg] = useState<MarketplaceConfig | null>(null)
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -3421,6 +3449,7 @@ export function MarketplaceTab() {
 
   return (
     <div>
+      {riskHolder}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
           Package indexes the <strong>Marketplace</strong> tab reads. Every distribution that depends on <code>runspec</code> (or carries the <code>runspec-runnable</code> keyword) is listed as an installable runnable package; <code>*-core</code> libraries and the console itself are not. Saved to <code>[marketplace]</code> in <code>config.toml</code>; rides Config Sync.
@@ -3515,9 +3544,11 @@ export function MarketplaceTab() {
             {r.pip_arg !== 'auto' && <Tag style={{ margin: 0, fontSize: 11 }}>{r.pip_arg}</Tag>}
             <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.url}</Text>
             <Button aria-label={`Edit ${r.name}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(r)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-            <Popconfirm title={`Remove ${r.name}?`} onConfirm={() => removeRepo(r)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button aria-label={`Remove ${r.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
-            </Popconfirm>
+            <Button aria-label={`Remove ${r.name}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger
+              onClick={async () => {
+                const a = await askRisk({ level: 'local', title: `Remove ${r.name}?`, action: r.name, okText: 'Remove' })
+                if (a.ok) removeRepo(r)
+              }} />
           </div>
         ))}
       </div>
@@ -3591,6 +3622,7 @@ interface CredFormValues {
 }
 
 export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => void } = {}) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [creds, setCreds] = useState<Credential[]>([])
   const [guide, setGuide] = useState<CredentialGuide | null>(null)
   const [backend, setBackend] = useState<{ available: boolean; backend: string } | null>(null)
@@ -3680,6 +3712,7 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
   return (
     <SettingsColumns>
     <div>
+      {riskHolder}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
           Secrets are stored in the OS keychain{backend?.backend ? <> (<code>{backend.backend}</code>)</> : null}; only metadata is saved to <code>runspec_credentials.toml</code>.
@@ -3818,9 +3851,11 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
               {c.username}
             </Text>
             <Button aria-label={`Edit ${c.label}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(c)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-            <Popconfirm title={`Remove ${c.label}?`} onConfirm={() => remove(c.id)} okText="Remove" cancelText="Cancel" placement="left">
-              <Button aria-label={`Remove ${c.label}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
-            </Popconfirm>
+            <Button aria-label={`Remove ${c.label}`} type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger
+              onClick={async () => {
+                const a = await askRisk({ level: 'local', title: `Remove ${c.label}?`, action: c.label, okText: 'Remove' })
+                if (a.ok) remove(c.id)
+              }} />
           </div>
           <CredentialUsageLine usage={guide?.usage[c.id]} onFix={hint => startFix(c, hint)} onOpenTab={onOpenTab} />
           </div>
@@ -3923,8 +3958,8 @@ export function MailboxesTab() {
           </Text>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: enabled ? 10 : 4 }}>
-            <Switch size="small" checked={enabled} onChange={setEnabled} />
-            <MailOutlined style={{ color: 'var(--rs-text-muted)' }} />
+            <Switch size="small" checked={enabled} onChange={setEnabled} aria-label="Monitor a mailbox" />
+            <MailOutlined aria-hidden style={{ color: 'var(--rs-text-muted)' }} />
             <span style={{ fontSize: 14 }}>Monitor a mailbox</span>
           </div>
 
@@ -3943,7 +3978,7 @@ export function MailboxesTab() {
                 label="Mailbox email address"
                 help="The account or shared mailbox to monitor. Leave blank for your own default account."
               >
-                <Input placeholder="helpdesk@corp.com (blank = my mailbox)" style={{ fontFamily: MONO_FONT }} />
+                <Input placeholder="helpdesk@corp.com (blank = my mailbox)" aria-label="Mailbox email address" style={{ fontFamily: MONO_FONT }} />
               </Form.Item>
               <Form.Item
                 name="folders"
@@ -3954,13 +3989,14 @@ export function MailboxesTab() {
                   mode="tags"
                   tokenSeparators={[',']}
                   placeholder="Inbox (leave empty), or e.g. Tickets/Open"
+                  aria-label="Folders (optional)"
                   style={{ fontFamily: MONO_FONT, width: '100%' }}
                   open={false}
                   suffixIcon={null}
                 />
               </Form.Item>
               <Form.Item name="label" label="Label (optional)" help="A display name for this inbox.">
-                <Input placeholder="e.g. Helpdesk" />
+                <Input placeholder="e.g. Helpdesk" aria-label="Label (optional)" />
               </Form.Item>
               <Form.Item name="once_per_thread" valuePropName="checked"
                 label="Suppress replies by default (once per thread)"
@@ -4013,6 +4049,7 @@ export function MailboxesTab() {
               <Input
                 size="small"
                 placeholder="address (blank = my default account)"
+                aria-label={`Extra mailbox ${i + 1} address`}
                 value={w.address}
                 onChange={e => setWatch(i, { address: e.target.value })}
                 style={{ fontFamily: MONO_FONT, flex: 2 }}
@@ -4022,6 +4059,7 @@ export function MailboxesTab() {
                 mode="tags"
                 tokenSeparators={[',']}
                 placeholder='folders (blank = "Inbox")'
+                aria-label={`Extra mailbox ${i + 1} folders`}
                 value={w.folders ?? []}
                 onChange={(vals: string[]) => setWatch(i, { folders: vals })}
                 style={{ fontFamily: MONO_FONT, flex: 2 }}
@@ -4031,6 +4069,7 @@ export function MailboxesTab() {
               <Input
                 size="small"
                 placeholder="label"
+                aria-label={`Extra mailbox ${i + 1} label`}
                 value={w.label}
                 onChange={e => setWatch(i, { label: e.target.value })}
                 style={{ flex: 1 }}
@@ -4083,6 +4122,7 @@ export function MailboxesTab() {
 // Teams live in the helpdesk room (not a local file), so they're managed next to
 // the room selector on the Self-Service tab — formerly a standalone Teams tab.
 function TeamsSection() {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [teams, setTeams] = useState<Team[]>([])
   const [name, setName] = useState('')
   const [err, setErr] = useState('')
@@ -4113,6 +4153,7 @@ function TeamsSection() {
 
   return (
     <div>
+      {riskHolder}
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
         The customer teams a visitor picks at sign-up — stored in the helpdesk room and shared across operators. <code>Default</code> is always present.
       </Text>
@@ -4143,9 +4184,11 @@ function TeamsSection() {
               {t.slug === 'default' ? (
                 <Tag style={{ margin: 0, fontSize: 11 }}>protected</Tag>
               ) : (
-                <Popconfirm title={`Remove team ${t.name}?`} onConfirm={() => remove(t.slug)} okText="Remove" cancelText="Cancel" placement="left">
-                  <Button aria-label={`Remove team ${t.name}`} type="text" size="small" icon={<DeleteOutlined />} danger style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-                </Popconfirm>
+                <Button aria-label={`Remove team ${t.name}`} type="text" size="small" icon={<DeleteOutlined />} danger style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }}
+                  onClick={async () => {
+                    const a = await askRisk({ level: 'local', title: `Remove team ${t.name}?`, action: t.name, okText: 'Remove' })
+                    if (a.ok) remove(t.slug)
+                  }} />
               )}
             </div>
           ))}
@@ -4173,6 +4216,7 @@ interface SyncFormValues {
 }
 
 export function ConfigSyncTab() {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [form] = Form.useForm<SyncFormValues>()
   const [cfg, setCfg] = useState<SyncConfig | null>(null)
   const [creds, setCreds] = useState<Credential[]>([])
@@ -4325,6 +4369,7 @@ export function ConfigSyncTab() {
 
   return (
     <div>
+      {riskHolder}
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
         Pull this console's config files from a git repository at a tag, so a fresh install can be fully configured from one source. Authentication uses a saved credential (Credentials tab). A pull is <strong>non-destructive</strong>: it adds and updates from the repo but keeps your own hosts/triggers/filters/credentials and the keys you protect below (each file is backed up first).
       </Text>
@@ -4350,6 +4395,7 @@ export function ConfigSyncTab() {
                     options={tags.map(t => ({ value: t }))}
                     onFocus={() => { if (!tags.length) loadTags() }}
                     placeholder="v1.4.0"
+                    aria-label="Tag / ref"
                   />
                 </Form.Item>
                 <Button onClick={loadTags}>refresh tags</Button>
@@ -4395,7 +4441,7 @@ export function ConfigSyncTab() {
               tooltip="Off skips certificate verification entirely (like git's http.sslVerify=false). Insecure — only on a trusted internal network. Prefer a CA bundle above."
               help={<span style={{ fontSize: 12 }}>Turn off only if you can't supply a CA bundle (e.g. your <code>git config</code> already sets <code>http.sslVerify false</code>).</span>}
             >
-              <Switch size="small" />
+              <Switch size="small" aria-label="Verify TLS" />
             </Form.Item>
             <Form.Item
               name="backups_keep"
@@ -4533,12 +4579,18 @@ export function ConfigSyncTab() {
                   description={<span style={{ fontSize: 13 }}>It applies automatically on the next launch — or re-apply it now.</span>} />
               )}
               <div style={{ marginTop: 10 }}>
-                <Popconfirm
-                  title="Re-apply the bundled config seed?"
-                  description={<span style={{ fontSize: 13 }}>Re-asserts the package's baseline over local config (your own entries and protected keys are kept).<br />Each changed file is backed up first.</span>}
-                  onConfirm={reapplySeed} okText="Re-apply" cancelText="Cancel" placement="topLeft">
-                  <Button size="small" loading={seedBusy}>Re-apply seed</Button>
-                </Popconfirm>
+                <Button size="small" loading={seedBusy}
+                  onClick={async () => {
+                    const a = await askRisk({
+                      level: 'local',
+                      title: 'Re-apply the bundled config seed?',
+                      action: 'Re-assert the package baseline over local config',
+                      consequence: 'Your own entries and protected keys are kept. Each changed file is backed up first.',
+                      okText: 'Re-apply',
+                      danger: false,
+                    })
+                    if (a.ok) reapplySeed()
+                  }}>Re-apply seed</Button>
               </div>
               {seedResult && seedResult.ok && seedResult.applied && (
                 <Alert type="success" showIcon style={{ marginTop: 10 }}
@@ -4568,6 +4620,7 @@ export function ConfigSyncTab() {
           <Space.Compact style={{ width: '100%' }}>
             <Input size="small" value={docsDir} onChange={e => setDocsDir(e.target.value)}
               placeholder={docsDefault ? `${docsDefault}  (default)` : 'output directory'}
+              aria-label="Runbook docs output directory"
               style={{ fontFamily: MONO_FONT }} autoComplete="off" />
             <Button size="small" type="primary" onClick={generateDocs} loading={docsBusy}>Generate</Button>
           </Space.Compact>
@@ -4688,6 +4741,7 @@ function rowsToArgsRaw(rows: RunbookArgRow[] | undefined): Record<string, unknow
 // `editorOnly` renders just the add/edit modal (driven by `request`) with no list —
 // how the Forms tab hosts it; the runbook list itself is the Forms cards.
 export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly?: boolean; request?: EditorRequest | null } = {}) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [runbooks, setRunbooks] = useState<Runbook[]>([])
   const [editingKey, setEditingKey] = useState<string | null>(null)  // '' = new
   const [form] = Form.useForm<RunbookFormValues>()
@@ -4769,6 +4823,7 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
 
   return (
     <div>
+      {riskHolder}
       {!editorOnly && (<>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Runbooks are reusable, parameterized runbooks. Invoke one from the chat prompt
@@ -4797,9 +4852,11 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
               <Tag style={{ fontSize: 11, margin: 0 }}>{(s.args ?? []).length} param{(s.args ?? []).length !== 1 ? 's' : ''}</Tag>
             )}
             <Button aria-label={`Edit ${s.id}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
-            <Popconfirm title={`Remove ${s.id}?`} onConfirm={() => remove(s.id)}>
-              <Button aria-label={`Remove ${s.id}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
-            </Popconfirm>
+            <Button aria-label={`Remove ${s.id}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger
+              onClick={async () => {
+                const a = await askRisk({ level: 'local', title: `Remove ${s.id}?`, action: s.id, okText: 'Remove' })
+                if (a.ok) remove(s.id)
+              }} />
           </div>
         ))}
       </div>
@@ -4816,9 +4873,11 @@ export function RunbooksTab({ editorOnly = false, request = null }: { editorOnly
         footer={(_, { OkBtn, CancelBtn }) => (
           <>
             {editingKey && (
-              <Popconfirm title={`Remove ${editingKey}?`} onConfirm={removeEditing} okText="Remove" placement="topLeft">
-                <Button danger icon={<DeleteOutlined />} style={{ float: 'left' }}>Delete</Button>
-              </Popconfirm>
+              <Button danger icon={<DeleteOutlined />} style={{ float: 'left' }}
+                onClick={async () => {
+                  const a = await askRisk({ level: 'local', title: `Remove ${editingKey}?`, action: editingKey, okText: 'Remove' })
+                  if (a.ok) removeEditing()
+                }}>Delete</Button>
             )}
             <CancelBtn />
             <OkBtn />
@@ -4969,6 +5028,7 @@ const _srNorm = (s: string) => s.replace(/-/g, '_')
 
 // `editorOnly` / `request` — as RunbooksTab: the Forms tab hosts just the modal.
 export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnly?: boolean; request?: EditorRequest | null } = {}) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [savedRuns, setSavedRuns] = useState<SavedRun[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
   const [runnables, setRunnables] = useState<Runnable[]>([])
@@ -5198,6 +5258,7 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
 
   return (
     <div>
+      {riskHolder}
       {!editorOnly && (<>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         Saved runs are <strong>deterministic presets</strong>: a runnable + target host(s) +
@@ -5228,9 +5289,11 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
             )}
             {s.argsError && <StatusTag tone="failed">invalid</StatusTag>}
             <Button aria-label={`Edit ${s.id}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(s)} disabled={editingKey !== null} />
-            <Popconfirm title={`Remove ${s.id}?`} onConfirm={() => remove(s.id)}>
-              <Button aria-label={`Remove ${s.id}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger />
-            </Popconfirm>
+            <Button aria-label={`Remove ${s.id}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editingKey !== null} danger
+              onClick={async () => {
+                const a = await askRisk({ level: 'local', title: `Remove ${s.id}?`, action: s.id, okText: 'Remove' })
+                if (a.ok) remove(s.id)
+              }} />
           </div>
         ))}
       </div>
@@ -5247,9 +5310,11 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
         footer={(_, { OkBtn, CancelBtn }) => (
           <>
             {editingKey && (
-              <Popconfirm title={`Remove ${editingKey}?`} onConfirm={removeEditing} okText="Remove" placement="topLeft">
-                <Button danger icon={<DeleteOutlined />} style={{ float: 'left' }}>Delete</Button>
-              </Popconfirm>
+              <Button danger icon={<DeleteOutlined />} style={{ float: 'left' }}
+                onClick={async () => {
+                  const a = await askRisk({ level: 'local', title: `Remove ${editingKey}?`, action: editingKey, okText: 'Remove' })
+                  if (a.ok) removeEditing()
+                }}>Delete</Button>
             )}
             <CancelBtn />
             <OkBtn />
@@ -6033,6 +6098,7 @@ function McpServerStatusTag({ st }: { st?: McpServerStatus }) {
 }
 
 export function McpTab() {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [servers, setServers] = useState<McpServer[]>([])
   const [sectionEnabled, setSectionEnabled] = useState(true)
   const [status, setStatus] = useState<McpStatus | null>(null)
@@ -6187,18 +6253,21 @@ export function McpTab() {
     { title: 'Enabled', key: 'enabled', width: 80, render: (_: unknown, s: McpServer, i: number) => (
       <Switch size="small" checked={s.enabled !== false} loading={busy} onChange={v => toggleEnabled(i, v)} aria-label={`Enable ${s.name}`} />
     ) },
-    { title: '', key: 'actions', width: 90, render: (_: unknown, _s: McpServer, i: number) => (
+    { title: '', key: 'actions', width: 90, render: (_: unknown, s: McpServer, i: number) => (
       <Space>
         <EditOutlined onClick={() => startEdit(i)} />
-        <Popconfirm title="Remove this MCP server?" onConfirm={() => remove(i)} okText="Remove" cancelText="Cancel">
-          <DeleteOutlined />
-        </Popconfirm>
+        <Button type="text" size="small" danger aria-label={`Remove ${s.name}`} icon={<DeleteOutlined />}
+          onClick={async () => {
+            const a = await askRisk({ level: 'local', title: 'Remove this MCP server?', action: s.name, okText: 'Remove' })
+            if (a.ok) remove(i)
+          }} />
       </Space>
     ) },
   ]
 
   return (
     <div>
+      {riskHolder}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 13 }}>
           External MCP servers the chat agent connects to; their tools appear as <code>mcp_&lt;server&gt;_&lt;tool&gt;</code>, gated by the normal autonomy/confirm system.

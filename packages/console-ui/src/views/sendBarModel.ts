@@ -11,7 +11,7 @@ export const CONFIRM_OVER = 10
 // Lines and keys that stop, remove or end something: the command word at the
 // start of the line or after ; & | (, optionally behind sudo. These ask every
 // time they go to more than one window, whatever was remembered.
-const DISRUPTIVE_LINE = /(^\s*|[;&|(]\s*)(sudo\s+(-\S+\s+)*)?(rm|rmdir|reboot|shutdown|halt|poweroff|kill|pkill|killall|mkfs(\.\w+)?|dd|truncate|userdel|groupdel|wipefs|shred|init\s+[06]|systemctl\s+(stop|restart|disable|mask|kill|reboot|poweroff|halt)|service\s+\S+\s+(stop|restart)|docker\s+(rm|stop|kill|system\s+prune)|kubectl\s+delete|iptables\s+-F|drop\s+(table|database))(?=$|[\s;&|)])/i
+const DISRUPTIVE_LINE = /(^\s*|[;&|(]\s*)(sudo\s+(-\S+\s+)*)?(rm|rmdir|reboot|shutdown|halt|poweroff|kill|pkill|killall|mkfs(\.\w+)?|dd|truncate|userdel|groupdel|wipefs|shred|init\s+[06]|systemctl\s+(stop|restart|disable|mask|kill|reboot|poweroff|halt)|service\s+\S+\s+(stop|restart)|docker\s+(rm|stop|kill|system\s+prune)|kubectl\s+delete|iptables\s+-F|drop\s+(table|database)|chmod\s+-R|chown\s+-R|mv|apt(-get)?\s+(remove|purge|autoremove)|(yum|dnf)\s+(remove|erase)|pip3?\s+uninstall|crontab\s+-r)(?=$|[\s;&|)])/i
 const DISRUPTIVE_KEYS = new Set(['ctrl-c', 'ctrl-d'])
 
 export type SendPlan =

@@ -952,6 +952,9 @@ export interface PendingConfirm {
   // `run_as` — e.g. a shared venv's owner). Absent / "" when it runs as the
   // login account, and for built-in tools.
   runs_as?: string
+  // The host a runnable call lands on, resolved the way the run resolves it,
+  // so the card names it even when the call didn't. "" for a built-in tool.
+  target_host?: string
   autonomy: string
   // The gated tool call's id (runspec:tool_confirm `call_id`). Absent on older
   // backends and on gates with no agent tool call (rule runs).
@@ -1160,12 +1163,12 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
 
   useEffect(() => {
     const onToolConfirm = (e: Event) => {
-      const { id, request_id, tool_name, tool_input, display_name, display_input, confirm_verb, runs_as, autonomy, call_id } = (e as CustomEvent).detail as {
+      const { id, request_id, tool_name, tool_input, display_name, display_input, confirm_verb, runs_as, target_host, autonomy, call_id } = (e as CustomEvent).detail as {
         id: string; request_id: string; tool_name: string; tool_input: Record<string, unknown>
-        display_name?: string; display_input?: Record<string, unknown>; confirm_verb?: string; runs_as?: string; autonomy: string
+        display_name?: string; display_input?: Record<string, unknown>; confirm_verb?: string; runs_as?: string; target_host?: string; autonomy: string
         call_id?: string
       }
-      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy, since: prev[id]?.request_id === request_id ? prev[id].since : Date.now(), ...(runs_as ? { runs_as } : {}), ...(call_id ? { call_id } : {}) } }))
+      setPendingConfirms(prev => ({ ...prev, [id]: { request_id, id, tool_name, tool_input: tool_input ?? {}, display_name, display_input, confirm_verb, autonomy, since: prev[id]?.request_id === request_id ? prev[id].since : Date.now(), ...(runs_as ? { runs_as } : {}), ...(target_host ? { target_host } : {}), ...(call_id ? { call_id } : {}) } }))
     }
     // Authoritative "this gate finished" from the backend (approved / denied /
     // timed out) — request-id-precise so a late signal can't clear a newer gate
@@ -1591,7 +1594,7 @@ function ToolCallBlock({
           <div style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
             The assistant wants to {v}{' '}
             <Text code style={{ fontSize: 12 }}>{(resolved?.name ?? entry.name).replace(/^[^_]+__/, '')}</Text>
-            {targetHost && <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{targetHost}</Text></>}
+            {targetHost && <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{targetHost}</Text>{targetHost === 'local' ? ' (this computer)' : ''}</>}
             {consequence && consequence.fanout > 0 && (
               <Text data-testid="confirm-fanout" style={{ fontWeight: 600, color: textColor(c.isDark) }}>
                 {' '}({consequence.fanout} host{consequence.fanout === 1 ? '' : 's'})
@@ -1886,7 +1889,7 @@ export function ChatTranscript({
                 resolved={pc && pc.display_name ? { name: pc.display_name, input: pc.display_input ?? {} } : null}
                 verb={pc ? pc.confirm_verb : undefined}
                 runsAs={pc ? pc.runs_as : undefined}
-                host={pc ? confirmHost(pc.display_input, pc.tool_input) : undefined}
+                host={pc ? (confirmHost(pc.display_input, pc.tool_input) || pc.target_host) : undefined}
                 editable={!!pc && (pc.display_name ?? pc.tool_name) === pc.tool_name}
                 requester={requester}
                 onAnswer={onAnswerConfirm}
@@ -2514,7 +2517,7 @@ const BlockCard = memo(function BlockCard({
                 resolved={cardGate.display_name ? { name: cardGate.display_name, input: cardGate.display_input ?? {} } : null}
                 verb={cardGate.confirm_verb}
                 runsAs={cardGate.runs_as}
-                host={confirmHost(cardGate.display_input, cardGate.tool_input)}
+                host={confirmHost(cardGate.display_input, cardGate.tool_input) || cardGate.target_host}
                 editable={(cardGate.display_name ?? cardGate.tool_name) === cardGate.tool_name}
                 requester={requesterOf(block.trigger)}
                 onAnswer={answerThis}

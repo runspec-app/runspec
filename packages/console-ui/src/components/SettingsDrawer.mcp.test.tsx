@@ -127,7 +127,8 @@ describe('McpTab', () => {
     // Each row has a delete icon; open the confirm on the second row and confirm.
     const deletes = document.querySelectorAll('.anticon-delete')
     await act(async () => { await user.click(deletes[1]) })
-    await act(async () => { await user.click(await screen.findByRole('button', { name: 'Remove' })) })
+    expect((await screen.findByTestId('risk-action')).textContent).toBe('search')
+    await act(async () => { await user.click(screen.getByTestId('risk-ok')) })
     await waitFor(() => expect(saveMcpConfig).toHaveBeenCalled())
     const payload = saveMcpConfig.mock.calls[saveMcpConfig.mock.calls.length - 1][0]
     expect(payload.servers.map((s: { name: string }) => s.name)).toEqual(['files'])

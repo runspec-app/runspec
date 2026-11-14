@@ -37,6 +37,7 @@ import { pageTargetFor } from './KnowledgeEdits'
 import type { SyncResult } from '../components/MemorySyncTab'
 import { When, plural } from '../when'
 import { PageToolbar, SectionSwitch } from '../components/kit'
+import { AskFirst } from '../components/risk'
 
 const RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 days' },
@@ -738,9 +739,12 @@ function FactRow({ fact, current, onEntity, onEdit, onRetire, actions, pins }: {
           <Tooltip title="Edit"><Button size="small" type="text" icon={<EditOutlined />} aria-label="Edit fact" onClick={() => onEdit(fact)} /></Tooltip>
         )}
         {onRetire && fact.status !== 'pending' && (
-          <Popconfirm title="Retire this fact?" description="It stops showing and stops being returned to the agent." onConfirm={() => onRetire(fact)}>
+          <AskFirst onConfirm={() => onRetire(fact)} ask={{
+            level: 'local', title: 'Retire this fact?', action: fact.text,
+            consequence: 'It stops showing and stops being returned to the agent.', okText: 'Retire',
+          }}>
             <Button size="small" type="text" icon={<DeleteOutlined />} aria-label="Retire fact" />
-          </Popconfirm>
+          </AskFirst>
         )}
       </div>
     </div>
@@ -840,10 +844,13 @@ function Inbox({ facts, toolbar, onApprove, onAddToPage, onReject, onEdit, onEnt
             <Tooltip title={`Edit, then approve${keys('inboxEdit')}`}>
               <Button size="small" type="text" icon={<EditOutlined />} onClick={() => onEdit(f)}>Edit</Button>
             </Tooltip>
-            <Popconfirm title="Reject this fact?" description="It leaves the inbox and isn't added to the wiki." okText="Reject" okButtonProps={{ danger: true }} onConfirm={() => onReject(f)}>
+            <AskFirst onConfirm={() => onReject(f)} ask={{
+              level: 'local', title: 'Reject this fact?', action: f.text,
+              consequence: "It leaves the inbox and isn't added to the wiki.", okText: 'Reject',
+            }}>
               {/* Ant's danger red is ~2.8:1 on the gunmetal card; lift it for text. */}
               <Button size="small" type="text" danger data-rs-reject="" icon={<CloseOutlined />} style={isDark ? { color: DANGER_TEXT_DARK } : undefined}>Reject</Button>
-            </Popconfirm>
+            </AskFirst>
           </Space>
         } />
         </div>

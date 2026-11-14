@@ -67,7 +67,7 @@ describe('SavedTransfersListModal', () => {
   it('deletes through the bridge after confirming', async () => {
     setup()
     fireEvent.click(await screen.findByLabelText('Delete push-config'))
-    fireEvent.click(await screen.findByText('OK'))
+    fireEvent.click(await screen.findByTestId('risk-ok'))
     await waitFor(() => expect(deleteSaved).toHaveBeenCalledWith('push-config'))
   })
 })

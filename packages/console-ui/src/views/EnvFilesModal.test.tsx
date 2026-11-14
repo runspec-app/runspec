@@ -113,14 +113,13 @@ describe('EnvFilesModal', () => {
     fireEvent.change(screen.getByLabelText('Value of JIRA_URL'), { target: { value: 'https://new' } })
     fireEvent.click(document.querySelector('.ant-modal-close') as HTMLElement)
     await screen.findAllByText('Discard 1 unsaved change?')
-    expect(document.querySelectorAll('.ant-modal-confirm').length).toBe(1)
+    expect(screen.getAllByTestId('risk-ok')).toHaveLength(1)
     expect(onClose).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect((screen.getByLabelText('Value of JIRA_URL') as HTMLInputElement).value).toBe('https://new')
     fireEvent.click(document.querySelector('.ant-modal-close') as HTMLElement)
-    // The cancelled confirm may still be closing: press the newest Discard.
-    const discards = await screen.findAllByRole('button', { name: 'Discard' })
-    fireEvent.click(discards[discards.length - 1])
+    const oks = await screen.findAllByTestId('risk-ok')
+    fireEvent.click(oks[oks.length - 1])
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
   })
 

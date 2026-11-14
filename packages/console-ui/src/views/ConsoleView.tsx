@@ -11,6 +11,7 @@ import { SessionStrip } from '../components/SessionStrip'
 import { cardHasOwnSession, cardLabel, sessionStatus, type Session } from '../sessions'
 import { READ_ONLY_SESSION_HINT } from '../components/CommandInput'
 import { fmtWhen } from '../when'
+import { useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -150,6 +151,7 @@ function elapsed(startedAt: string): string {
 }
 
 function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const isDark = useIsDark()
   const [, setTick] = useState(0)
   const ref = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
@@ -176,6 +178,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
       background: bg, border: `1px solid ${border}`, borderRadius: RADIUS.sm,
       marginBottom: 4,
     }}>
+      {riskHolder}
       {inFlight.map(r => {
         // Built-in agent tools (repo_*, outlook_*, denylist, …) show their label
         // verbatim ("repo_sync: runspec"); a runnable run keeps the /name form.
@@ -196,16 +199,15 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
           {r.group && <Text style={{ fontSize: 12, fontFamily: MONO_FONT, color: 'var(--rs-text-muted)' }}>{r.group}</Text>}
           <Text type="secondary" style={{ fontSize: 12 }}>{r.operator}</Text>
           <Text style={{ fontSize: 12, color: 'var(--rs-accent)', fontFamily: MONO_FONT }}>{elapsed(r.startedAt)}</Text>
-          <Popconfirm
-            title="Cancel this run?"
-            onConfirm={() => handleCancel(r.id)}
-            okText="Cancel run" okButtonProps={{ danger: true }}
-            cancelText="Keep running"
-            placement="bottom"
-          >
-            <span><IconAction label={`Cancel ${isTool ? r.runnable : '/' + r.runnable}`} icon={<CloseOutlined style={{ fontSize: 11 }} />}
-              danger style={{ padding: '0 4px', height: 18, lineHeight: 1 }} /></span>
-          </Popconfirm>
+          <IconAction label={`Cancel ${isTool ? r.runnable : '/' + r.runnable}`} icon={<CloseOutlined style={{ fontSize: 11 }} />}
+            danger style={{ padding: '0 4px', height: 18, lineHeight: 1 }}
+            onClick={async () => {
+              const a = await askRisk({
+                level: 'local', title: 'Cancel this run?', action: `${isTool ? r.runnable : '/' + r.runnable}${r.host ? ` on ${r.host}` : ''}`,
+                consequence: 'It stops where it is; anything it already changed stays changed.', okText: 'Cancel run',
+              })
+              if (a.ok) handleCancel(r.id)
+            }} />
         </span>
         )
       })}
@@ -214,6 +216,7 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
 }
 
 export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, restoreBlocks, removeSession, setBlockInContext } = useInvocationBlocks()
   // `[console] ai` off-switch: the Console stays (it is the output pane for every
   // run) but its chat affordances — conversation History, "Ask the assistant",
@@ -720,6 +723,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
+      {riskHolder}
       <InFlightStrip inFlight={inFlight} />
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
         <SessionStrip
@@ -771,17 +775,13 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
                 style={{ padding: '8px 16px', cursor: 'pointer' }}
                 onClick={() => openConversation(c)}
                 actions={[
-                  <Popconfirm
-                    key="del"
-                    title="Delete this conversation?"
-                    onConfirm={(e) => { e?.stopPropagation(); deleteConversation(c.id) }}
-                    onCancel={(e) => e?.stopPropagation()}
-                    okText="Delete" okButtonProps={{ danger: true }}
-                  >
-                    <span onClick={(e) => e.stopPropagation()}>
-                      <IconAction label={`Delete conversation ${c.title || 'Untitled'}`} tip="Delete conversation" icon={<DeleteOutlined />} danger />
-                    </span>
-                  </Popconfirm>,
+                  <span key="del" onClick={(e) => e.stopPropagation()}>
+                    <IconAction label={`Delete conversation ${c.title || 'Untitled'}`} tip="Delete conversation" icon={<DeleteOutlined />} danger
+                      onClick={async () => {
+                        const a = await askRisk({ level: 'local', title: 'Delete this conversation?', action: c.title || 'Untitled', okText: 'Delete' })
+                        if (a.ok) deleteConversation(c.id)
+                      }} />
+                  </span>,
                 ]}
               >
                 <List.Item.Meta

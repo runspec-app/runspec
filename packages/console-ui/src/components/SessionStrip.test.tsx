@@ -58,7 +58,7 @@ describe('SessionStrip', () => {
     expect(screen.getAllByTestId('session-chip')[0].dataset.sessionId).toBe('s1')
     expect(screen.getByLabelText('unread')).toBeTruthy()
     // An unlabelled chat reads as "New chat"; a running session has no close ×.
-    expect(screen.queryAllByLabelText('Close session')).toHaveLength(1)
+    expect(screen.queryAllByLabelText(/^Close /)).toHaveLength(1)
   })
 
   it('is one keyboard stop: Tab lands on the selected chip, arrows move, Enter opens', () => {
@@ -85,7 +85,9 @@ describe('SessionStrip', () => {
     )
     fireEvent.click(chip('t1'))
     expect(onSelect).toHaveBeenCalledWith('t1')
-    const closes = screen.getAllByLabelText('Close session')
+    // Each × names the chat it closes.
+    const closes = screen.getAllByLabelText(/^Close /)
+    expect(closes[1].getAttribute('aria-label')).toMatch(/^Close done one/)
     // The automation chip's × (second chip) closes at once, without selecting.
     onSelect.mockClear()
     fireEvent.click(closes[1])
@@ -99,10 +101,9 @@ describe('SessionStrip', () => {
       { c1: 'idle' },
       { hasBlocks: () => true },
     )
-    await act(async () => { fireEvent.click(screen.getByLabelText('Close session')) })
+    await act(async () => { fireEvent.click(screen.getByLabelText(/^Close /)) })
     expect(onClose).not.toHaveBeenCalled()
-    const ok = await screen.findByRole('button', { name: 'Close' })
-    await act(async () => { fireEvent.click(ok) })
+    await act(async () => { fireEvent.click(await screen.findByTestId('risk-ok')) })
     expect(onClose).toHaveBeenCalledWith('c1')
   })
 })

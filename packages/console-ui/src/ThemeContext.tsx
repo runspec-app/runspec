@@ -193,14 +193,23 @@ export function isRedBrand(accent: string | undefined): boolean {
   return !!accent && sat > 0.35 && dist < 30
 }
 
-/** The colour for focus rings, checked boxes and switches, and links: the
- *  readable brand accent, except when the brand reads as red. Then a focused
- *  field would look invalid and a checked box like an error, so controls use
- *  the neutral strong text colour and the brand stays on the chrome (title,
- *  tabs). Pure, for tests. */
-export function controlAccent(accent: string | undefined, isDark: boolean): string {
-  if (isRedBrand(accent)) return textSecondary(isDark)
-  return accent ? readableAccent(accent, isDark) : (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
+/** The colour for focus rings, checked boxes and switches, links, selected
+ *  rows and cards: the neutral strong text colour, for every brand. The brand
+ *  is identity only (the title, the selected tab's bar, the app icon): used on
+ *  controls and selections it read as a status (a red brand looked like an
+ *  error everywhere), and it changed what "selected" looked like from one
+ *  white-label to the next. `accent` is kept for callers; it no longer
+ *  changes the result. Pure, for tests. */
+export function controlAccent(_accent: string | undefined, isDark: boolean): string {
+  return textSecondary(isDark)
+}
+
+/** Series colours for charts: fixed, never the brand (a brand line next to the
+ *  failure line read as two failures), each 3:1 on the chart surface. */
+export function chartPalette(isDark: boolean): string[] {
+  return isDark
+    ? ['#6aa9ff', '#b48cf2', '#4fc7c0', '#e0b04a', '#f07bb8', '#7fcf7f', '#f29a5b', '#8f9cff']
+    : ['#1f5fbf', '#6b3fb8', '#0f7c78', '#8a6100', '#b02a74', '#2e7d32', '#a8510f', '#3a46b5']
 }
 
 export function dangerColors(accent: string | undefined, isDark: boolean): { text: string; onFill: string } {

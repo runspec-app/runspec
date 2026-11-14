@@ -12,7 +12,7 @@ import {
   surfaces, RADIUS, UI_FONT, MONO_FONT, FONT_SIZE, withAlpha, type Surfaces,
   textSecondary, textMuted, textFaint, textColor, DEFAULT_ACCENT,
   statusText, dangerColors, approveColors, hueSat,
-  inkColors, controlAccent, isRedBrand,
+  inkColors, controlAccent, isRedBrand, chartPalette,
 } from './ThemeContext'
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -33,16 +33,25 @@ describe('form control outlines', () => {
   })
 })
 
+describe('chart palette', () => {
+  it('is fixed, never the brand, and every series reads on the chart surface', () => {
+    for (const isDark of [true, false]) {
+      const p = chartPalette(isDark)
+      expect(new Set(p).size).toBe(p.length)
+      for (const c of p) expect(contrastRatio(c, surfaces(isDark).raised), c).toBeGreaterThanOrEqual(3)
+    }
+  })
+})
+
 describe('controls under a red brand', () => {
   it('spots a red brand and keeps controls neutral under it', () => {
     for (const red of ['#9b031a', '#c41230', '#e10600', '#d81b60']) expect(isRedBrand(red), red).toBe(true)
     for (const other of ['#0b7a6e', '#2f54eb', '#d4a017', '#7a7a7a', undefined]) expect(isRedBrand(other), String(other)).toBe(false)
     for (const isDark of [true, false]) {
-      // A red brand: the neutral strong text, never the brand.
-      expect(controlAccent('#9b031a', isDark)).toBe(textSecondary(isDark))
-      // Any other brand: its readable accent; none: the default.
-      expect(controlAccent('#2f54eb', isDark)).toBe(readableAccent('#2f54eb', isDark))
-      expect(controlAccent(undefined, isDark)).toBe(isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
+      // Identity only: controls are the neutral strong text for every brand.
+      for (const brand of ['#9b031a', '#2f54eb', '#e8590c', undefined]) {
+        expect(controlAccent(brand, isDark)).toBe(textSecondary(isDark))
+      }
       // Whatever it is, it reads on the dialog surface (3:1 for a focus ring).
       for (const brand of ['#9b031a', '#2f54eb', '#e8590c', undefined]) {
         expect(contrastRatio(controlAccent(brand, isDark), surfaces(isDark).overlay)).toBeGreaterThanOrEqual(3)

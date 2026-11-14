@@ -543,6 +543,24 @@ describe('approvals in other chats', () => {
 })
 
 describe('approval card wording', () => {
+  it('names the host even when the call did not, from the resolved target', () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('flush-dns')]} />)
+    fireConfirm({
+      id: 'chat1', request_id: 'req-th', tool_name: 'flush-dns', tool_input: {},
+      display_name: 'flush-dns', display_input: {}, target_host: 'web01', autonomy: 'confirm',
+    })
+    expect(screen.getByTestId('confirm-host').textContent).toBe('web01')
+  })
+
+  it('says a local run is on this computer', () => {
+    render(<OutputPanel blocks={[chatBlockWithRunningTool('flush-dns')]} />)
+    fireConfirm({
+      id: 'chat1', request_id: 'req-tl', tool_name: 'flush-dns', tool_input: {},
+      display_name: 'flush-dns', display_input: {}, target_host: 'local', autonomy: 'confirm',
+    })
+    expect(document.querySelector('[data-rs-confirm-gate]')!.textContent).toMatch(/on local \(this computer\)/)
+  })
+
   it('names the trigger that asked, on a rule-mode card gate', () => {
     render(<OutputPanel blocks={[ruleRunBlock('trig1')]} />)
     fireConfirm({

@@ -94,7 +94,7 @@ describe('KnowledgeView', () => {
     fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 })
     await waitFor(() => expect(screen.getByText('2 results for “orders”')).toBeTruthy())
     fireEvent.click(screen.getAllByLabelText('Retire fact')[0])
-    fireEvent.click(await screen.findByText('OK'))
+    fireEvent.click(await screen.findByTestId('risk-ok'))
     await waitFor(() => expect(retire).toHaveBeenCalledWith('k_gone'))
     await waitFor(() => expect(screen.queryByText('orders logs live in /var/log/orders')).toBeNull())
     expect(screen.getByText('1 result for “orders”')).toBeTruthy()

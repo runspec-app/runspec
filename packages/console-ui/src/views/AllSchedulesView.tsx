@@ -29,6 +29,7 @@ import {
 import { RUN_TONE, ScheduleDetail, relTime } from './sharedSchedules'
 import { EmptyState, IconAction, StatusTag, type StatusTone } from '../components/kit'
 import { describeCron } from '../cronText'
+import { AskFirst } from '../components/risk'
 
 const { Text } = Typography
 
@@ -230,10 +231,11 @@ function DaemonStrip({ d, editable, busy, onRestart, onSettings }: {
       {editable && (
         <Space size={6} style={{ marginLeft: 'auto' }}>
           <Button size="small" icon={<SettingOutlined />} onClick={() => onSettings(d)}>Settings</Button>
-          <Popconfirm title={confirm} okText={verb} onConfirm={() => onRestart(d)} overlayStyle={{ maxWidth: 360 }}>
+          <AskFirst ask={{ level: 'local', title: confirm, action: `${verb} the scheduler on ${d.host} / ${d.venv}`, okText: verb, danger: false }}
+            onConfirm={() => onRestart(d)}>
             <Button size="small" icon={running ? <ReloadOutlined /> : <PlayCircleOutlined />} loading={busy}
               type={!running || dm?.restart_needed ? 'primary' : 'default'}>{verb}</Button>
-          </Popconfirm>
+          </AskFirst>
         </Space>
       )}
     </div>
@@ -623,18 +625,15 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
       ? bridge.host_schedule_enable({ host: v.host, venv: v.venv, backend: v.backend, id: s.id, enabled })
       : bridge.host_schedule_save(keepPayload(v, s, enabled)))
     const runNowBtn = (
-      <Popconfirm
-        title={`Run ${s.id} now on ${r.host} / ${r.venv}?`}
-        description={<span style={{ display: 'block', maxWidth: 300 }}>
-          It starts in the background{r.runAs ? ` as ${r.runAs}` : ''}, the way a scheduled fire runs, and shows in History
-          {s.enabled ? '' : ' (even though the schedule is off)'}. If it is already running, the new run is recorded as skipped.
-        </span>}
-        okText="Run now"
-        onConfirm={() => runNow(r, v, s)}>
-        <Tooltip title="Run now">
+      <Tooltip title="Run now">
+        <AskFirst onConfirm={() => runNow(r, v, s)} ask={{
+          level: 'local', title: `Run ${s.id} now?`, action: `${s.runnable || s.id} on ${r.host} / ${r.venv}${r.runAs ? ` as ${r.runAs}` : ''}`,
+          consequence: `It starts in the background, the way a scheduled fire runs, and shows in History${s.enabled ? '' : ' (even though the schedule is off)'}. If it is already running, the new run is recorded as skipped.`,
+          okText: 'Run now', danger: false,
+        }}>
           <Button type="text" size="small" icon={<ThunderboltOutlined />} aria-label="Run now" loading={busy === `run::${r.key}`} />
-        </Tooltip>
-      </Popconfirm>
+        </AskFirst>
+      </Tooltip>
     )
     const editBtn = (
       <Tooltip title={pkg ? 'Change it for this venv (only what you change is saved)' : 'Edit'}>
@@ -668,30 +667,29 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
         </Tooltip>
         {pkg ? (
           packageOverridden(s) && (
-            <Popconfirm
-              title={`Put ${s.id} back to its package's settings?`}
-              description={<span style={{ display: 'block', maxWidth: 300 }}>
-                This venv's changes ({(s.package?.overridden ?? []).join(', ')}) and whether it is on are dropped; it then follows {v.packages?.policy === 'auto' ? 'the package and stays on' : 'the venv’s package policy'}.
-              </span>}
-              okText="Put back"
-              onConfirm={() => run(r.key, `Put back ${s.id}`,
-                () => bridge.host_schedule_remove({ host: v.host, venv: v.venv, backend: v.backend, id: s.id }))}>
-              <Tooltip title="Put back to the package's settings">
+            <Tooltip title="Put back to the package's settings">
+              <AskFirst onConfirm={() => run(r.key, `Put back ${s.id}`,
+                () => bridge.host_schedule_remove({ host: v.host, venv: v.venv, backend: v.backend, id: s.id }))} ask={{
+                level: 'local', title: `Put ${s.id} back to its package's settings?`,
+                action: `Drop this venv's changes: ${(s.package?.overridden ?? []).join(', ') || 'none'}`,
+                consequence: `Whether it is on is dropped too; it then follows ${v.packages?.policy === 'auto' ? 'the package and stays on' : 'the venv’s package policy'}.`,
+                okText: 'Put back',
+              }}>
                 <Button type="text" size="small" icon={<ReloadOutlined />} aria-label="Put back" />
-              </Tooltip>
-            </Popconfirm>
+              </AskFirst>
+            </Tooltip>
           )
         ) : (
-          <Popconfirm
-            title={`Remove ${s.id} from ${r.host} / ${r.venv}?`}
-            description={v.backend === 'cron' ? 'Its crontab line is removed too.' : 'The daemon stops firing it.'}
-            okText="Remove" okButtonProps={{ danger: true }}
-            onConfirm={() => run(r.key, `Removed ${s.id}`,
-              () => bridge.host_schedule_remove({ host: v.host, venv: v.venv, backend: v.backend, id: s.id }))}>
-            <Tooltip title="Remove">
+          <Tooltip title="Remove">
+            <AskFirst onConfirm={() => run(r.key, `Removed ${s.id}`,
+              () => bridge.host_schedule_remove({ host: v.host, venv: v.venv, backend: v.backend, id: s.id }))} ask={{
+              level: 'local', title: 'Remove this schedule?', action: `${s.id} on ${r.host} / ${r.venv}`,
+              consequence: v.backend === 'cron' ? 'Its crontab line is removed too.' : 'The daemon stops firing it.',
+              okText: 'Remove',
+            }}>
               <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label="Remove" />
-            </Tooltip>
-          </Popconfirm>
+            </AskFirst>
+          </Tooltip>
         )}
       </Space>
     )

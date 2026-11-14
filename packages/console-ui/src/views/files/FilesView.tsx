@@ -17,6 +17,7 @@ import {
   type DragPayload, type PaneTarget, type Side,
 } from './filesModel'
 import { StatusTag } from '../../components/kit'
+import { useRiskConfirm } from '../../components/risk'
 
 const { Text } = Typography
 const RAIL_KEY = 'runspec.files.rail'
@@ -32,6 +33,7 @@ export function FilesView({ hosts, selectedHost, active }: {
   selectedHost?: string
   active: boolean
 }) {
+  const [askRisk, riskHolder] = useRiskConfirm()
   const left = usePane()
   const right = usePane()
   const panes: Record<Side, Pane> = { left, right }
@@ -183,6 +185,7 @@ export function FilesView({ hosts, selectedHost, active }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} data-testid="files-view">
+      {riskHolder}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--rs-border)', flexWrap: 'wrap' }}>
         <Tooltip title={rail ? 'Hide saved transfers' : 'Show saved transfers'}>
           <Button size="small" icon={rail ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} aria-pressed={rail} onClick={() => setRail(r => !r)}>Saved transfers</Button>
@@ -231,9 +234,12 @@ export function FilesView({ hosts, selectedHost, active }: {
                     <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!!t.error} onClick={() => setRunningSaved(t)}>Run…</Button>
                     <Tooltip title="Open its source and destination folders in the panes"><Button size="small" icon={<FolderOpenOutlined />} aria-label={`Open ${t.id} in panes`} onClick={() => openInPanes(t)} /></Tooltip>
                     <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} aria-label={`Edit ${t.id}`} onClick={() => setEditing({ draft: t, replaceId: t.id })} /></Tooltip>
-                    <Popconfirm title={`Delete saved transfer '${t.id}'?`} onConfirm={() => deleteSaved(t.id)}>
-                      <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${t.id}`} /></Tooltip>
-                    </Popconfirm>
+                    <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${t.id}`}
+              onClick={async () => {
+                const r = await askRisk({ level: 'local', title: 'Delete this saved transfer?', action: t.title ? `${t.title} (${t.id})` : t.id, okText: 'Delete' })
+                if (r.ok) deleteSaved(t.id)
+              }} /></Tooltip>
+                    
                   </div>
                 </div>
               ))}

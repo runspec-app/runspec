@@ -300,6 +300,7 @@ class _GateStub(_Stub):
     _confirm_decision = Bridge._confirm_decision
     _confirm_card_view = Bridge._confirm_card_view
     _confirm_runs_as = Bridge._confirm_runs_as
+    _confirm_target_host = Bridge._confirm_target_host
 
     def __init__(self, approve=True, edited=None):
         super().__init__()

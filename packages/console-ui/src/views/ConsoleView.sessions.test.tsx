@@ -215,7 +215,7 @@ describe('Console sessions', () => {
     expect(chip('r1').dataset.status).toBe('done')
 
     await act(async () => {
-      fireEvent.click(screen.getByLabelText('Close session'))
+      fireEvent.click(screen.getByLabelText(/^Close /))
       await settle()
     })
     expect(closeChatSession).toHaveBeenCalledWith('r1')

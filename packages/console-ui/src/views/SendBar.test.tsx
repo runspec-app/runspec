@@ -47,7 +47,7 @@ describe('send bar helpers', () => {
     expect(planSend({ ticked: [...many].reverse(), line: 'id', remembered: signature(many) })).toEqual({ kind: 'send' })
     expect(planSend({ ticked: [...many, 'x'], line: 'id', remembered: signature(many) }).kind).toBe('ask')
     // Stopping or removing something asks every time, even when remembered.
-    for (const line of ['sudo systemctl restart nginx', 'rm -rf /tmp/x', 'reboot', 'ls; kill 12', 'docker rm web']) {
+    for (const line of ['sudo systemctl restart nginx', 'rm -rf /tmp/x', 'reboot', 'ls; kill 12', 'docker rm web', 'sudo chown -R app /srv', 'mv a b', 'sudo apt-get remove nginx', 'crontab -r']) {
       expect(planSend({ ticked: few, line, remembered: signature(few) }), line).toEqual({ kind: 'ask', disruptive: true, canRemember: false })
     }
     expect(planSend({ ticked: few, key: 'ctrl-d', remembered: null }).kind).toBe('ask')
