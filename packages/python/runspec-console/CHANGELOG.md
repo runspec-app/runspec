@@ -9,6 +9,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.437.0] — 2026-11-14
+
+### Fixed
+
+- **Table sort and filter arrows are readable.** The CSS rule from 0.436.0
+  lost to Ant's own, more specific, rule, so they stayed 2.9:1. They now come
+  from the table's icon token, measured at 4.93:1.
+
+### Changed
+
+- **Running is neutral everywhere.** The shared status tag's "running" and
+  Schedules' run cards (a fixed cyan dot, 1.7:1 on light) now show running as
+  the neutral text with a spinning icon. Other run statuses dot in their own
+  tone's colour, not fixed Ant hues.
+- **Fewer red signals.**
+  - The chat box's Stop is outlined, not filled danger.
+  - Knowledge's Pull update dot is the warning colour.
+  - The footer's hosts-connected dot, the Settings badge, the rooms
+    indicator and the context gauge use the theme's status colours. They
+    were fixed Ant hues at 1.3–1.7:1 on light.
+- **A running job's control is a stop mark** ("Stop /log-rotate"), not the
+  × that closes a chip.
+- **Stronger confirmations where it matters.** Removing a credential that's in
+  use, and rotating the key while some hosts are disconnected, now ask you to
+  type a word (the credential's label, "rotate").
+- **The chat box has the 3:1 field outline**, like every other input. The
+  approval announcement names the host the backend resolved when the call
+  named none.
+
 ## [0.436.0] — 2026-11-14
 
 ### Changed

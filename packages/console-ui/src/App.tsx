@@ -1283,7 +1283,11 @@ export default function App() {
             Card: { colorBgContainer: sf.raised, colorBorderSecondary: sf.border, boxShadowTertiary: sf.shadowSm },
             Modal: { contentBg: sf.overlay, headerBg: sf.overlay, footerBg: sf.overlay },
             Drawer: { colorBgElevated: sf.overlay },
-            Table: { headerBg: sf.overlay, headerSplitColor: 'transparent', borderColor: sf.border, rowHoverBg: withAlpha(ctrlCol, isDark ? 0.06 : 0.04) },
+            Table: { headerBg: sf.overlay, headerSplitColor: 'transparent', borderColor: sf.border, rowHoverBg: withAlpha(ctrlCol, isDark ? 0.06 : 0.04),
+              // Sort and filter arrows: Ant draws them in colorIcon at ~65%
+              // alpha, which was 2.9:1. From the strong text they land near the
+              // muted text; the active one takes colorPrimary (the control colour).
+              colorIcon: textColor(isDark), colorIconHover: textColor(isDark) },
             Tag: { borderRadiusSM: 4, colorTextLightSolid: isDark ? sf.base : sf.overlay },
             // Primary buttons are ink, not the brand (inkColors): routine actions
             // stay neutral and only danger is hot. Hover on a default button
@@ -1590,7 +1594,7 @@ export default function App() {
                             </span>
                             {collapsed && (
                               <span style={{ display: 'flex', alignItems: 'center', gap: 6, letterSpacing: 0 }}>
-                                <span style={{ color: '#52c41a' }}>● {up}</span>
+                                <span style={{ color: 'var(--rs-ok)' }}>● {up}</span>
                                 {down > 0 && <span style={{ color: textFaint(isDark) }}>● {down}</span>}
                               </span>
                             )}
@@ -1686,7 +1690,7 @@ export default function App() {
               }>
                 <Badge
                   dot={mcpInvalidTools.length > 0 || (sshKeyAgeDays !== null && sshKeyAgeDays >= 75)}
-                  color={mcpInvalidTools.length > 0 ? 'red' : 'orange'}
+                  styles={{ indicator: { background: mcpInvalidTools.length > 0 ? 'var(--rs-danger)' : 'var(--rs-warn)' } }}
                   offset={[-4, 4]}
                 >
                   <Button type="text" icon={<SettingOutlined />} onClick={() => openSettings(mcpInvalidTools.length > 0 ? 'mcpServer' : undefined)} style={{ color: iconCol }} aria-label="Settings" />
@@ -1957,7 +1961,7 @@ export default function App() {
                 return remote.length > 0 && (
                   <Tooltip title={`${up} of ${remote.length} hosts in the ${activeProfile ? `“${activeProfile}” profile` : 'fleet'} are connected`} placement="topLeft">
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: up === remote.length ? '#52c41a' : (up === 0 ? textFaint(isDark) : '#faad14') }} />
+                      <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: up === remote.length ? 'var(--rs-ok)' : (up === 0 ? textFaint(isDark) : 'var(--rs-warn)') }} />
                       <span style={{ fontVariantNumeric: 'tabular-nums', color: textColor(isDark) }}>{up}/{remote.length}</span> hosts connected
                     </span>
                   </Tooltip>
@@ -1987,7 +1991,7 @@ export default function App() {
                 // reflects the *active* room's health — not a count of every
                 // configured room. A non-selected host is a standby (grey, calm),
                 // and "no room selected" is detached, not a failure.
-                const GREEN = '#52c41a', RED = '#ff4d4f', GREY = '#8c8c8c'
+                const GREEN = 'var(--rs-ok)', RED = 'var(--rs-danger)', GREY = textMuted(isDark)
                 const active = rooms.find(r => r.active)
                 const activeUp = !!active?.connected
                 const roomState = (r: RoomInfo) =>
@@ -2126,7 +2130,7 @@ export default function App() {
                   docs/design/console-context-indicator.md. */}
               {aiEnabled && ctx && (() => {
                 const pct = ctx.window > 0 ? Math.round((ctx.total_tokens / ctx.window) * 100) : 0
-                const dot = pct >= 85 ? '#ff4d4f' : (pct >= 60 ? '#faad14' : '#52c41a')
+                const dot = pct >= 85 ? 'var(--rs-danger)' : (pct >= 60 ? 'var(--rs-warn)' : 'var(--rs-ok)')
                 const shown = ctx.buckets.filter(b => b.tokens > 0).slice().sort((a, b) => b.tokens - a.tokens)
                 const tok = (k: string) => ctx.buckets.find(b => b.key === k)?.tokens ?? 0
                 const pins = ctx.memory_pins ?? 0
@@ -2250,7 +2254,7 @@ export default function App() {
                   </Tooltip>
                 ) : updateInfo?.latest ? (
                   <Tooltip title="You're on the latest version">
-                    <span style={{ color: '#52c41a', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                    <span style={{ color: 'var(--rs-ok)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                       <CheckCircleOutlined style={{ fontSize: 12 }} /> up to date
                     </span>
                   </Tooltip>

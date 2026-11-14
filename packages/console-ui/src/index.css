@@ -416,14 +416,6 @@ a.ant-typography:not(.ant-typography-disabled),
 .ant-select:not(.ant-select-disabled) .ant-select-arrow { color: var(--rs-field); }
 .ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled) { background: var(--rs-field); }
 
-/* Table sort and filter icons: Ant's quaternary grey was 2.9:1, and the active
-   arrow barely differed from the idle one. Idle in the muted text, active in
-   the strong text. */
-.ant-table-column-sorter,
-.ant-table-filter-trigger { color: var(--rs-text-muted); }
-.ant-table-column-sorter-up.active,
-.ant-table-column-sorter-down.active,
-.ant-table-filter-trigger.active { color: var(--rs-text); }
 
 /* Alert icons in the theme's status colours (Ant's warning and success icons
    were 1.6–1.8:1 on their light tints). */

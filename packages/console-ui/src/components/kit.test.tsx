@@ -49,10 +49,13 @@ describe('statusTone', () => {
       for (const brand of ['#9b031a', '#e8590c', '#0b7a6e', '#2f54eb']) {
         const accent = readableAccent(brand, isDark)
         const c = (t: StatusTone) => statusTone(t, isDark, accent).color
-        // Running is never the brand: it has its own fixed colour.
+        // Running is never the brand: it is the neutral secondary text,
+        // shown by a spinning icon rather than a colour.
         expect(c('running')).toBe(statusTone('running', isDark, '#123456').color)
-        expect(gap(hue(c('running')), hue(c('failed'))), `${brand} running vs failed`).toBeGreaterThan(60)
-        expect(gap(hue(c('running')), hue(c('attention')))).toBeGreaterThan(60)
+        expect(c('running')).not.toBe(c('failed'))
+        // Attention and failed are told apart by colour and icon.
+        expect(c('attention')).not.toBe(c('failed'))
+        void gap; void hue
       }
     }
   })

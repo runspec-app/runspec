@@ -99,7 +99,8 @@ export function KnowledgeSync({ onOpenSettings, onResult }: KnowledgeSyncProps) 
   return (
     <Tooltip title={pullTip(status, update)}>
       <Button icon={<CloudDownloadOutlined />} loading={busy} onClick={pull}>
-        <Badge dot={!!update?.available && !update.pinned} offset={[6, -2]}>Pull</Badge>
+        <Badge dot={!!update?.available && !update.pinned} offset={[6, -2]}
+          styles={{ indicator: { background: 'var(--rs-warn)' } }}>Pull</Badge>
       </Button>
     </Tooltip>
   )

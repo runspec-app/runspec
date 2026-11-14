@@ -1347,8 +1347,11 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
                 disabled={generating}
                 loading={generating}
                 onClick={async () => {
+                  // With hosts it can't reach, rotating can lock this machine out of
+                  // them: type "rotate" to go ahead.
                   const a = await askRisk({
-                    level: 'fleet',
+                    level: disconnected.length > 0 ? 'destructive' : 'fleet',
+                    typeToConfirm: disconnected.length > 0 ? 'rotate' : undefined,
                     title: 'Rotate SSH key?',
                     action: 'Push a new key to every connected host, verify it, then swap',
                     targets: connectedHosts,
@@ -3860,8 +3863,10 @@ export function CredentialsTab({ onOpenTab }: { onOpenTab?: (tab: string) => voi
                   ...(use?.runnables ?? []).map(r => `${r.name} (${r.hosts.length === 1 ? r.hosts[0] : `${r.hosts.length} hosts`})`),
                   ...(use?.features ?? []).map(f => f.feature),
                 ]
+                // In use, removing it cuts those off: type its label to go ahead.
                 const a = await askRisk({
-                  level: 'local', title: `Remove ${c.label}?`, action: c.label, okText: 'Remove',
+                  level: users.length ? 'destructive' : 'local', typeToConfirm: users.length ? c.label : undefined,
+                  title: `Remove ${c.label}?`, action: c.label, okText: 'Remove',
                   consequence: users.length
                     ? `Its secret is deleted from the keychain, and these stop getting it: ${users.join(', ')}.`
                     : 'Its secret is deleted from the keychain. Nothing uses it now.',
