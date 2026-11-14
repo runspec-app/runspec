@@ -311,6 +311,8 @@ describe('OutputPanel autonomy-gate confirm', () => {
     // The card says it was changed and from what, and the button says so too.
     expect(screen.getByTestId('confirm-edited').textContent).toBe('edited')
     expect(screen.getByTestId('edited-filename').textContent).toBe('was note.md')
+    // The header line shows what will run, not the assistant's proposal.
+    expect(screen.getAllByTestId('tool-header-args').some(e => e.textContent?.includes('filename="edited.md"'))).toBe(true)
     await userEvent.click(screen.getByRole('button', { name: /approve edited & create/i }))
     expect(resolveConfirm).toHaveBeenCalledWith('req-7', true, {
       filename: 'edited.md',

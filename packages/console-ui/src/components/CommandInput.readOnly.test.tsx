@@ -78,6 +78,7 @@ describe('CommandInput off the Console', () => {
     const box = screen.getByTestId('composer')
     expect(box.getAttribute('data-slim')).toBe('true')
     const el = screen.getByRole('textbox')
+    expect(el.getAttribute('rows')).toBe('1')
     fireEvent.focus(el)
     expect(box.getAttribute('data-slim')).toBe('false')
     fireEvent.change(el, { target: { value: 'df' } })

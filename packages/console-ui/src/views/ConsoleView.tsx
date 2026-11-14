@@ -140,6 +140,10 @@ interface ConsoleViewProps {
   inFlight: InFlightRecord[]
   pendingChat?: string | null
   onChatSent?: () => void
+  /** Everything waiting for a person, the footer's number (App). */
+  waitingTotal?: number
+  webhookWaiting?: number
+  onOpenWebhooks?: () => void
 }
 
 function elapsed(startedAt: string): string {
@@ -159,9 +163,15 @@ export function activitySummary(running: number, waiting: number): string {
  *  the sessions waiting for you (click to open). It replaces the strip that
  *  sat above the session row; the chips keep their own running/waiting marks,
  *  and the floating pill only appears when you've scrolled away. */
-export function ActivityControl({ inFlight, waiting, onOpen }: {
+export function ActivityControl({ inFlight, working = [], waiting, waitingTotal, webhookWaiting = 0, onOpenWebhooks, onOpen }: {
   inFlight: InFlightRecord[]
+  /** Sessions whose turn is running (the spinning chips). */
+  working?: { id: string; label: string }[]
   waiting: { id: string; label: string }[]
+  /** The footer's "waiting for you" number, so the two always agree. */
+  waitingTotal?: number
+  webhookWaiting?: number
+  onOpenWebhooks?: () => void
   onOpen: (sessionId: string) => void
 }) {
   const [askRisk, riskHolder] = useRiskConfirm()
@@ -174,8 +184,12 @@ export function ActivityControl({ inFlight, waiting, onOpen }: {
     return () => clearInterval(t)
   }, [open, inFlight.length])
 
-  if (inFlight.length === 0 && waiting.length === 0) return riskHolder
-  const label = activitySummary(inFlight.length, waiting.length)
+  // One count for each: runs on the fleet plus chats whose turn is running
+  // (what the chips spin for); waiting is the footer's number.
+  const running = inFlight.length + working.length
+  const waitingN = waitingTotal ?? waiting.length + webhookWaiting
+  if (running === 0 && waitingN === 0) return riskHolder
+  const label = activitySummary(running, waitingN)
 
   const stop = async (r: InFlightRecord) => {
     const isTool = r.kind === 'builtin_tool'
@@ -189,9 +203,15 @@ export function ActivityControl({ inFlight, waiting, onOpen }: {
 
   const list = (
     <div data-testid="activity-list" style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 320, maxWidth: 480, maxHeight: '50vh', overflowY: 'auto' }}>
-      {waiting.length > 0 && (
+      {(waiting.length > 0 || webhookWaiting > 0) && (
         <div>
           <Text strong style={{ fontSize: 12 }}>Waiting for you</Text>
+          {webhookWaiting > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+              <Text style={{ fontSize: 13, flex: 1, minWidth: 0 }}>{webhookWaiting} webhook{webhookWaiting === 1 ? '' : 's'}</Text>
+              <Button size="small" onClick={() => { setOpen(false); onOpenWebhooks?.() }}>Review</Button>
+            </div>
+          )}
           {waiting.map(w => (
             <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
               <Text style={{ fontSize: 13, flex: 1, minWidth: 0 }} ellipsis>{w.label}</Text>
@@ -200,9 +220,21 @@ export function ActivityControl({ inFlight, waiting, onOpen }: {
           ))}
         </div>
       )}
+      {working.length > 0 && (
+        <div>
+          <Text strong style={{ fontSize: 12 }}>Chats working</Text>
+          {working.map(w => (
+            <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+              <LoadingOutlined aria-hidden spin style={{ color: 'var(--rs-text-secondary)', fontSize: 12 }} />
+              <Text style={{ fontSize: 13, flex: 1, minWidth: 0 }} ellipsis>{w.label}</Text>
+              <Button size="small" onClick={() => { setOpen(false); onOpen(w.id) }}>Open</Button>
+            </div>
+          ))}
+        </div>
+      )}
       {inFlight.length > 0 && (
         <div>
-          <Text strong style={{ fontSize: 12 }}>Running</Text>
+          <Text strong style={{ fontSize: 12 }}>Runs on hosts</Text>
           {inFlight.map(r => {
             // Built-in agent tools show their label verbatim; a runnable keeps /name.
             const isTool = r.kind === 'builtin_tool'
@@ -242,7 +274,7 @@ export function ActivityControl({ inFlight, waiting, onOpen }: {
   )
 }
 
-export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewProps) {
+export function ConsoleView({ inFlight, pendingChat, onChatSent, waitingTotal, webhookWaiting = 0, onOpenWebhooks }: ConsoleViewProps) {
   const [askRisk, riskHolder] = useRiskConfirm()
   const { blocks, addBlock, upsertBlock, updateBlock, clearBlocks, hydrateBlocks, restoreBlocks, removeSession, setBlockInContext } = useInvocationBlocks()
   // `[console] ai` off-switch: the Console stays (it is the output pane for every
@@ -754,7 +786,11 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
         <ActivityControl
           inFlight={inFlight}
+          working={sessions.filter(x => statusOf(x) === 'running').map(x => ({ id: x.id, label: x.label || x.kind }))}
           waiting={sessions.filter(x => statusOf(x) === 'waiting').map(x => ({ id: x.id, label: x.label || x.kind }))}
+          waitingTotal={waitingTotal}
+          webhookWaiting={webhookWaiting}
+          onOpenWebhooks={onOpenWebhooks}
           onOpen={select}
         />
         <SessionStrip

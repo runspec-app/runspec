@@ -768,6 +768,10 @@ function RunnableCard({ entry, hosts, onPick }: {
   const requiredCount = (runnable.args ?? []).filter(a => a.required).length
   const subCount = Object.keys(runnable.commands ?? {}).length
   const isAuto = runnable.autonomy === 'autonomous'
+  // The mark goes on what asks, not on what doesn't: no badge = runs when
+  // you say so; "asks first" = it stops for a go-ahead; "manual" = only a
+  // person can start it.
+  const autonomyBadge = autonomyMark(runnable.autonomy)
   const isInstant = argCount === 0 && subCount === 0
 
   const sf = surfaces(isDark)
@@ -794,13 +798,13 @@ function RunnableCard({ entry, hosts, onPick }: {
         <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600 }}>{runnable.name}</Text>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           {isInstant && (
-            <Tooltip title="Nothing to fill in: click, confirm, and it runs">
+            <Tooltip title={isAuto ? 'Nothing to fill in: click and it runs' : 'Nothing to fill in: click, confirm, and it runs'}>
               <StatusTag tone="neutral" icon={<ThunderboltOutlined />}>no args</StatusTag>
             </Tooltip>
           )}
-          {isAuto && (
-            <Tooltip title="autonomy: autonomous — the assistant can invoke this without asking">
-              <StatusTag tone="ok">auto</StatusTag>
+          {autonomyBadge && (
+            <Tooltip title={autonomyBadge.tip}>
+              <StatusTag tone={autonomyBadge.tone}>{autonomyBadge.text}</StatusTag>
             </Tooltip>
           )}
         </div>
@@ -908,6 +912,15 @@ function RunbookCard({ runbook, onClick, onEdit }: { runbook: Runbook; onClick: 
       </div>
     </div>
   )
+}
+
+/** The Forms card's autonomy mark, or null for one that runs without asking.
+ *  Pure, for tests. */
+export function autonomyMark(autonomy: string | undefined): { text: string; tone: 'neutral' | 'attention'; tip: string } | null {
+  const a = autonomy || 'confirm'
+  if (a === 'autonomous') return null
+  if (a === 'manual') return { text: 'manual', tone: 'attention', tip: 'Only a person can start this; the assistant never runs it.' }
+  return { text: 'asks first', tone: 'neutral', tip: `autonomy: ${a}. It waits for a go-ahead before it runs, from you or the assistant.` }
 }
 
 // A saved run — a deterministic preset — rendered as a launchable card. Clicking

@@ -84,6 +84,20 @@ export function fmtTime(epochSeconds: number): string {
   return fmtClock(epochSeconds * 1000)
 }
 
+/** The hosts a saved run reaches, by name: its host, its group's or profile's
+ *  members, or its picked hosts. A failover list ("first connected of …")
+ *  reaches one host, so it resolves to none here. Pure, for tests. */
+export function savedRunMembers(
+  s: Pick<SavedRun, 'host' | 'group' | 'hosts' | 'selected_hosts' | 'profile'>,
+  hosts: { name: string; group?: string; profiles?: string[] }[],
+): string[] {
+  if (s.host) return [s.host]
+  if (s.group) return hosts.filter(h => h.group === s.group).map(h => h.name)
+  if (s.selected_hosts?.length) return s.selected_hosts
+  if (s.profile) return hosts.filter(h => h.profiles?.includes(s.profile as string)).map(h => h.name)
+  return []
+}
+
 /** Where a saved run goes, as the confirmation lists it: its host, its group,
  *  its picked hosts, its failover candidates or its profile. Pure. */
 export function savedRunTargets(s: Pick<SavedRun, 'host' | 'group' | 'hosts' | 'selected_hosts' | 'profile'>): string[] {

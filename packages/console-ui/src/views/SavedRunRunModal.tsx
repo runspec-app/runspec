@@ -13,7 +13,8 @@ interface SavedRunRunModalProps {
   // Fire the saved run: only the open-param values travel — the runnable, target
   // hosts, fixed args, and credentials are baked into the preset and resolved
   // bridge-side. ConsoleView owns the bridge.run_saved_run call.
-  onRun: (id: string, values: Record<string, unknown>) => void
+  /** Resolves false when the run didn't start (a confirmation was cancelled). */
+  onRun: (id: string, values: Record<string, unknown>) => void | boolean | Promise<boolean>
 }
 
 // Literal defaults seed the form; a $VAR_REF default is shown as a placeholder,
@@ -53,7 +54,7 @@ export function SavedRunRunModal({ savedRun, hostNames, onClose, onRun }: SavedR
 
   // Front-line validation (required + range) mirrors RunbookRunModal; the bridge
   // re-validates with the core validator/types before running.
-  const submit = () => {
+  const submit = async () => {
     const errs: Record<string, string> = {}
     for (const a of params) {
       const v = values[a.name]
@@ -66,7 +67,8 @@ export function SavedRunRunModal({ savedRun, hostNames, onClose, onRun }: SavedR
       }
     }
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
-    onRun(savedRun.id, values)
+    // Wait for any confirmation: the dialog stays open if it's cancelled.
+    if ((await onRun(savedRun.id, values)) === false) return
     onClose()
     message.success(`Saved run '${savedRun.id}' started`)
   }
