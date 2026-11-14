@@ -340,8 +340,10 @@ export function SendBarApp() {
             primaryColor: ink.text, primaryShadow: 'none', colorPrimaryBorder: accent,
             dangerColor: danger.onFill, dangerShadow: 'none',
           },
-          Input: { activeBorderColor: accent, hoverBorderColor: accent, activeShadow: `0 0 0 3px ${withAlpha(accent, 0.18)}` },
-          Checkbox: { colorPrimary: accent, colorPrimaryHover: accent, colorWhite: sf.base },
+          // The same focus ring and square checkboxes as the main window
+          // (this window has its own theme, so it missed both).
+          Input: { activeBorderColor: accent, hoverBorderColor: accent, activeShadow: `0 0 0 2px ${accent}` },
+          Checkbox: { colorPrimary: accent, colorPrimaryHover: accent, colorWhite: sf.base, borderRadiusSM: 3 },
         },
       }}>
         <AntApp>

@@ -387,6 +387,13 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
   padding: 7px 8px; border-radius: var(--rs-radius-sm); cursor: pointer; font-size: 13px;
 }
 /* The selected command: a bar and the strong text, not only a 5% tint (1.1:1). */
+.rs-cmdk [cmdk-input]::placeholder { color: var(--rs-text-muted); opacity: 1; }
+/* The sorted column's arrow is the strong text; on dark Ant drew it dimmer
+   than the unsorted one. */
+.ant-table-column-sorter .ant-table-column-sorter-up.active,
+.ant-table-column-sorter .ant-table-column-sorter-down.active { color: var(--rs-text) !important; }
+/* A disabled danger button stays findable: on dark it was 1.3:1. */
+.ant-btn-dangerous:disabled, .ant-btn-dangerous.ant-btn-disabled { color: var(--rs-text-faint) !important; border-color: var(--rs-border) !important; }
 .rs-cmdk [cmdk-item][data-selected='true'] { background: var(--rs-hover); box-shadow: inset 2px 0 0 var(--rs-focus); color: var(--rs-text); }
 .rs-cmdk [cmdk-empty] { padding: 18px; text-align: center; color: var(--rs-text-muted); font-size: 13px; }
 

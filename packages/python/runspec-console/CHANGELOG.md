@@ -9,6 +9,44 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.443.0] — 2026-11-14
+
+### Fixed
+
+- **A saved run on several hosts asks first.** Running a saved run with
+  options from its dialog started at once on a group or profile, with no list
+  of the hosts it would reach. It now asks first, naming each host, the same
+  way a Forms run on several hosts and a saved transfer to a group do. The
+  dialog stays open if you cancel, and it only says the run started once it
+  has. One host still runs at once, and so does an autonomous runnable. The
+  no-option saved run's question lists a group's or profile's hosts too.
+- **One count for running and waiting.**
+  - The Activity control's "waiting" is the footer's number, webhooks
+    included, and its list has a line for them with Review.
+  - "Running" counts chats whose turn is running (the spinning chips) as well
+    as runs on hosts, listed separately as "Chats working" and "Runs on
+    hosts".
+
+### Changed
+
+- **Stop is neutral.** The Stop on a running card is an outlined button with
+  a stop mark, not red: red is for what destroys, and under a red brand a red
+  Stop on every card read as an alarm. Stopping a run asks first, like Stop
+  in the Activity list.
+- **Forms marks the runnables that ask.** Cards show "asks first" or "manual";
+  autonomous ones (which run without asking) have no mark. The green "auto"
+  badge is gone.
+- **An edited approval shows what will run.** The card's header line follows
+  your edits as you make them instead of the assistant's proposal.
+- **Fixes the Send to terminals window missed.** It has the same 2px focus
+  ring and square checkboxes as the main window. The main window's text
+  fields now get that ring from the theme as well.
+- **Smaller fixes.**
+  - The Ctrl+K palette's placeholder is the muted text; it was 2.2:1 on dark.
+  - On dark, the column you sorted by has the brighter arrow.
+  - A disabled danger button can be seen; it was 1.3:1 on dark.
+  - Off the Console, the chat box is truly one line; it kept two rows.
+
 ## [0.442.0] — 2026-11-14
 
 ### Fixed

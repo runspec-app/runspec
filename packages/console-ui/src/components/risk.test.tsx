@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 import { askRemembered, confirmWord, consentCount, consentKey, consentLabel, forgetConsent, forgetConsents, hasConsent, listConsents, RememberedAnswers, targetList, useRiskConfirm, type RiskAnswer, type RiskAsk } from './risk'
-import { savedRunTargets } from './runShared'
+import { savedRunMembers, savedRunTargets } from './runShared'
 
 function Harness({ ask, onAnswer }: { ask: RiskAsk; onAnswer: (a: RiskAnswer) => void }) {
   const [confirm, holder] = useRiskConfirm()
@@ -85,6 +85,15 @@ describe('remembered consent', () => {
     expect(hasConsent(key)).toBe(false)
     expect(await askRemembered(async () => ({ ok: false, remember: true }), key, ASK)).toBe(false)
     expect(hasConsent(key)).toBe(false)
+  })
+
+  it('resolves the hosts a saved run reaches', () => {
+    const base = { host: '', group: '', hosts: [], selected_hosts: [], profile: '' }
+    const fleet = [{ name: 'web-1', group: 'web', profiles: ['prod'] }, { name: 'web-2', group: 'web' }, { name: 'db-1', group: 'db', profiles: ['prod'] }]
+    expect(savedRunMembers({ ...base, group: 'web' }, fleet)).toEqual(['web-1', 'web-2'])
+    expect(savedRunMembers({ ...base, profile: 'prod' }, fleet)).toEqual(['web-1', 'db-1'])
+    expect(savedRunMembers({ ...base, host: 'db-1' }, fleet)).toEqual(['db-1'])
+    expect(savedRunMembers({ ...base, hosts: ['web-1', 'web-2'] }, fleet)).toEqual([])
   })
 
   it('names where a saved run goes', () => {
