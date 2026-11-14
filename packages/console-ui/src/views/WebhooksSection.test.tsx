@@ -18,7 +18,7 @@ vi.mock('../bridge', () => ({
   bridge: new Proxy({}, { get: (_t, p) => (fns as Record<string, unknown>)[p as string] ?? vi.fn() }),
 }))
 
-import { WebhooksSection, followOffers, followsText, setupTargets } from './WebhooksSection'
+import { WebhooksSection, WebhooksSummary, followsText, hookStateText, hostOffers, stripHint, venvHookState, webhookCounts } from './WebhooksSection'
 import { changed, hasUsername, tomlName, NEW_HOOK_TOML } from './WebhookHooksModal'
 
 const strip = (patch: Partial<WebhookVenv> = {}): WebhookVenv => ({
@@ -27,9 +27,9 @@ const strip = (patch: Partial<WebhookVenv> = {}): WebhookVenv => ({
   recent: [{ id: 3, hook: 'alerts', received: new Date().toISOString(), source: 'x', state: 'ran', exit_code: 0, fields: {}, rule: 'disk', runnable: 'cleanup-tmp', command: [], args: {}, autonomy: 'autonomous', reason: '' }],
   ...patch,
 })
-const sv = (host: string, venv: string, enabled: boolean | null): SchedulerVenv => ({
+const sv = (host: string, venv: string, enabled: boolean | null, hooks: string[] = enabled ? ['alerts'] : []): SchedulerVenv => ({
   key: `${host}/${venv}`, host, hostGroup: '', venv, backend: 'daemon', owner: 'ops', settings: null, hostZone: '', packages: null,
-  webhooks: enabled === null ? null : { enabled, hooks: enabled ? ['alerts'] : [] },
+  webhooks: enabled === null ? null : { enabled, hooks },
 })
 const status = (venvs: WebhookVenv[], follows: Record<string, string[]> = { 'web-01': ['*'] }): WebhooksStatus => ({ configured: true, away: '', venvs, follows })
 
@@ -48,12 +48,22 @@ beforeEach(() => {
 })
 
 describe('pure helpers', () => {
-  it('offers hosts that take webhooks but are not followed', () => {
-    const venvs = [sv('web-01', 'ops', true), sv('db-01', 'ops', true), sv('db-02', 'ops', false), sv('old-01', 'ops', null)]
-    expect(followOffers(venvs, status([]))).toEqual(['db-01'])
-    expect(setupTargets(venvs, status([strip()])).map(t => t.host)).toEqual(['db-01', 'db-02'])
+  it('lists every unfollowed host, followable ones first, whatever their webhooks say', () => {
+    const venvs = [sv('web-01', 'ops', true), sv('db-01', 'ops', true), sv('db-02', 'ops', false), sv('old-01', 'ops', null), sv('db-02', 'tools', true, [])]
+    const offers = hostOffers(venvs, status([]))
+    expect(offers.map(o => [o.host, o.canFollow])).toEqual([['db-01', true], ['db-02', true], ['old-01', false]])
+    expect(offers[1].venvs.map(hookStateText)).toEqual(['webhooks off', 'webhooks on, no hooks yet'])
+    expect(venvHookState(sv('a', 'b', null))).toBe('old')
+    expect(venvHookState(undefined)).toBe('missing')
+    expect(hookStateText(sv('a', 'b', true, ['x', 'y']))).toBe('webhooks on, 2 hooks')
     expect(followsText(['*'])).toBe('follows every hook')
     expect(followsText(['a', 'b'])).toBe('follows a, b')
+  })
+  it('hints when a followed venv has webhooks off or no hooks', () => {
+    expect(stripHint(strip({ settings: { enabled: false } }))?.tab).toBe('settings')
+    expect(stripHint(strip({ settings: { enabled: true } }))?.action).toBe('Add a hook…')
+    expect(stripHint(strip({ settings: { enabled: true }, hooks: [consoleHook] }))).toBeNull()
+    expect(stripHint(strip({ connected: false, settings: { enabled: false } }))).toBeNull()
   })
   it('reads a hook name and username from TOML; settings diff only what changed', () => {
     expect(tomlName(NEW_HOOK_TOML)).toBe('new-hook')
@@ -82,14 +92,64 @@ describe('WebhooksSection', () => {
     expect(fns.webhook_mute).toHaveBeenCalledWith({ host: 'web-01', venv: 'ops', hook: '*', for: '4h', reason: 'muted from the console' })
   })
 
-  it('follows a host from the offer', async () => {
+  it('follows a host whose webhooks are still off', async () => {
     fns.webhook_follow.mockResolvedValue({ ok: true, hooks: ['*'] })
-    render(<WebhooksSection editable venvs={[sv('db-01', 'ops', true)]} status={status([])} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Follow webhooks on db-01' }))
+    render(<WebhooksSection editable venvs={[sv('db-01', 'ops', false)]} status={status([], {})} />)
+    const row = screen.getByTestId('webhook-host-offer')
+    expect(row.textContent).toContain('webhooks off')
+    await userEvent.click(within(row).getByRole('button', { name: 'Follow webhooks on db-01' }))
     expect(fns.webhook_follow).toHaveBeenCalledWith({ host: 'db-01', hooks: ['*'] })
   })
 
-  it('renders nothing with nothing followed and nothing to offer', () => {
+  it('says a host needs runspec-scheduler 0.11.0 and offers no Follow there', () => {
+    render(<WebhooksSection editable venvs={[sv('old-01', 'ops', null)]} status={status([], {})} />)
+    const row = screen.getByTestId('webhook-host-offer')
+    expect(row.textContent).toContain('needs runspec-scheduler 0.11.0')
+    expect((within(row).getByRole('button', { name: 'Follow webhooks on old-01' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('opens the listener settings from Set up…', async () => {
+    render(<WebhooksSection editable venvs={[sv('db-01', 'ops', false)]} status={status([], {})} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Set up on db-01 / ops' }))
+    expect(await screen.findByRole('tab', { name: 'Listener & mail', selected: true })).toBeTruthy()
+    expect(fns.webhook_hooks).toHaveBeenCalledWith({ host: 'db-01', venv: 'ops' })
+  })
+
+  it('folds followed venvs that take no webhooks into one quiet line', () => {
+    const root = strip({ key: 'little-boy/ops-root', host: 'little-boy', venv: 'ops-root', connected: false, recent: [], unavailable: 'root-owned venv: runspec-scheduler never runs as root, so it takes no webhooks' })
+    const old = strip({ key: 'little-girl/legacy', host: 'little-girl', venv: 'legacy', connected: false, recent: [], unavailable: "runspec-scheduler isn't installed in this venv (or is older than 0.11.0)" })
+    render(<WebhooksSection editable venvs={[]} status={status([strip(), root, old], { 'web-01': ['*'], 'little-boy': ['*'], 'little-girl': ['*'] })} />)
+    expect(screen.getAllByTestId('webhook-strip')).toHaveLength(1)
+    const line = screen.getByTestId('webhook-unavailable').textContent
+    expect(line).toContain('little-boy / ops-root (root-owned)')
+    expect(line).toContain('little-girl / legacy (needs runspec-scheduler 0.11.0)')
+  })
+
+  it('folds many unfollowed hosts behind one toggle', async () => {
+    const venvs = 'abcdefghi'.split('').map(h => sv(h, 'ops', true))
+    render(<WebhooksSection editable venvs={venvs} status={status([], {})} />)
+    expect(screen.queryAllByTestId('webhook-host-offer')).toHaveLength(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Show 9 hosts (9 can be followed)' }))
+    expect(screen.getAllByTestId('webhook-host-offer')).toHaveLength(9)
+  })
+
+  it('sums up what is followed in one line for the Schedules tab', async () => {
+    const pending = { ...strip().recent[0], id: 9, state: 'pending' }
+    const st = status([strip({ open: [pending] }), strip({ key: 'db-01/ops', host: 'db-01', connected: false, error: 'no route to host' })], { 'web-01': ['*'], 'db-01': ['*'] })
+    expect(webhookCounts(st)).toEqual({ hosts: 2, waiting: 1, problems: 1 })
+    const open = vi.fn()
+    render(<WebhooksSummary status={st} onOpen={open} />)
+    expect(screen.getByTestId('webhooks-summary').textContent).toContain('following 2 hosts')
+    await userEvent.click(screen.getByRole('button', { name: 'Open Webhooks' }))
+    expect(open).toHaveBeenCalled()
+  })
+
+  it('says nothing on the Schedules tab when nothing is followed', () => {
+    const { container } = render(<WebhooksSummary status={status([], {})} />)
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('renders nothing with nothing followed and no scheduler venvs', () => {
     const { container } = render(<WebhooksSection editable venvs={[]} status={status([], {})} />)
     expect(container.firstChild).toBeNull()
   })

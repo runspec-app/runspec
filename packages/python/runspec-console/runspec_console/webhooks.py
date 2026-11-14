@@ -124,6 +124,9 @@ class VenvHooks:
     hooks: list[str] = field(default_factory=list)  # what this console follows there
     connected: bool = False
     error: str = ""
+    # Why this venv can't take webhooks at all (no runspec-scheduler, one older
+    # than 0.11.0, root-owned): not a fault, so the UI shows it quietly.
+    unavailable: str = ""
     paused: str = ""  # why this console isn't counted as watching ("screen locked")
     cursor: int | None = None  # the last event id seen (None = never connected)
     who: str = ""  # who the host counts this console as
@@ -148,6 +151,7 @@ class VenvHooks:
         """A fresh connection's first line: replace what's waiting, mutes and hooks."""
         self.connected = True
         self.error = ""
+        self.unavailable = ""
         self.away = 0
         self.who = str(msg.get("who") or "")
         self.settings = (
@@ -237,6 +241,7 @@ class VenvHooks:
             "follows": list(self.hooks),
             "connected": self.connected,
             "error": self.error,
+            "unavailable": self.unavailable,
             "paused": self.paused,
             "who": self.who,
             "settings": self.settings,

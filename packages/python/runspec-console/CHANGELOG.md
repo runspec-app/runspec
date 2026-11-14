@@ -9,6 +9,42 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.440.0] — 2026-11-14
+
+### Added
+
+- **Webhooks has its own tab: Automation → Webhooks**, beside Schedules,
+  Triggers and Working hours. It lists every connected host in the profile that
+  has runspec-scheduler, whether this console follows it or not, so there is
+  always somewhere to start following:
+  - a followed venv shows its connection, mutes and recent deliveries as before;
+  - a host not followed shows each venv's state: "webhooks on, 2 hooks",
+    "webhooks off" (**Set up…** opens the listener settings), "no hooks yet"
+    (**Add a hook…**) or "needs runspec-scheduler 0.11.0";
+  - **Follow** works before any hook is made or the listener is on, and is
+    greyed out (with the reason) only when no venv on the host has
+    runspec-scheduler 0.11.0;
+  - waiting approvals show at the top as well as on the Console;
+  - past 8 hosts not followed, they fold behind one "Show N hosts" link.
+- A followed venv whose listener is off, or that has no hooks yet, says so
+  under its strip with the button that fixes it.
+
+### Changed
+
+- **The Schedules tab no longer carries the webhook strips.** It shows one line
+  (hosts followed, approvals waiting, venvs not connected) with **Open
+  Webhooks**, and nothing when no host is followed. The Automation tab's badge
+  counts webhook approvals waiting.
+
+### Fixed
+
+- **No more warnings for venvs that can't take webhooks.** Following a host
+  followed every venv on it, so a root-owned venv, one without
+  runspec-scheduler or one older than 0.11.0 logged a warning and showed as
+  "not connected". Root-owned venvs are no longer followed at all (the
+  scheduler never runs as root); the others are logged once at INFO, retried
+  every 10 minutes, and folded into one quiet "Not taking webhooks" line.
+
 ## [0.439.0] — 2026-11-14
 
 ### Fixed

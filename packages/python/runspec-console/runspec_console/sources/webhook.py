@@ -159,8 +159,27 @@ def stuck(reason: str) -> bool:
     low = reason.lower()
     return any(
         s in low
-        for s in ("isn't installed", "older than", "sudo", "refused", "no such file")
+        for s in (
+            "isn't installed",
+            "older than",
+            "root-owned",
+            "sudo",
+            "refused",
+            "no such file",
+        )
     )
+
+
+ROOT_OWNED = (
+    "root-owned venv: runspec-scheduler never runs as root, so it takes no webhooks"
+)
+
+
+def unavailable(reason: str) -> bool:
+    """A venv that can't take webhooks at all (no runspec-scheduler, one older
+    than 0.11.0, root-owned): shown quietly, not as a fault."""
+    low = reason.lower()
+    return any(s in low for s in ("isn't installed", "older than", "root-owned"))
 
 
 class WebhookFollower:
@@ -260,10 +279,16 @@ class WebhookFollower:
             if self._stop.is_set():
                 break
             self.state.connected = False
-            self.state.error = reason or "connection closed; reconnecting"
+            if unavailable(reason):
+                self.state.unavailable = reason
+                self.state.error = ""
+            else:
+                self.state.unavailable = ""
+                self.state.error = reason or "connection closed; reconnecting"
             self._changed()
             if reason and reason != last_logged:
-                logger.warning("webhooks: %s — %s", self.state.key, reason)
+                log = logger.info if unavailable(reason) else logger.warning
+                log("webhooks: %s — %s", self.state.key, reason)
                 last_logged = reason
             if was_connected or self.state.cursor is not None and not reason:
                 backoff = BACKOFF_START

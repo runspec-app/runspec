@@ -203,7 +203,11 @@ class WebhooksMixin:
             if remote
             else str(Path(rp).with_name("runspec-scheduler"))
         )
-        owner, _ = self._scheduler_owner(host, venv, remote)  # type: ignore[attr-defined]
+        owner, venv_owner = self._scheduler_owner(host, venv, remote)  # type: ignore[attr-defined]
+        if venv_owner == "root":
+            from .sources.webhook import ROOT_OWNED
+
+            raise wh.WebhookError(ROOT_OWNED)
         parts, frame = build_exec_argv(
             [binary, *argv], owner, "sudo", "-n", env={"RUNSPEC_LABEL": "console"}
         )

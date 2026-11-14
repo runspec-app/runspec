@@ -38,6 +38,7 @@ import {
   MinusOutlined,
   SendOutlined,
   SearchOutlined,
+  ApiOutlined,
 } from '@ant-design/icons'
 import { ConsoleView } from './views/ConsoleView'
 import { useWaitingCue, usePendingConfirms } from './useWaitingCue'
@@ -65,6 +66,7 @@ const KnowledgeView = React.lazy(() => import('./views/KnowledgeView').then(m =>
 const ImproveView = React.lazy(() => import('./views/ImproveView').then(m => ({ default: m.ImproveView })))
 const EvalsView = React.lazy(() => import('./views/EvalsView').then(m => ({ default: m.EvalsView })))
 const SchedulesView = React.lazy(() => import('./views/SchedulesView').then(m => ({ default: m.SchedulesView })))
+const WebhooksView = React.lazy(() => import('./views/WebhooksView').then(m => ({ default: m.WebhooksView })))
 const RotaView = React.lazy(() => import('./views/RotaView').then(m => ({ default: m.RotaView })))
 const DevView = React.lazy(() => import('./views/DevView').then(m => ({ default: m.DevView })))
 const FilesView = React.lazy(() => import('./views/files/FilesView').then(m => ({ default: m.FilesView })))
@@ -106,7 +108,7 @@ import type { PaletteAction } from './components/CommandPalette'
 import { PageHeader, pressable, SectionSwitch } from './components/kit'
 import { ConsoleInfoContext } from './consoleInfo'
 
-type ViewKey = 'console' | 'automation' | 'quality' | 'specs' | 'history' | 'analytics' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
+type ViewKey = 'console' | 'automation' | 'quality' | 'specs' | 'history' | 'analytics' | 'logs' | 'files' | 'forms' | 'marketplace' | 'schedules' | 'triggers' | 'webhooks' | 'rota' | 'improve' | 'evals' | 'knowledge' | 'dev'
 
 // Context-window fill of the active chat's latest turn (runspec:context_estimate).
 // total_tokens is exact (from the model's usage); bucket tokens are estimates that
@@ -1092,6 +1094,13 @@ export default function App() {
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting} waiting for you`}><BellOutlined /></Badge>
         : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><BellOutlined /></Badge>,
     },
+    {
+      key: 'webhooks' as ViewKey,
+      label: 'Webhooks',
+      icon: webhookWaiting > 0
+        ? <Badge count={webhookWaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${webhookWaiting} webhook${webhookWaiting === 1 ? '' : 's'} waiting for approval`}><ApiOutlined /></Badge>
+        : <ApiOutlined />,
+    },
     { key: 'analytics' as ViewKey, label: 'Charts',    icon: <BarChartOutlined /> },
     { key: 'rota'      as ViewKey, label: 'Working hours', icon: <ClockCircleOutlined /> },
     { key: 'dev'       as ViewKey, label: 'Dev',       icon: <BugOutlined /> },
@@ -1101,8 +1110,8 @@ export default function App() {
   // Log files, Forms holds Run / Specs, Quality holds Improve / Evals. Each view
   // keeps its own key, so code that opens 'triggers' still lands in the right
   // place; the parent tab opens the section used last.
-  const automationIcon = triggerAwaiting > 0
-    ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting} waiting for you`}><ControlOutlined /></Badge>
+  const automationIcon = triggerAwaiting + webhookWaiting > 0
+    ? <Badge count={triggerAwaiting + webhookWaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting + webhookWaiting} waiting for you`}><ControlOutlined /></Badge>
     : scheduleRunning > 0
       ? <Badge count={scheduleRunning} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${scheduleRunning} scheduled run${scheduleRunning === 1 ? '' : 's'} in progress`}><ControlOutlined /></Badge>
       : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><ControlOutlined /></Badge>
@@ -1841,8 +1850,8 @@ export default function App() {
                       label={tab.label}
                       sections={tab.sections.map(sec => ({
                         ...sec,
-                        count: sec.key === 'triggers' ? triggerAwaiting : sec.key === 'schedules' ? scheduleRunning : 0,
-                        countTone: sec.key === 'triggers' ? 'waiting' : 'running',
+                        count: sec.key === 'triggers' ? triggerAwaiting : sec.key === 'webhooks' ? webhookWaiting : sec.key === 'schedules' ? scheduleRunning : 0,
+                        countTone: sec.key === 'triggers' || sec.key === 'webhooks' ? 'waiting' : 'running',
                       }))}
                       value={view}
                       onChange={k => setView(k as ViewKey)}
@@ -1915,7 +1924,8 @@ export default function App() {
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} activeProfile={activeProfile} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
                       {view === 'analytics' && <AnalyticsView selectedHost={selectedHost} activeScope={activeScope} active />}
-                      {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} activeProfile={activeProfile} onOpenHistory={q => { setHistorySearch(q); setView('history') }} />}
+                      {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} activeProfile={activeProfile} onOpenHistory={q => { setHistorySearch(q); setView('history') }} onOpenWebhooks={() => setView('webhooks')} />}
+                      {view === 'webhooks'  && <WebhooksView hosts={hosts} runnables={runnables} status={webhooks.status} />}
                       {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
                       {view === 'knowledge' && <KnowledgeView active={view === 'knowledge'} aiEnabled={aiEnabled} onOpenSettings={openSettings} runnables={runnables}
                         onRunTool={name => {

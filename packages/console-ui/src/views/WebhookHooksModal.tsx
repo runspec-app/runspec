@@ -348,9 +348,11 @@ function SettingsTab({ target, list, onChanged }: { target: WebhookTarget; list:
   )
 }
 
-export function WebhookHooksModal({ target, onClose }: { target: WebhookTarget; onClose: () => void }) {
+export function WebhookHooksModal({ target, onClose, startTab = 'hooks' }: {
+  target: WebhookTarget; onClose: () => void; startTab?: 'hooks' | 'settings'
+}) {
   const [list, setList] = useState<WebhookHooksList | null>(null)
-  const [tab, setTab] = useState('hooks')
+  const [tab, setTab] = useState<string>(startTab)
   const load = useCallback(() => {
     bridge.webhook_hooks(target).then(setList, (e: unknown) => setList({ ok: false, error: String(e) }))
   }, [target])

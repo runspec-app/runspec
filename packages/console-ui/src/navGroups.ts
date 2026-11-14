@@ -26,7 +26,7 @@ export const NAV_OVERFLOW: readonly string[] = ['quality', 'dev']
 export const NAV_SECTIONS: Readonly<Record<string, readonly { key: string; label: string }[]>> = {
   forms: [{ key: 'forms', label: 'Run' }, { key: 'specs', label: 'Specs' }],
   history: [{ key: 'history', label: 'Runs' }, { key: 'analytics', label: 'Charts' }, { key: 'logs', label: 'Log files' }],
-  automation: [{ key: 'schedules', label: 'Schedules' }, { key: 'triggers', label: 'Triggers' }, { key: 'rota', label: 'Working hours' }],
+  automation: [{ key: 'schedules', label: 'Schedules' }, { key: 'triggers', label: 'Triggers' }, { key: 'webhooks', label: 'Webhooks' }, { key: 'rota', label: 'Working hours' }],
   quality: [{ key: 'improve', label: 'Improve' }, { key: 'evals', label: 'Evals' }],
 }
 

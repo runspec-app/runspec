@@ -42,6 +42,7 @@ export function inFlight(status: WebhooksStatus): WaitingDelivery[] {
 
 /** One followed venv's connection, as a word and a tone. */
 export function connection(v: WebhookVenv): { label: string; tone: StatusTone; detail: string } {
+  if (v.unavailable) return { label: 'not available', tone: 'neutral', detail: v.unavailable }
   if (v.paused) return { label: 'paused', tone: 'attention', detail: v.paused }
   if (v.connected) return { label: 'following', tone: 'ok', detail: '' }
   if (v.error) return { label: 'not connected', tone: 'failed', detail: v.error }
