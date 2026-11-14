@@ -37,6 +37,14 @@ export function computeKpis(buckets: AnalyticsBucket[]): Kpis {
   return { total, success, failure, rate: total > 0 ? (success / total) * 100 : 0 }
 }
 
+/** A chart's words for a screen reader: "backup 40, deploy 12 and 3 more".
+ *  Pure, for tests. */
+export function listText(items: { label: string; value: number }[], shown = 5): string {
+  if (!items.length) return 'none'
+  const head = items.slice(0, shown).map(i => `${i.label} ${i.value}`).join(', ')
+  return items.length > shown ? `${head} and ${items.length - shown} more` : head
+}
+
 export interface RunsPoint { date: string; status: string; value: number }
 
 /**

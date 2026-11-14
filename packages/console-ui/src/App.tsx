@@ -1384,8 +1384,11 @@ export default function App() {
                 cursor: 'col-resize', zIndex: 20,
               }}
             />
+            {/* The same 44px as the Views tab bar beside it, so the two bottom
+                borders run as one straight line across the window. */}
             <div style={{
-              padding: '13px 12px 12px 16px',
+              height: 44, boxSizing: 'border-box',
+              padding: '0 12px 0 16px',
               fontWeight: 700, fontSize: 14, color: titleCol,
               borderBottom: `1px solid ${borderCol}`, flexShrink: 0,
               // A white-label brand_name keeps the mono title in its accent; the
@@ -2023,9 +2026,11 @@ export default function App() {
                     else setView('triggers')
                   }}
                   onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click() } }}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: textWarning(isDark) }}
+                  // The words in the strong text (the warning colour was 3.8:1 on
+                  // the footer); the bell carries the colour.
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: textColor(isDark), fontWeight: 600 }}
                 >
-                  <BellOutlined style={{ fontSize: 12 }} />
+                  <BellOutlined aria-hidden style={{ fontSize: 12, color: textWarning(isDark) }} />
                   {(aiEnabled ? triggerAwaiting + pendingConfirms.size : 0) + webhookWaiting} waiting for you
                 </span>
               )}

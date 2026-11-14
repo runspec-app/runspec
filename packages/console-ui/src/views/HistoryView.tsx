@@ -856,6 +856,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       )}>
         <Input
           prefix={<SearchOutlined />}
+          aria-label="Search runs"
           placeholder="Search runnable, host, operator… (-name excludes)"
           value={search}
           onChange={e => onSearchChange(e.target.value)}
@@ -1009,6 +1010,16 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
             )
           },
           rowExpandable: () => true,
+          // Each expander says whose run it opens (antd's are all "Expand row").
+          expandIcon: ({ expanded, onExpand, record }) => (
+            <button
+              type="button"
+              className={`ant-table-row-expand-icon ${expanded ? 'ant-table-row-expand-icon-expanded' : 'ant-table-row-expand-icon-collapsed'}`}
+              aria-label={`${expanded ? 'Hide' : 'Show'} details: ${record.runnable} on ${record.host}, ${fullWhen(record.ts)}`}
+              aria-expanded={expanded}
+              onClick={e => onExpand(record, e)}
+            />
+          ),
           expandedRowKeys: expandedKeys,
           onExpand: (expanded, record) => { if (expanded) fetchDetail(record) },
           onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]),

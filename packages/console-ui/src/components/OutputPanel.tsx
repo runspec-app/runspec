@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons'
 import { pressable, StatusTag, type StatusTone } from './kit'
 import { approvalConsequence, useConsoleInfo } from '../consoleInfo'
+import { APPROVAL_BG, APPROVAL_BORDER, ApprovalActions, QueueMark, useGatePosition } from './approval'
 import { Clock } from '../when'
 
 const { Text } = Typography
@@ -57,8 +58,8 @@ interface CardTheme {
 }
 // Amber marks "waiting for you" (docs/design/brand.md); the confirm panel takes
 // it as a soft tint so it sits on gunmetal and aluminium alike.
-const AWAIT_BORDER = 'color-mix(in srgb, #e3b341 45%, var(--rs-border))'
-const AWAIT_BG = 'color-mix(in srgb, #e3b341 8%, var(--rs-surface-raised))'
+const AWAIT_BORDER = APPROVAL_BORDER
+const AWAIT_BG = APPROVAL_BG
 
 function useCardTheme(): CardTheme {
   const isDark = useIsDark()
@@ -1262,6 +1263,7 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div
         ref={scrollRef}
+        data-testid="output-scroll"
         onScroll={handleScroll}
         style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}
       >
@@ -1303,11 +1305,11 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
         </div>
       )}
 
-      {/* Sticky activity indicator — pinned while a turn is in flight so the
-          "still working" signal survives long tool runs scrolling the card's own
-          spinner out of view; doubles as jump-to-latest. When nothing is active,
-          the plain jump-to-bottom pill takes over (only when scrolled up). */}
-      {activeBlock ? (
+      {/* Activity pill: only when you've scrolled away from the latest output,
+          so the live "still working" step (or the parked approval) stays one
+          click away. At the bottom the turn's own card already shows it, and
+          the session row's Activity control lists everything in flight. */}
+      {activeBlock && showScrollDown ? (
         <ActivityIndicator block={activeBlock} pending={pendingConfirms[activeBlock.id] ?? null} onClick={scrollToBottom} />
       ) : showScrollDown ? (
         <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
@@ -1448,8 +1450,10 @@ function ToolCallBlock({
   // opens from "Add a reason…" beside Deny (Deny itself always denies at once,
   // so the keyboard Deny shortcut keeps working).
   const [editing, setEditing] = useState(false)
-  const [reasonOpen, setReasonOpen] = useState(false)
-  useEffect(() => { setReason(''); setEditing(false); setReasonOpen(false) }, [seedKey])
+  useEffect(() => { setReason(''); setEditing(false) }, [seedKey])
+  // Its place among everything waiting, and whether Alt+A answers it.
+  const gateRef = useRef<HTMLDivElement>(null)
+  const queue = useGatePosition(gateRef)
   const seedText = Object.fromEntries(approveArgs.map(([k, val]) => [k, jsonValue(val)]))
   const changedKeys = editable && edits ? Object.keys(edits).filter(k => edits[k] !== seedText[k]) : []
   const edited = changedKeys.length > 0
@@ -1480,7 +1484,7 @@ function ToolCallBlock({
   }
 
   return (
-    <div data-rs-confirm-gate={awaiting ? '' : undefined} style={{
+    <div ref={gateRef} data-rs-confirm-gate={awaiting ? '' : undefined} style={{
       margin: '2px 0',
       border: `1px solid ${awaiting ? AWAIT_BORDER : c.toolBorder}`,
       borderRadius: awaiting ? 16 : 12, overflow: 'hidden',
@@ -1601,6 +1605,7 @@ function ToolCallBlock({
               </Text>
             )}
             . It waits for your go-ahead.
+            {' '}<QueueMark {...queue} />
           </div>
           {consequence && (consequence.description || consequence.markers.length > 0) && (
             <div data-testid="confirm-consequence" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
@@ -1693,47 +1698,9 @@ function ToolCallBlock({
             )}
             </div>
           ) : null}
-          {reasonOpen && <Input.TextArea
-            autoFocus
-            size="small"
-            data-rs-confirm-reason=""
-            aria-label="Reason for denying (optional)"
-            placeholder="Denying? Optionally say why or what to do instead. The assistant gets this with the denial."
-            value={reason}
-            maxLength={2000}
-            autoSize={{ minRows: 1, maxRows: 6 }}
-            onChange={e => setReason(e.target.value)}
-            onKeyDown={e => {
-              // Enter sends the Deny with the reason (it's only used on a deny);
-              // Shift+Enter is a newline, like the other multi-line fields.
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault()
-                if (reason.trim()) deny()
-              }
-            }}
-            style={{ fontSize: 12, marginBottom: 10, borderRadius: 10 }}
-          />}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Tooltip title={`Approve (${shortcutHint('approve')})`}>
-              {/* One fixed look whatever the brand accent: green go, neutral Deny. */}
-              <Button shape="round" icon={<CaretRightOutlined />} onClick={approve} data-rs-confirm="approve"
-                className="rs-approve"
-                style={{ background: go.bg, borderColor: go.bg, color: go.text, ['--rs-approve-hover' as string]: go.hover }}>
-                {edited ? <>Approve edited &amp; {v}</> : <>Approve &amp; {v}</>}
-              </Button>
-            </Tooltip>
-            {edited && <StatusTag tone="attention" testId="confirm-edited">edited</StatusTag>}
-            <Tooltip title={reason.trim() ? `Deny and send your reason to the assistant (${shortcutHint('deny')})` : `Deny (${shortcutHint('deny')})`}>
-              <Button shape="round" onClick={deny} data-rs-confirm="deny">
-                {reason.trim() ? 'Deny with reason' : 'Deny'}
-              </Button>
-            </Tooltip>
-            {!reasonOpen && (
-              <Button size="small" type="link" onClick={() => setReasonOpen(true)} style={{ padding: 0 }}>
-                Add a reason…
-              </Button>
-            )}
-          </div>
+          <ApprovalActions verb={v} onApprove={approve} onDeny={deny} reason={reason} setReason={setReason}
+            reasonHint="Say why, or what to do instead: the assistant gets this with a denial."
+            reasonLabel="Reason for denying (optional)" edited={edited} />
         </div>
       )}
 

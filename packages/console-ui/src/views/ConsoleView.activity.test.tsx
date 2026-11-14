@@ -1,0 +1,49 @@
+/**
+ * The Console's one Activity control: runs in flight (with Stop, which asks)
+ * and sessions waiting for you, in place of the strip above the session row.
+ */
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+
+const { cancel } = vi.hoisted(() => ({ cancel: vi.fn(() => Promise.resolve()) }))
+vi.mock('../bridge', () => ({
+  bridge: new Proxy({}, { get: (_t, p) => (p === 'cancel_invocation' ? cancel : vi.fn(() => Promise.resolve([]))) }),
+}))
+
+import { ActivityControl, activitySummary } from './ConsoleView'
+import type { InFlightRecord } from '../bridge'
+
+const RUN: InFlightRecord = {
+  id: 'r1', runnable: 'backup', group: 'ops', host: 'prod-1', operator: 'Jason', runAs: 'svc',
+  startedAt: new Date().toISOString(), args: {},
+}
+
+describe('activitySummary', () => {
+  it('counts what is running and waiting', () => {
+    expect(activitySummary(2, 1)).toBe('2 running · 1 waiting')
+    expect(activitySummary(0, 3)).toBe('3 waiting')
+    expect(activitySummary(1, 0)).toBe('1 running')
+  })
+})
+
+describe('ActivityControl', () => {
+  it('shows nothing when nothing is in flight', () => {
+    render(<ActivityControl inFlight={[]} waiting={[]} onOpen={() => {}} />)
+    expect(screen.queryByTestId('activity-control')).toBeNull()
+  })
+
+  it('lists runs and waiting sessions; Stop asks first, Open selects', async () => {
+    const onOpen = vi.fn()
+    render(<ActivityControl inFlight={[RUN]} waiting={[{ id: 's2', label: 'nightly-backup' }]} onOpen={onOpen} />)
+    const btn = screen.getByTestId('activity-control')
+    expect(btn.getAttribute('aria-label')).toBe('Activity: 1 running · 1 waiting')
+    fireEvent.click(btn)
+    expect(await screen.findByText('/backup')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop /backup' }))
+    expect(cancel).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop run' }))
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith('r1'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open' }))
+    expect(onOpen).toHaveBeenCalledWith('s2')
+  })
+})

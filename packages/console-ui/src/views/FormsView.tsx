@@ -1211,6 +1211,7 @@ export function FormsView({
       <div style={{ marginBottom: 16, flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Input
           prefix={<SearchOutlined />}
+          aria-label="Search runnables"
           placeholder="Search name, description, subcommand… (host:web group:prod)"
           value={search}
           onChange={e => setSearch(e.target.value)}

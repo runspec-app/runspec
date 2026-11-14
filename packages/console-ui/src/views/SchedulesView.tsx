@@ -1134,7 +1134,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       width: 56,
       render: (_: unknown, s: Schedule) => (
         <Tooltip title={s.enabled === false ? 'Disabled — won’t fire' : 'Enabled'}>
-          <Switch size="small" aria-label={`Enable ${s.name || s.runnable || 'schedule'}`} checked={s.enabled !== false} onChange={v => handleToggle(s, v)} />
+          <Switch size="small" aria-label={`Enable ${s.name || scheduleSummary(s)}`} checked={s.enabled !== false} onChange={v => handleToggle(s, v)} />
         </Tooltip>
       ),
     },
@@ -1201,8 +1201,10 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       width: 132,
       render: (_: unknown, s: Schedule) => (
         <Space size={2}>
-          <IconAction label={`Run ${s.name || 'schedule'} now`} tip="Run now" icon={<PlayCircleOutlined />} onClick={() => handleRunNow(s)} />
-          <IconAction label={`Edit ${s.name || 'schedule'}`} tip="Edit" icon={<EditOutlined />} onClick={() => openEdit(s)} />
+          {/* Named by the schedule, or what it does when it has no name, so a
+              screen reader can tell the rows' buttons apart. */}
+          <IconAction label={`Run ${s.name || scheduleSummary(s)} now`} tip="Run now" icon={<PlayCircleOutlined />} onClick={() => handleRunNow(s)} />
+          <IconAction label={`Edit ${s.name || scheduleSummary(s)}`} tip="Edit" icon={<EditOutlined />} onClick={() => openEdit(s)} />
           <RowActions more={[{
             key: 'delete', label: 'Delete', icon: <DeleteOutlined />, danger: true,
             confirm: { title: 'Delete this schedule?', what: scheduleSummary(s), consequence: 'It stops firing; past runs stay in History.' },

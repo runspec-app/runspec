@@ -166,6 +166,19 @@ const soundOptions = (def: string, current: string, named: NamedSound[]) => [
   { value: 'off', label: 'Off' },
 ]
 
+/** Settings → Confirmations: the answers you set to "don't ask again". */
+export function ConfirmationsTab() {
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+        When you tick "don't ask again" on a confirmation, it's listed here. It holds only for that action on those
+        targets; a different set asks again. Deleting is never remembered.
+      </Typography.Paragraph>
+      <RememberedAnswers />
+    </div>
+  )
+}
+
 export function SoundsTab() {
   const [askRisk, riskHolder] = useRiskConfirm()
   const [enabled, setEnabled] = useState(true)
@@ -305,7 +318,6 @@ export function SoundsTab() {
             the <code>notifications</code> extra; the taskbar flash and sounds don't. A flapping host chimes at most once
             per half minute, and the waiting ping repeats until whatever needs you is cleared.
           </OnceHint>
-          <RememberedAnswers />
 
           {row('Enable sounds', <Switch checked={enabled} onChange={setEnabled} />)}
           {row('Volume (synthesized + file cues)', (
@@ -2422,7 +2434,7 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
           never requires scrolling back to the top — it opens centred in view. */}
       <Modal
         open={editingKey !== null}
-        title={editingKey === '' ? 'New jump host' : `Edit — ${editingKey}`}
+        title={editingKey === '' ? 'Add host' : `Edit — ${editingKey}`}
         width={680}
         zIndex={HOST_EDITOR_Z}
         onCancel={cancel}
@@ -6933,6 +6945,7 @@ export const SETTINGS_GROUPS: { label: string; keys: string[] }[] = [
   { label: 'Access & sync', keys: ['credentials', 'configSync', 'memorySync'] },
   { label: 'Assistant', keys: ['llm', 'agentTools', 'mcp', 'mcpServer', 'chatHistory', 'voice', 'selfService'] },
   { label: 'Alerts & mail', keys: ['sounds', 'mailbox'] },
+  { label: 'Safety', keys: ['confirmations'] },
   { label: 'Diagnostics', keys: ['telemetry'] },
 ]
 
@@ -6969,6 +6982,7 @@ const SETTINGS_KEYWORDS: Record<string, string> = {
   memorySync: 'wiki knowledge team branch push pull',
   mailbox: 'outlook email mail folders watch claim',
   sounds: 'sound notifications toast alert audio',
+  confirmations: "remembered answers don't ask again confirm consent forget ask every time",
   voice: 'dictation microphone speech',
   chatHistory: 'conversations retention resume compaction',
   telemetry: 'opentelemetry otel traces metrics langsmith phoenix grafana',
@@ -7093,6 +7107,7 @@ export function SettingsDrawer({ open, onClose, onHostsChanged, onKeyChanged, co
     { key: 'memorySync', label: 'Memory Sync', children: <MemorySyncTab /> },
     { key: 'mailbox',   label: 'Mailbox',    children: <MailboxesTab /> },
     { key: 'sounds',    label: 'Notifications', children: <SoundsTab /> },
+    { key: 'confirmations', label: 'Confirmations', children: <ConfirmationsTab /> },
     { key: 'voice',     label: 'Voice',      children: <VoiceTab /> },
     { key: 'chatHistory', label: 'Chat History', children: <ChatHistoryTab /> },
     { key: 'telemetry', label: 'Telemetry', children: <TelemetryTab /> },

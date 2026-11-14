@@ -9,6 +9,49 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.441.0] — 2026-11-14
+
+### Changed
+
+- **One approval card.** A webhook waiting for approval and the assistant's
+  Approve/Deny now share one card: the same panel, **Approve & run** and
+  **Deny**, and **Add a reason…** (a webhook's note is recorded with either
+  decision).
+  - When more than one is waiting, each card says "1 of 3 waiting".
+  - The card Alt+A and Alt+D will answer carries the key chip.
+  - Webhook cards answer to the keyboard too.
+- **One place for what's running.** The strip of running jobs above the
+  session row is now an **Activity** control in that row ("2 running · 1
+  waiting"). It lists each run with Stop (which asks first) and each session
+  waiting for you with Open. The floating "still working" pill shows only when
+  you've scrolled away from the latest output.
+- **Automation sessions say they're read-only.** The chat box reads
+  "Automation session (read-only)". Enter or **Ask in a new chat →** opens a
+  chat and keeps what you typed, ready to send there.
+- **The denylist mode control tells the truth.** It shows the mode the hosts
+  are in ("Now: enforce") and goes back to it when you cancel a change.
+- **Confirmations has its own Settings section.** It lists every "don't ask
+  again" answer by what it was ("Run backup on prod-1"), each with **Forget**.
+  Settings search finds it ("remembered", "don't ask again").
+
+### Fixed
+
+- **Header line.** The sidebar title block is the same 44px as the tab bar,
+  so their bottom borders form one straight line (the title's sat 4px lower).
+- **Accessibility.**
+  - The chat box's focus ring is the full focus colour; it was 1.3:1.
+  - Input clear buttons use the muted text; they were 1.8:1.
+  - On dark, Delete in a row's menu is readable; it was 3.6:1.
+  - The footer's "N waiting for you" is the strong text with an amber bell;
+    it was 3.8:1 on light.
+  - History's charts have screen-reader summaries.
+  - Each Runs row expander names its run.
+  - Unnamed schedules' buttons name what the schedule does.
+  - The History and Forms search boxes have names.
+- **Copy.** Add host's dialog is titled "Add host", not "New jump host".
+  Provision and Update buttons no longer show a double space before a host is
+  ticked. The session overflow says "1 more session".
+
 ## [0.440.0] — 2026-11-14
 
 ### Added

@@ -363,7 +363,7 @@ describe('HistoryView', () => {
     })
     render(<HistoryView {...PROPS} onRerun={() => {}} />)
     const user = userEvent.setup()
-    const expandBtn = await screen.findByLabelText(/Expand row/i)
+    const expandBtn = await screen.findByLabelText(/^Show details: /)
     await act(async () => { await user.click(expandBtn) })
     // Expanding fetches just this run's log (the bulk payload ships slim rows),
     // naming the venv + log file so the backend reads only that file.
@@ -376,7 +376,7 @@ describe('HistoryView', () => {
     render(<HistoryView {...PROPS} onRerun={() => {}} />)
     const user = userEvent.setup()
     // Expand the row (antd renders an expand toggle button per row).
-    const expandBtn = await screen.findByLabelText(/Expand row/i)
+    const expandBtn = await screen.findByLabelText(/^Show details: /)
     await act(async () => { await user.click(expandBtn) })
     const viewBtn = await screen.findByRole('button', { name: /View full log/i })
     await act(async () => { await user.click(viewBtn) })
@@ -406,7 +406,7 @@ describe('HistoryView', () => {
     ])
     render(<HistoryView {...PROPS} onRerun={() => {}} />)
     const user = userEvent.setup()
-    const expandBtn = await screen.findByLabelText(/Expand row/i)
+    const expandBtn = await screen.findByLabelText(/^Show details: /)
     await act(async () => { await user.click(expandBtn) })
     // The expand panel says why the log is gone (by whom) instead of "no log lines"…
     const note = await screen.findByText(/log pruned by svc-runner/i)
