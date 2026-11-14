@@ -104,7 +104,7 @@ describe('DenylistModal', () => {
     expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'mode', setting: 'enforce', targets: SCOPE })
   })
 
-  it('add deny rule passes the glob lists', async () => {
+  it('an empty deny rule asks like Disable all, because it blocks everything', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
     await screen.findByText('Kill switch')
 
@@ -112,11 +112,26 @@ describe('DenylistModal', () => {
     await act(async () => {
       await user.click(screen.getByRole('button', { name: /Add deny rule/ }))
     })
-
+    expect(manageDenylist).not.toHaveBeenCalled()
+    expect((await screen.findByTestId('risk-action')).textContent).toMatch(/Disable all runnables/)
+    await act(async () => { await user.click(screen.getByTestId('risk-ok')) })
     await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
-    const payload = manageDenylist.mock.calls[0][0]
-    expect(payload.action).toBe('add')
-    expect(payload).toMatchObject({ runnable: [], user: [], host: [], targets: SCOPE })
+    expect(manageDenylist.mock.calls[0][0]).toMatchObject({ action: 'all', targets: SCOPE })
+  })
+
+  it('turning the mode off asks first; Cancel leaves it alone', async () => {
+    render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
+    await screen.findByText('Kill switch')
+    const user = userEvent.setup()
+    await act(async () => { await user.click(screen.getByText('Off')) })
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Apply mode' })) })
+    expect((await screen.findByTestId('risk-action')).textContent).toMatch(/Mode: off/)
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Cancel' })) })
+    expect(manageDenylist).not.toHaveBeenCalled()
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Apply mode' })) })
+    await act(async () => { await user.click(await screen.findByTestId('risk-ok')) })
+    await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
+    expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'mode', setting: 'off', targets: SCOPE })
   })
 })
 
@@ -171,8 +186,7 @@ describe('DenylistModal per-rule actions and host globs', () => {
     const user = userEvent.setup()
     const removeBtn = await screen.findByLabelText('Remove rule 2 on prod-1/app')
     await act(async () => { await user.click(removeBtn) })
-    const confirm = await screen.findByText('Remove', { selector: 'button span' })
-    await act(async () => { await user.click(confirm) })
+    await act(async () => { await user.click(await screen.findByTestId('risk-ok')) })
     await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
     expect(manageDenylist.mock.calls[0][0]).toEqual({
       action: 'remove', targets: ['prod-1'], venv: 'app',
@@ -185,8 +199,7 @@ describe('DenylistModal per-rule actions and host globs', () => {
     const user = userEvent.setup()
     const enableBtn = await screen.findByLabelText('Enable prod-2/app')
     await act(async () => { await user.click(enableBtn) })
-    const [confirm] = await screen.findAllByText('Enable', { selector: '.ant-popover button span' })
-    await act(async () => { await user.click(confirm) })
+    await act(async () => { await user.click(await screen.findByTestId('risk-ok')) })
     await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
     expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'enable', targets: ['prod-2'], venv: 'app' })
   })

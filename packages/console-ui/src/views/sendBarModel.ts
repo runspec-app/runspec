@@ -4,18 +4,44 @@
  */
 import type { SendToTerminalsResult, TerminalWindow } from '../bridge'
 
-/** Sending to more windows than this asks first — once per set of windows. */
+/** Sending to more windows than this asks first (the risk ladder's fleet
+ *  level). The person may tick "don't ask again" for that set of windows. */
 export const CONFIRM_OVER = 10
+
+// Lines and keys that stop, remove or end something: the command word at the
+// start of the line or after ; & | (, optionally behind sudo. These ask every
+// time they go to more than one window, whatever was remembered.
+const DISRUPTIVE_LINE = /(^\s*|[;&|(]\s*)(sudo\s+(-\S+\s+)*)?(rm|rmdir|reboot|shutdown|halt|poweroff|kill|pkill|killall|mkfs(\.\w+)?|dd|truncate|userdel|groupdel|wipefs|shred|init\s+[06]|systemctl\s+(stop|restart|disable|mask|kill|reboot|poweroff|halt)|service\s+\S+\s+(stop|restart)|docker\s+(rm|stop|kill|system\s+prune)|kubectl\s+delete|iptables\s+-F|drop\s+(table|database))(?=$|[\s;&|)])/i
+const DISRUPTIVE_KEYS = new Set(['ctrl-c', 'ctrl-d'])
+
+export type SendPlan =
+  | { kind: 'empty' }
+  | { kind: 'send' }
+  | { kind: 'ask'; disruptive: boolean; canRemember: boolean }
+
+/** What a send should do before it goes, by the risk ladder:
+ *  - an empty line is never sent (Enter alone has its own key button);
+ *  - a hidden (password) send answers a prompt the visible line already
+ *    raised, so it doesn't ask;
+ *  - a disruptive line or key to more than one window asks every time;
+ *  - anything to more than CONFIRM_OVER windows asks, unless the person said
+ *    not to ask again for exactly this set.
+ *  Pure, for tests. */
+export function planSend(opts: {
+  ticked: string[]; line?: string; key?: string; hidden?: boolean; remembered: string | null; over?: number
+}): SendPlan {
+  const { ticked, line = '', key, hidden = false, remembered, over = CONFIRM_OVER } = opts
+  if (!key && !line.trim()) return { kind: 'empty' }
+  if (hidden) return { kind: 'send' }
+  const disruptive = key ? DISRUPTIVE_KEYS.has(key) : DISRUPTIVE_LINE.test(line)
+  if (disruptive && ticked.length > 1) return { kind: 'ask', disruptive: true, canRemember: false }
+  if (ticked.length > over && signature(ticked) !== remembered) return { kind: 'ask', disruptive: false, canRemember: true }
+  return { kind: 'send' }
+}
 
 /** A stable key for a set of window ids (order-insensitive). */
 export function signature(ids: string[]): string {
   return [...ids].sort().join(',')
-}
-
-/** Whether sending to `ticked` should ask first: more than `CONFIRM_OVER`
- *  windows, and not the same set the person already said yes to. */
-export function needsConfirm(ticked: string[], confirmed: string | null, over = CONFIRM_OVER): boolean {
-  return ticked.length > over && signature(ticked) !== confirmed
 }
 
 /** The ids to send to: windows listed now that aren't unticked. */

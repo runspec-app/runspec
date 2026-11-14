@@ -125,7 +125,9 @@ Some common choices:
   - clear every box and press **Remove policy**;
   - press **Preview now** to see what a pass would compress and delete today,
     without changing anything;
-  - press **Apply now** to run a pass straight away instead of waiting.
+  - press **Apply now…** to run a pass straight away instead of waiting. It
+    shows what the pass would compress and delete, and you type the venv's
+    name to go ahead (deleted run files can't be brought back).
 
 The console makes every change by running the venv's own
 `runspec logs retention` as the venv owner, so the change is recorded on the

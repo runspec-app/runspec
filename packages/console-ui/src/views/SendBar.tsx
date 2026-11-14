@@ -11,18 +11,21 @@
  * Enter sends the line (then Enter in each terminal), Shift+Enter adds a line,
  * ↑/↓ recall earlier lines (kept in memory only, never saved). The lock button
  * switches to a hidden field for a password: typed the same way, never shown,
- * kept or audited. Sending to more than 10 windows asks first, once per set.
+ * kept or audited. Confirmation follows the risk ladder (components/risk.tsx,
+ * planSend): more than 10 windows asks, showing the line; a line or key that
+ * stops or removes something asks every time it goes to more than one window.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, App as AntApp, Button, Checkbox, ConfigProvider, Input, Modal, Tooltip, theme } from 'antd'
 import { AimOutlined, LockOutlined, SendOutlined, UnlockOutlined } from '@ant-design/icons'
 import { bridge, type TerminalWindow } from '../bridge'
 import {
-  DEFAULT_ACCENT, MONO_FONT, RADIUS, ThemeContext, UI_FONT, surfaces, textMuted, useIsDark,
+  DEFAULT_ACCENT, MONO_FONT, RADIUS, ThemeContext, UI_FONT, statusText, surfaces, textMuted, useIsDark,
 } from '../ThemeContext'
 import {
-  KEY_BUTTONS, describeResult, historyStep, needsConfirm, pushHistory, signature, tickedIds,
+  KEY_BUTTONS, describeResult, historyStep, planSend, pushHistory, signature, tickedIds,
 } from './sendBarModel'
+import { useRiskConfirm } from '../components/risk'
 
 const POLL_MS = 1500
 
@@ -38,7 +41,8 @@ export function SendBar() {
   const [history, setHistory] = useState<string[]>([])
   const [histIdx, setHistIdx] = useState(0)
   const confirmed = useRef<string | null>(null)
-  const [modalApi, modalHolder] = Modal.useModal()
+  // The bar is a short window: the ask covers it rather than opening a dialog.
+  const [askRisk, riskHolder] = useRiskConfirm({ cover: true })
   const draft = useRef('')
 
   const refresh = useCallback(() => {
@@ -56,31 +60,30 @@ export function SendBar() {
   const ticked = useMemo(() => tickedIds(windows, unticked), [windows, unticked])
   const hostOf = useMemo(() => new Map(windows.map(w => [w.id, w.host])), [windows])
 
-  const ask = (ids: string[]): Promise<boolean> => new Promise(resolve => {
-    const hosts = ids.map(id => hostOf.get(id) ?? id)
-    modalApi.confirm({
-      title: `Send to ${ids.length} terminals?`,
-      content: (
-        <div style={{ fontSize: 12 }}>
-          <div style={{ fontFamily: MONO_FONT }}>
-            {hosts.slice(0, 12).join(', ')}{hosts.length > 12 ? ` and ${hosts.length - 12} more` : ''}
-          </div>
-          <div style={{ marginTop: 6, color: textMuted(isDark) }}>
-            You won't be asked again until the ticked terminals change.
-          </div>
-        </div>
-      ),
-      okText: `Send to ${ids.length}`,
-      onOk: () => resolve(true),
-      onCancel: () => resolve(false),
-    })
-  })
-
   const send = async (opts: { key?: string; line?: string }) => {
     if (!ticked.length || busy) return
-    if (needsConfirm(ticked, confirmed.current)) {
-      if (!(await ask(ticked))) return
-      confirmed.current = signature(ticked)
+    const plan = planSend({ ticked, line: opts.line, key: opts.key, hidden, remembered: confirmed.current })
+    if (plan.kind === 'empty') {
+      setStatus(hidden
+        ? 'Nothing typed: an empty password is not sent.'
+        : 'Nothing typed. To press Enter in the terminals, use the Enter key button.')
+      return
+    }
+    if (plan.kind === 'ask') {
+      const keyLabel = KEY_BUTTONS.find(k => k.key === opts.key)?.title
+      const answer = await askRisk({
+        level: 'fleet',
+        title: `Send to ${ticked.length} terminal${ticked.length === 1 ? '' : 's'}?`,
+        action: keyLabel ? `Press ${keyLabel}` : opts.line,
+        targets: ticked.map(id => hostOf.get(id) ?? id),
+        consequence: plan.disruptive
+          ? 'It stops, ends or removes something, so this asks every time.'
+          : 'Typed into each window as if you typed it there.',
+        okText: `Send to ${ticked.length}`,
+        rememberLabel: plan.canRemember ? "Don't ask again for these terminals (until the ticked set changes)" : undefined,
+      })
+      if (!answer.ok) return
+      if (answer.remember) confirmed.current = signature(ticked)
     }
     setBusy(true)
     try {
@@ -98,7 +101,6 @@ export function SendBar() {
         }
         setText('')
         draft.current = ''
-        if (hidden) setHidden(false)
       }
     } catch (err) {
       setStatus((err as Error)?.message || 'could not send')
@@ -141,7 +143,7 @@ export function SendBar() {
   const muted = textMuted(isDark)
   return (
     <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6, height: '100vh', boxSizing: 'border-box' }}>
-      {modalHolder}
+      {riskHolder}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: muted }}>
         <span>
           {windows.length
@@ -176,9 +178,10 @@ export function SendBar() {
         ))}
       </div>
       <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-        <Tooltip title={hidden ? 'Back to normal text' : 'Hidden text, for a password: not shown, kept or logged'}>
+        <Tooltip title={hidden ? 'Hidden stays on until you turn it off. Click for normal text.' : 'Hidden text, for a password: not shown, kept or logged'}>
           <Button
-            aria-label={hidden ? 'Show text' : 'Hide text'}
+            aria-label="Hidden text"
+            aria-pressed={hidden}
             icon={hidden ? <LockOutlined /> : <UnlockOutlined />}
             type={hidden ? 'primary' : 'default'}
             onClick={() => { setHidden(h => !h); setText('') }}
@@ -189,11 +192,13 @@ export function SendBar() {
             aria-label="Hidden text"
             autoFocus
             value={text}
-            placeholder="Password for the ticked terminals (hidden, not kept)"
+            prefix={<LockOutlined aria-hidden style={{ color: statusText(isDark).warn }} />}
+            placeholder="Hidden: password, not shown or kept"
             onChange={e => setText(e.target.value)}
             onKeyDown={onKeyDown}
             visibilityToggle={false}
             autoComplete="off"
+            style={{ borderColor: statusText(isDark).warn, borderWidth: 2 }}
           />
         ) : (
           <Input.TextArea
@@ -237,6 +242,8 @@ export function SendBarApp() {
   useEffect(() => {
     document.title = 'Send to terminals'
     document.body.style.background = sf.base
+    // The theme's CSS variables (index.css) key off this, as in the main window.
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
   }, [sf.base])
   return (
     <ThemeContext.Provider value={isDark}>

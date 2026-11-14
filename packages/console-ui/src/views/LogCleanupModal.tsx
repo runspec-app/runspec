@@ -8,13 +8,14 @@
  * core drops root to the owner), and core records it on the venv's audit ledger.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Modal, Button, Alert, Descriptions, Input, Popconfirm, Space, Spin, Typography, message } from 'antd'
+import { Modal, Button, Alert, Descriptions, Input, Space, Spin, Typography, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
-import { bridge, type LogRetentionPolicy, type LogRetentionResult } from '../bridge'
+import { bridge, type LogRetentionPolicy, type LogRetentionResult, type LogRetentionRunResult } from '../bridge'
 import { MONO_FONT } from '../ThemeContext'
 import { retentionOff, retentionProblem } from './ProvisionModal'
 import { humanBytes } from './RunsIndexModal'
 import { fmtWhen, plural } from '../when'
+import { useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -99,6 +100,32 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
     } catch (e) { setError(String(e)) } finally { setBusy('') }
   }
 
+  const [askRisk, riskHolder] = useRiskConfirm()
+  // Deleting logs can't be undone (the risk ladder's destructive level): run
+  // the same pass dry first, show what it would remove, and have the venv's
+  // name typed before the real pass.
+  const applyNow = async () => {
+    setBusy('preview'); setError(''); setPreview('')
+    let r: LogRetentionRunResult
+    try { r = await bridge.logs_retention_run(host, group, true) } catch (e) { setError(String(e)); setBusy(''); return }
+    setBusy('')
+    if (!r.ok) { setError(r.error || 'The cleanup pass failed.'); return }
+    if (r.skipped || (!(r.compacted ?? 0) && !(r.deleted ?? 0))) {
+      setPreview(r.skipped ? (r.error || `Nothing to do (${r.skipped}).`) : 'Nothing to compress or delete right now.')
+      return
+    }
+    const a = await askRisk({
+      level: 'destructive',
+      title: `Clean up the logs of ${group} now?`,
+      action: `Compress ${plural(r.compacted ?? 0, 'run file')}\nDelete ${plural(r.deleted ?? 0, 'file')} (${humanBytes(r.freed_bytes)} freed)`,
+      targets: [`${host} / ${group}`],
+      consequence: 'Runs as the venv owner now, instead of waiting for the next daily pass. Deleted run files are gone from History.',
+      typeToConfirm: group,
+      okText: 'Apply now',
+    })
+    if (a.ok) await runNow(false)
+  }
+
   const runNow = async (dryRun: boolean) => {
     setBusy(dryRun ? 'preview' : 'apply'); setError(''); setPreview('')
     try {
@@ -107,7 +134,7 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
       if (r.skipped) { setPreview(r.error || `Nothing to do (${r.skipped}).`); return }
       const line = dryRun
         ? `Right now it would compress ${plural(r.compacted ?? 0, 'run file')} and delete ${r.deleted ?? 0} (${humanBytes(r.freed_bytes)} freed).`
-        : `Compressed ${r.compacted ?? 0} run file(s), deleted ${r.deleted ?? 0} (${humanBytes(r.freed_bytes)} freed).`
+        : `Compressed ${plural(r.compacted ?? 0, 'run file')}, deleted ${r.deleted ?? 0} (${humanBytes(r.freed_bytes)} freed).`
       if (dryRun) setPreview(line)
       else { message.success(line); load(target) }
     } catch (e) { setError(String(e)) } finally { setBusy('') }
@@ -178,17 +205,16 @@ export function LogCleanupModal({ target, onClose }: { target: LogCleanupTarget 
             <Button disabled={!hasPolicy || !unchanged || busy !== ''} loading={busy === 'preview'} onClick={() => runNow(true)}>
               Preview now
             </Button>
-            <Popconfirm title={`Apply the policy to ${group} now?`}
-              description="Compresses and deletes now, as the venv owner, instead of waiting for the next daily pass."
-              okText="Apply now" okButtonProps={{ danger: true }} onConfirm={() => runNow(false)} disabled={!hasPolicy || !unchanged}>
-              <Button danger disabled={!hasPolicy || !unchanged || busy !== ''} loading={busy === 'apply'}>Apply now</Button>
-            </Popconfirm>
+            <Button danger disabled={!hasPolicy || !unchanged || busy !== ''} loading={busy === 'apply'} onClick={() => { void applyNow() }}>
+              Apply now…
+            </Button>
           </Space>
           {hasPolicy && !unchanged && <div><Text type="secondary" style={{ fontSize: 12 }}>Save first to preview or apply the new values.</Text></div>}
           {preview && <Alert type="info" showIcon style={{ marginTop: 10 }} message={preview} />}
         </>
       )}
       {error && <Alert type="error" showIcon style={{ marginTop: 12 }} message={error} />}
+      {riskHolder}
     </Modal>
   )
 }

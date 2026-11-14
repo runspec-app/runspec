@@ -127,9 +127,14 @@ fleet over the SSH connections it already holds — one call per venv on each ho
 - **The Denylist button (the no-entry icon) at the bottom of the hosts panel** — a modal scoped to
   the hosts *connected right now* in the active profile (greyed out until the
   fleet sweep has settled): a host picker (empty ⇒ every connected host),
-  **Disable all** / **Re-enable all (clear)** buttons (danger-confirmed), an
+  **Disable all** / **Re-enable all** buttons, an
   *add specific rule* form (runnable / user / host globs + reason), and an
-  enforcement-mode toggle (`enforce`/`warn`/`off`). The status table lists each
+  enforcement-mode toggle (`enforce`/`warn`/`off`). Anything that blocks
+  everything or lowers the safety asks first, in a dialog that names the action
+  and every host, with **Cancel** focused: **Disable all**, **Re-enable all**,
+  setting the mode to **Warn** or **Off**, removing a rule, re-enabling a venv,
+  and adding a rule with every field empty (which matches everything, so it asks
+  exactly like **Disable all**). The status table lists each
   venv's rules one per line with a remove button each (and an **Enable** button
   on a venv disabled with *Disable all*), and shows each machine's hostname —
   the form warns when a host glob matches none of the targets' hostnames, the
