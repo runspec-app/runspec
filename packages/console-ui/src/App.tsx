@@ -43,7 +43,7 @@ import {
 import { ConsoleView } from './views/ConsoleView'
 import { useWaitingCue, usePendingConfirms } from './useWaitingCue'
 import { useWebhooks, waitingApprovals } from './webhooks'
-import { WebhookApprovals } from './components/WebhookApprovals'
+import { WebhookPointer } from './components/WebhookApprovals'
 import { matchRunnableForEdit, resolveCommandPath, toCommandPath } from './views/formsMatch'
 import { GRID_MAX, openTerminals as openGroupTerminals, openSendBar } from './views/terminals'
 import { OtherHostsSection, profileEditNote, type SyncSource } from './components/OtherHostsSection'
@@ -103,7 +103,7 @@ import {
 } from './sidebarGroups'
 import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
 import { layoutNavTabs, hostMatches, groupViews, parentOf } from './navGroups'
-import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm } from './shortcuts'
+import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm, firstShownGate } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
 import { PageHeader, pressable, SectionSwitch } from './components/kit'
 import { ConsoleInfoContext } from './consoleInfo'
@@ -831,6 +831,12 @@ export default function App() {
   useAntA11yLabels()
   const handleOpenSavedRun = async (savedRun: SavedRun) => {
     if ((savedRun.params ?? []).length === 0 && !savedRun.argsError) {
+      // Like a Forms card: an autonomous runnable (its author says it's safe
+      // to run unasked, e.g. a read-only report) runs at once.
+      if (runnables.find(r => r.name === savedRun.runnable)?.autonomy === 'autonomous') {
+        handleRunSavedRun(savedRun.id, {})
+        return
+      }
       const targets = savedRunTargets(savedRun)
       const go = await askRemembered(askRisk, consentKey(`saved-run:${savedRun.id}`, targets), {
         level: targets.length === 1 && targets[0] === 'local' ? 'local' : 'fleet',
@@ -1150,9 +1156,19 @@ export default function App() {
   // operator can see. From another tab the first press just brings the
   // Console up with the card flashing; a card scrolled off screen is scrolled
   // into view first. A second press answers it (via the card's own button).
+  // A tab switch shows or hides approval cards: let each recount its place.
+  useEffect(() => { window.dispatchEvent(new Event('runspec:gates_changed')) }, [view])
   const confirmByKey = (action: 'approve' | 'deny') => {
-    if (!hasPendingConfirm()) { message.info('Nothing is waiting for confirmation', 2); return }
     const again = `Press ${shortcutHint(action)} again to ${action}`
+    // A card on this tab answers first (the Webhooks tab's, or the Console's).
+    if (firstShownGate()) {
+      if (answerPendingConfirm(action) === 'revealed') message.info(again, 2)
+      return
+    }
+    if (!hasPendingConfirm()) {
+      if (webhookWaiting > 0) { setView('webhooks'); message.info(again, 2); return }
+      message.info('Nothing is waiting for confirmation', 2); return
+    }
     if (view !== 'console') {
       setView('console')
       requestAnimationFrame(() => requestAnimationFrame(() => { revealPendingConfirm() }))
@@ -1358,7 +1374,9 @@ export default function App() {
             // A red brand gets the neutral fill on light too.
             ...(neutralControls ? {
               Switch: { colorPrimary: ctrlCol, colorPrimaryHover: ctrlCol, ...(isDark ? { handleBg: sf.base } : {}) },
-              Checkbox: { colorPrimary: ctrlCol, colorPrimaryHover: ctrlCol, ...(isDark ? { colorWhite: sf.base } : {}) },
+              // borderRadiusSM 3: the theme's 6 made 16px boxes near-circles,
+              // which read as radio buttons on a pick-several list.
+              Checkbox: { colorPrimary: ctrlCol, colorPrimaryHover: ctrlCol, borderRadiusSM: 3, ...(isDark ? { colorWhite: sf.base } : {}) },
               Radio: { colorPrimary: ctrlCol, colorPrimaryHover: ctrlCol, dotSize: 8, ...(isDark ? { colorWhite: sf.base } : {}) },
             } : {}),
             Segmented: { itemSelectedBg: sf.overlay, trackBg: sf.sunken },
@@ -1862,7 +1880,9 @@ export default function App() {
                   )
                 })()}
                 <div className="rs-view" style={{ display: view === 'console' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                  <WebhookApprovals status={webhooks.status} />
+                  {/* Webhook cards live on Automation → Webhooks; the Console
+                      only points there, so each one is in one place. */}
+                  {webhookWaiting > 0 && <WebhookPointer count={webhookWaiting} onReview={() => setView('webhooks')} />}
                   <ConsoleInfoContext.Provider value={consoleInfo}>
                     <ConsoleView inFlight={inFlight} pendingChat={pendingChat} onChatSent={() => setPendingChat(null)} />
                   </ConsoleInfoContext.Provider>
@@ -1977,6 +1997,7 @@ export default function App() {
                 onSendChat={handleSendChat}
                 activeChatId={activeChatId}
                 readOnlySession={readOnlySession}
+                compact={view !== 'console'}
                 onStopChat={(id) => { bridge.cancel_chat(id).catch(console.error) }}
                 history={inputHistory}
                 autoSwitch={autoSwitch}

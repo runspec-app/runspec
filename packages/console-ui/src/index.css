@@ -188,6 +188,16 @@ body {
 /* An input's clear (x) is a control, not decoration: the muted text, not
    antd's 25% grey (1.8:1). */
 .ant-input-clear-icon, .ant-select-clear { color: var(--rs-text-muted) !important; }
+/* A focused field gets the 2px focus ring, not a border a shade darker plus an
+   18% halo (the change was 1.9-2.2:1). */
+.ant-input:focus, .ant-input-focused, .ant-input-affix-wrapper-focused, .ant-input-number-focused,
+.ant-picker-focused, .ant-select-focused:not(.ant-select-disabled) .ant-select-selector,
+.ant-select-open .ant-select-selector {
+  box-shadow: 0 0 0 2px var(--rs-focus) !important;
+}
+/* A segmented control's chosen option: an outline and weight, not only a fill
+   1.3:1 from the track. */
+.ant-segmented .ant-segmented-item-selected { box-shadow: inset 0 0 0 1px var(--rs-field); font-weight: 600; }
 /* A danger menu item on dark's raised menu: the danger colour lifted toward
    white (it was 3.6:1). */
 html[data-theme='dark'] .ant-dropdown-menu-item-danger:not(.ant-dropdown-menu-item-disabled):not(:hover) {
@@ -376,7 +386,8 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
   display: flex; align-items: center; gap: 10px;
   padding: 7px 8px; border-radius: var(--rs-radius-sm); cursor: pointer; font-size: 13px;
 }
-.rs-cmdk [cmdk-item][data-selected='true'] { background: var(--rs-hover); }
+/* The selected command: a bar and the strong text, not only a 5% tint (1.1:1). */
+.rs-cmdk [cmdk-item][data-selected='true'] { background: var(--rs-hover); box-shadow: inset 2px 0 0 var(--rs-focus); color: var(--rs-text); }
 .rs-cmdk [cmdk-empty] { padding: 18px; text-align: center; color: var(--rs-text-muted); font-size: 13px; }
 
 /* Schedules tab option cards (ScheduleScopeCards): hover + keyboard focus. */

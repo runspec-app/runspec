@@ -54,6 +54,9 @@ describe('Settings search', () => {
     const box = screen.getByLabelText('Search settings sections')
     fireEvent.change(box, { target: { value: 'otel' } })
     expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Telemetry'])
+    // The open section (SSH) no longer matches, so the page moves to the match.
+    expect(onSelect).toHaveBeenCalledWith('telemetry')
+    onSelect.mockClear()
     fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 })
     expect(onSelect).toHaveBeenCalledWith('telemetry')
     fireEvent.change(box, { target: { value: 'zzzz' } })

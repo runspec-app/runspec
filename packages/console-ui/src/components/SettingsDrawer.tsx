@@ -7022,6 +7022,14 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
   const accent = useAccent()
   const [query, setQuery] = useState('')
   const shown = items.filter(i => matchSettingsTab(i, query))
+  // Searching moves the page too: when the open section no longer matches,
+  // the first one that does opens (it used to filter the list and leave the
+  // page showing a section that wasn't in it).
+  const firstKey = shown[0]?.key
+  const activeShown = shown.some(i => i.key === activeKey)
+  useEffect(() => {
+    if (query.trim() && firstKey && !activeShown) onSelect(firstKey)
+  }, [query, firstKey, activeShown])  // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="rs-settings-tabbar">
       <Input

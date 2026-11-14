@@ -377,7 +377,7 @@ export function TargetFormItems({
   const hostOption = (h: Host) => (
     <Select.Option key={h.name} value={h.name}>
       <Space size={6}>
-        <span style={{ fontSize: 9, color: h.connected ? '#52c41a' : '#595959' }}>●</span>
+        <span role="img" aria-label={h.connected ? 'connected' : 'not connected'} style={{ fontSize: 9, color: h.connected ? 'var(--rs-ok)' : 'var(--rs-text-muted)' }}>●</span>
         {h.name}
       </Space>
     </Select.Option>

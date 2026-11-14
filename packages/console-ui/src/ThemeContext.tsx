@@ -212,10 +212,14 @@ export function chartPalette(isDark: boolean): string[] {
     : ['#1f5fbf', '#6b3fb8', '#0f7c78', '#8a6100', '#b02a74', '#2e7d32', '#a8510f', '#3a46b5']
 }
 
-export function dangerColors(accent: string | undefined, isDark: boolean): { text: string; onFill: string } {
-  const redBrand = isRedBrand(accent)
-  if (isDark) return { text: redBrand ? '#ff8fc4' : '#ff8f87', onFill: '#1e2428' }
-  return { text: redBrand ? '#9c1458' : '#b42318', onFill: '#ffffff' }
+/** Danger and failure: red, for every brand. Red means stop everywhere, so it
+ *  isn't traded away to keep a red brand's two identity marks distinct (a
+ *  pink "Disable all" read as a softer brand tint). Danger is told from the
+ *  brand by form instead: a danger button is filled or carries a warning
+ *  icon, while the brand is only a wordmark and a 2px bar. `accent` is kept
+ *  for callers; it no longer changes the result. Pure, for tests. */
+export function dangerColors(_accent: string | undefined, isDark: boolean): { text: string; onFill: string } {
+  return isDark ? { text: '#ff8f87', onFill: '#1e2428' } : { text: '#b42318', onFill: '#ffffff' }
 }
 
 /**

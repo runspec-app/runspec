@@ -192,7 +192,7 @@ export function CleanupNowModal({ target, onClose, onApplied, onOpenPolicy }: Ma
       <Text type="secondary" style={{ fontSize: 13 }}>
         A one-off pass; nothing here is saved.
         {!isHome && onOpenPolicy && (
-          <> To do this every day, set the venv's <Button type="link" size="small" style={{ padding: 0, height: 'auto' }}
+          <> To do this every day, set the venv's <Button type="link" size="small" style={{ padding: 0, height: 'auto', textDecoration: 'underline' }}
             onClick={() => { onClose(); onOpenPolicy({ host, group }) }}>log cleanup policy</Button>.</>
         )}
       </Text>

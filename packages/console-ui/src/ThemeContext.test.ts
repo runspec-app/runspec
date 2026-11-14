@@ -299,10 +299,12 @@ describe('status, danger and approve colours', () => {
       expect(contrastRatio(a.text, a.hover)).toBeGreaterThanOrEqual(4.5)
     })
   }
-  it('moves danger off red when the brand is red, and only then', () => {
-    expect(dangerColors(undefined, true).text).toBe(dangerColors('#0b7a6e', true).text)
-    expect(dangerColors('#9b031a', true).text).not.toBe(dangerColors(undefined, true).text)
-    expect(dangerColors('#9b031a', false).text).not.toBe(dangerColors(undefined, false).text)
-    expect(hueSat(dangerColors('#9b031a', true).text).hue).toBeGreaterThan(300)
+  it('keeps danger red whatever the brand', () => {
+    for (const isDark of [true, false]) {
+      expect(dangerColors('#9b031a', isDark).text).toBe(dangerColors(undefined, isDark).text)
+      expect(dangerColors('#0b7a6e', isDark).text).toBe(dangerColors(undefined, isDark).text)
+      const h = hueSat(dangerColors('#9b031a', isDark).text).hue
+      expect(h < 15 || h > 345, `hue ${h}`).toBe(true)
+    }
   })
 })

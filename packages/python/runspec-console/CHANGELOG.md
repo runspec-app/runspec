@@ -9,6 +9,48 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.442.0] — 2026-11-14
+
+### Fixed
+
+- **The approval queue counts only what you can see.** A webhook card was
+  shown on both the Console and Automation → Webhooks. The hidden copy was
+  counted, so you'd see "3 of 3 waiting" for 2 items, and Alt+A could aim at a
+  card off screen. Webhook cards now live on the Webhooks tab, and the
+  Console shows a one-line "N webhooks waiting for approval → Review". The
+  queue count and Alt+A / Alt+D cover only cards on the current tab. From a
+  tab with none, Alt+A goes to the Console or the Webhooks tab first.
+
+### Changed
+
+- **A webhook says what happens when it expires:** "expires in 14m, then it
+  won't run". The fields that triggered it show open when there are six or
+  fewer, so they're read before Approve.
+- **Danger is red for every brand.** Under a red brand, danger and failure had
+  moved to magenta, which read as a softer brand tint, while errors stayed
+  red. Both are red now. Danger is told apart from the brand by form: the
+  confirm button carries a warning icon.
+- **Settings search opens the match.** When the open section no longer
+  matches what you typed, the first one that does opens.
+- **The chat box is one line off the Console** until you click it or type,
+  which leaves more room on History, Files and the other tabs.
+- **A saved run of an autonomous runnable runs at once**, like a Forms card
+  does; others still ask first.
+- **Run now on a paused schedule says so:** it runs once and stays paused.
+- **Accessibility.**
+  - A focused text field, select or date field gets the 2px focus ring; the
+    old change was 1.9–2.2:1.
+  - The chosen option in every segmented switcher has an outline and is
+    bold; its fill was 1.3:1 from the track.
+  - The Ctrl+K palette's selected command has a bar; it was a 1.1:1 tint.
+  - The connection dots in host pickers use the theme's colours and are
+    named; they were a fixed green at 2:1.
+  - The Alt+A chip has the 3:1 field outline.
+  - The chat box's prompt glyph is the muted text; it was 3.9:1.
+  - Checkboxes have square corners again, so they don't read as radio
+    buttons.
+  - The "log cleanup policy" link in Clean up now is underlined.
+
 ## [0.441.0] — 2026-11-14
 
 ### Changed
