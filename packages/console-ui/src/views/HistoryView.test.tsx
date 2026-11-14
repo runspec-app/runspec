@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { HistoryView, accountNote, agoLabel, hiddenSummary, integrityBadge, parseHistorySearch, syncNote } from './HistoryView'
+import { HistoryView, accountNote, agoLabel, clampPage, hiddenSummary, integrityBadge, parseHistorySearch, syncNote } from './HistoryView'
 import type { HistoryRecord, RunningRun } from '../bridge'
 
 const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns, historySyncStatus, historyHidden } = vi.hoisted(() => ({
@@ -72,6 +72,32 @@ beforeEach(() => {
 })
 
 afterEach(() => { vi.useRealTimers() })
+
+describe('History paging', () => {
+  it('keeps the page inside the list as it shrinks', () => {
+    expect(clampPage(3, 120, 50)).toBe(3)
+    expect(clampPage(3, 60, 50)).toBe(2)
+    expect(clampPage(2, 0, 50)).toBe(1)
+    expect(clampPage(0, 10, 50)).toBe(1)
+  })
+
+  it('changes page, and the size changer actually changes the size', async () => {
+    localStorage.removeItem('runspec.history.pageSize')
+    getHistorySlim.mockResolvedValue(Array.from({ length: 60 }, (_, i) => rec({
+      id: `r${i}`, runId: `run-${i}`, runnable: `job-${String(i).padStart(2, '0')}`,
+      ts: new Date(Date.UTC(2026, 5, 3, 12, 0, 60 - i)).toISOString(),
+    })))
+    render(<HistoryView {...PROPS} />)
+    await screen.findByText('1–50 of 60')
+    fireEvent.click(document.querySelector('.ant-pagination-item-2') as HTMLElement)
+    expect(await screen.findByText('51–60 of 60')).toBeTruthy()
+    // 20 per page: the size sticks (it used to snap back to 50) and is remembered.
+    fireEvent.mouseDown(document.querySelector('.ant-pagination-options .ant-select-selector') as HTMLElement)
+    fireEvent.click(await screen.findByText('20 / page'))
+    expect(await screen.findByText('1–20 of 60')).toBeTruthy()
+    expect(localStorage.getItem('runspec.history.pageSize')).toBe('20')
+  })
+})
 
 describe('HistoryView', () => {
   it('renders rows after the first per-host fetch (default 7-day window)', async () => {

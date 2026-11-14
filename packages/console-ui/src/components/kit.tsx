@@ -13,7 +13,7 @@ import { cloneElement, isValidElement, useState } from 'react'
 import { Button, Dropdown, Modal, Segmented, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import { useRiskConfirm } from './risk'
-import { CheckCircleFilled, CloseCircleFilled, CloseOutlined, EllipsisOutlined, ExclamationCircleOutlined, InfoCircleOutlined, PauseCircleOutlined, WarningFilled } from '@ant-design/icons'
+import { CheckCircleFilled, CloseCircleFilled, CloseOutlined, EllipsisOutlined, ExclamationCircleOutlined, InfoCircleOutlined, LoadingOutlined, PauseCircleOutlined, WarningFilled } from '@ant-design/icons'
 
 import {
   dangerColors, statusText, textColor, textMuted, textSecondary, useAccent, useIsDark, withAlpha, MONO_FONT, RADIUS,
@@ -25,14 +25,15 @@ const { Text } = Typography
 
 export type StatusTone = 'ok' | 'running' | 'waiting' | 'attention' | 'failed' | 'info' | 'neutral'
 
-/** The text colour and tint for a status tone. Every tone has its own fixed
- *  hue, independent of the white-label accent: under a red brand "running" in
- *  the brand colour sat beside "failed" as two pinks. `accent` only moves
- *  failed off a red brand's hue (dangerColors). Pure, for tests. */
+/** The text colour and tint for a status tone, independent of the white-label
+ *  accent. Running is the secondary text, shown by motion (a spinning icon),
+ *  not a colour: colour is kept for ok, waiting, attention and failed, so a
+ *  console full of running jobs stays calm. `accent` only moves failed off a
+ *  red brand's hue (dangerColors). Pure, for tests. */
 export function statusTone(tone: StatusTone, isDark: boolean, accent: string): { color: string; bg: string; border: string } {
   const st = statusText(isDark)
   const color = tone === 'ok' ? st.ok
-    : tone === 'running' ? st.running
+    : tone === 'running' ? textSecondary(isDark)
     : tone === 'waiting' ? st.waiting
     : tone === 'attention' ? st.warn
     : tone === 'failed' ? dangerColors(accent, isDark).text
@@ -59,6 +60,8 @@ export function antTone(color: string | undefined): StatusTone {
 // Waiting and attention are both warm hues; an icon tells them apart for
 // anyone who can't (or doesn't) read the colour.
 const TONE_ICON: Partial<Record<StatusTone, ReactNode>> = {
+  // Running is motion, not colour.
+  running: <LoadingOutlined aria-hidden spin style={{ fontSize: 11 }} />,
   waiting: <PauseCircleOutlined aria-hidden style={{ fontSize: 11 }} />,
   attention: <ExclamationCircleOutlined aria-hidden style={{ fontSize: 11 }} />,
 }

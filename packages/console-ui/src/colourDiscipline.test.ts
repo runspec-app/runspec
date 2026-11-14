@@ -30,7 +30,7 @@ const EXEMPT = new Set([
 // Remaining offenders, by file: Tag/Badge presets, hex and rgb() literals.
 // Burn these down.
 const BASELINE: Record<string, number> = {
-  'App.tsx': 22,
+  'App.tsx': 12,
   'components/CommandInput.tsx': 13,  // syntax-highlight palette
   'components/ConfigSyncPreview.tsx': 9,
   'components/CredentialGuide.tsx': 4,
@@ -41,7 +41,7 @@ const BASELINE: Record<string, number> = {
   'components/OutputPanel.tsx': 17,
   'components/SettingsDrawer.tsx': 13,
   'components/TriggersEditor.tsx': 2,
-  'components/runShared.tsx': 8,
+  'components/runShared.tsx': 7,
   'views/DevView.tsx': 9,
   'views/EvalsView.tsx': 1,
   'views/FormsView.tsx': 4,
