@@ -136,11 +136,11 @@ TRIGGER_RUN_NOW = "schedule:run-now"
 #: fires get and interactive runs in the venv don't. Every fire passes it to
 #: ``runspec exec --env-file`` (a missing file adds nothing), stacked under the
 #: fire's own environment and over the venv's ``.runspec_env``.
-SCHEDULES_ENV = "runspec_schedules.env"
+SCHEDULES_ENV = ".runspec_scheduler_env"
 
 
 def schedules_env_path(runspec_binary: str) -> str:
-    """``{venv}/runspec_schedules.env`` for the venv whose ``bin/runspec`` this is."""
+    """``{venv}/.runspec_scheduler_env`` for the venv whose ``bin/runspec`` this is."""
     return str(Path(runspec_binary).parent.parent / SCHEDULES_ENV)
 
 
@@ -179,7 +179,7 @@ def exec_invocation(
 
     Shared by both backends, so a cron fire and a daemon fire run the same
     command: ``runspec exec --label sched:<id> --trigger <trigger> --lock <lock>
-    --env-file <venv>/runspec_schedules.env [--timeout N] <runnable> -- <globals>
+    --env-file <venv>/.runspec_scheduler_env [--timeout N] <runnable> -- <globals>
     <command path> <command args>``. The
     environment carries only the ``RUNSPEC_ENV_FILE`` path and any ``RUNSPEC_<R>_ARG_<FLAG>=0`` a default-true flag needs — never a
     secret. ``timeout`` (seconds) adds ``--timeout`` when positive."""

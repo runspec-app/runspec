@@ -2,6 +2,66 @@
 
 All notable changes to `runspec-scheduler` are documented here.
 
+## [0.11.0] — 2026-11-14
+
+### Added
+
+- **Webhooks.** Another system can start a runnable in the venv with one HTTP
+  `POST {base_path}/hook/<name>`. The daemon listens when `[hooks] enabled =
+  true` (on either backend: a cron venv's daemon serves webhooks only), checks
+  the sender (token or basic auth, only SHA-256 hashes stored; address
+  allow-list; `trusted_proxies` for `X-Forwarded-For`), writes the request to
+  `{venv}/hooks/spool.sqlite` and answers `202 {"id": …}` before anything
+  runs. Robust by design: a connection cap (503), read timeouts, the TLS
+  handshake off the accept loop, `Content-Length` required and capped (411 /
+  413), per-hook and per-sender rate limits (429 + `Retry-After`), 503 when
+  too much is waiting or the disk is nearly full; rejections are audited at
+  most once a minute per reason. Plain HTTP only on loopback; anything else
+  needs `cert` + `key` (TLS 1.2+). `GET /healthz` for load balancers.
+- **Rules, not code.** A `[[hook]]` picks fields out of a JSON, XML (no
+  DOCTYPE/entities), form or text body by path (`$.` = the whole body when
+  `split` makes one delivery per list item), tries `[[hook.rule]]` tables in
+  order (regex `match`, named groups become fields) and fills `args` from
+  templates with a fixed list of filters (`lower`, `upper`, `trim`, `replace`,
+  `regex`, `default`, `split`, `first`, `last`, `join`, `json`). `dedup`
+  counts repeats on the first delivery; `transform` names a runnable that turns
+  an awkward body into fields.
+- **Autonomy decides.** A run's level is worked out like the console's gate
+  (the command's level, raised by any arg declaring a stricter one, plus the
+  hook's `require_approval`): autonomous runs at once (up to `max_runs`, each
+  hook's `max_running`, optional `skip_if_running`, `timeout` default 6h),
+  confirm/supervised waits for an approval (first `hooks approve` wins, a deny
+  settles it, `approve_within` expiry), manual is refused. Runs go through
+  `runspec exec` as the venv owner with label `hook:<name>` and trigger
+  `webhook` (`webhook:approved` after an approval), args as
+  `RUNSPEC_<R>_ARG_<NAME>` environment variables (never argv) and
+  `.runspec_scheduler_env` loaded. Webhooks refuse to run as root.
+- **Email fallback.** With `[smtp]` (relay, port, from, to, starttls), an
+  approval is mailed when nobody follows the venv or everyone following has
+  muted the hook, else after `expect_claim_within` (15 minutes).
+- **`hooks` verbs:** `list`, `deliveries`, `show`, `check` (exit 1 on any
+  problem, for Ansible's `validate`), `test` (dry run on a body, the last one
+  received or a stored delivery; nothing runs or is stored), `token`, `save`
+  (`--new-token` / `--new-password` printed once), `remove`, `settings`
+  (`--set`, `--smtp`), `approve` / `deny` (`manual`, recorded under
+  `SUDO_USER`), `mute` / `unmute`, and `follow` (the JSON-lines event stream
+  runspec-console reads over SSH: a hello line with what's waiting, then every
+  delivery and change, pings every 15 s).
+- **Deployed hooks.** `{venv}/hooks.d/*.toml` (owned by the venv owner or
+  root, not group/other-writable) win over a console-made hook of the same
+  name; `save` refuses to write over one. The daemon reloads on any change.
+- `status` gains a `hooks` block (settings, hooks, listener, pending, mutes,
+  followers) and a *Webhooks* line in text.
+
+### Changed
+
+- **The schedule-only credentials file is now `.runspec_scheduler_env`**
+  (was `runspec_schedules.env`). The old name isn't read any more; `status`
+  warns while it's still in the venv. Rename it, then `sync` on a cron venv.
+- Writing schedules keeps every other table in the config (`[hooks]`,
+  `[[hook]]`, `[smtp]`) as written, and refuses a rewrite that would change a
+  table it wasn't asked to touch.
+
 ## [0.10.5] — 2026-11-12
 
 ### Fixed

@@ -494,8 +494,8 @@ def write_schedules(path: Path, entries: list[ScheduleEntry] | list[dict[str, An
 
     ``entries`` are :class:`ScheduleEntry` objects or raw ``[[schedule]]``
     dicts. The ``[scheduler]`` table is kept as it is in the file unless
-    ``scheduler`` replaces it."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ``scheduler`` replaces it; other tables (``[hooks]``, ``[[hook]]``,
+    ``[smtp]``) are kept as written."""
     if scheduler is None:
         try:
             scheduler = dict(read_config(path).get("scheduler") or {})
@@ -503,14 +503,100 @@ def write_schedules(path: Path, entries: list[ScheduleEntry] | list[dict[str, An
             scheduler = {}
     header = "# runspec-scheduler config — managed by `runspec-scheduler add/remove/use`\n# and by runspec-console. A running daemon reloads it when it changes.\n\n"
     parts = ([_render_settings(scheduler)] if scheduler else []) + [_render_entry(_file_dict(e)) for e in entries]
-    body = "\n\n".join(parts)
+    old_text = _read_text(path)
+    # Everything else in the file ([hooks], [[hook]], [smtp], …) is kept as written.
+    others = [text for root, text in split_sections(old_text)[1] if root not in ("scheduler", "schedule")]
+    body = "\n\n".join(parts + others)
     text = header + body + ("\n" if body else "")
+    _check_kept(old_text, text, {"scheduler", "schedule"})
+    _atomic_write(path, text)
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+_HEADER_RE = re.compile(r"^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(?:#.*)?$")
+
+
+def split_sections(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """The text before the first table header, and each table as
+    ``(root key, its text)``. A dotted header right after its root's table
+    (``[[hook.rule]]`` after ``[[hook]]``) belongs to that table. Line based:
+    good for the files these tools write (:func:`_check_kept` refuses a
+    rewrite that would change anything it shouldn't)."""
+    preamble: list[str] = []
+    sections: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        m = _HEADER_RE.match(line)
+        if m:
+            key = m.group(1)
+            root = key.split(".", 1)[0].strip().strip("\"'")
+            if sections and "." in key and sections[-1][0] == root:
+                sections[-1][1].append(line)
+            else:
+                sections.append((root, [line]))
+        elif sections:
+            sections[-1][1].append(line)
+        else:
+            preamble.append(line)
+    return "\n".join(preamble), [(root, "\n".join(lines).strip("\n")) for root, lines in sections]
+
+
+def _check_kept(old_text: str, new_text: str, changed: set[str]) -> None:
+    """Refuse a rewrite that would change any table it wasn't meant to."""
+    if not old_text:
+        return
+    try:
+        before = tomllib.loads(old_text)
+    except Exception:  # noqa: BLE001 — a broken file is being replaced
+        return
+    after = tomllib.loads(new_text)
+    for key in set(before) | set(after):
+        if key not in changed and before.get(key) != after.get(key):
+            raise ValueError(f"rewriting the config would change [{key}], which this change doesn't touch; edit the file by hand")
+
+
+def rewrite_sections(path: Path, *, drop: set[str], add: list[str]) -> None:
+    """Rewrite ``path`` without its ``drop`` tables and with ``add`` (TOML text
+    blocks) appended; everything else kept as written. Atomic."""
+    old_text = _read_text(path)
+    preamble, sections = split_sections(old_text)
+    kept = [text for root, text in sections if root not in drop]
+    head = preamble.strip("\n")
+    body = "\n\n".join([b for b in [head, *kept, *add] if b.strip()])
+    text = body + "\n"
+    tomllib.loads(text)  # never write what won't read back
+    _check_kept(old_text, text, set(drop))
+    _atomic_write(path, text)
+
+
+def toml_value(value: Any) -> str:
+    """A TOML value: scalars, arrays and (inline) tables, nested."""
+    if isinstance(value, dict):
+        inner = ", ".join(f"{_toml_key(k)} = {toml_value(v)}" for k, v in value.items())
+        return "{ " + inner + " }" if inner else "{}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(toml_value(v) for v in value) + "]"
+    return _toml_scalar(value)
+
+
+def _toml_key(key: Any) -> str:
+    text = str(key)
+    return text if re.fullmatch(r"[A-Za-z0-9_-]+", text) else _toml_str(text)
 
 
 def set_backend(path: Path, backend: str) -> None:

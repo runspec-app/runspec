@@ -478,7 +478,7 @@ installed*, *stale line*, *legacy line*) get a **Sync crontab** button.
 
 A host schedule never carries credentials. Password arguments aren't offered.
 Put what its fires need in the venv's **schedule-only env file**,
-`{venv}/runspec_schedules.env` (runspec-scheduler 0.7.1, runspec 0.82.0): every
+`{venv}/.runspec_scheduler_env` (runspec-scheduler 0.7.1, runspec 0.82.0): every
 fire (cron, daemon and Run now) loads it on top of `.runspec_env`, and nothing
 else in the venv does. Console, agent and hand-run runs only load
 `.runspec_env`, so a service account's credentials kept in the schedules file

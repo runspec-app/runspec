@@ -196,7 +196,7 @@ def test_schedule_args_skips_defaults_and_refuses_secrets() -> None:
     out, problems = sch.schedule_args(args, {"target": "/backups", "keep": "14", "token": "", "verbose": True})
     assert out == {"keep": "14", "verbose": True} and problems == []
     _, problems = sch.schedule_args(args, {"token": "s3cret"})
-    assert problems and "runspec_schedules.env" in problems[0]
+    assert problems and ".runspec_scheduler_env" in problems[0]
 
 
 def test_ids() -> None:

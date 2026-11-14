@@ -89,7 +89,7 @@ through `sudo -n -u <owner>`, so you need a passwordless sudo rule to that
 account; without one the screen says so. On the cron backend each change is
 followed by a crontab sync, so it takes effect at once. A schedule's arguments
 are the ones you changed in the form; a `password` field can't be scheduled
-(put it in the venv's `runspec_schedules.env` instead), and a schedule that
+(put it in the venv's `.runspec_scheduler_env` instead), and a schedule that
 carries credentials can't have its time changed here.
 
 ## How runs work

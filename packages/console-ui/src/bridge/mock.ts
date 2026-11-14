@@ -652,7 +652,7 @@ let invocationCounter = 0
 // request_id → resolver, for the simulated autonomy-confirm round-trip.
 // Mock .runspec_env files, keyed `host|runspec_path`.
 // Keyed host|runspec_path for .runspec_env, host|runspec_path|schedules for
-// the schedule-only runspec_schedules.env.
+// the schedule-only .runspec_scheduler_env.
 // Run notes (who is handling a failing host schedule), keyed host|venv|run_id.
 // prod-2's nightly backup starts out claimed so both states show.
 const _mockNotes = new Map<string, RunNote>([
@@ -1266,7 +1266,7 @@ export const mockApi: BridgeApi = {
     const reader = { runnable: 'jira', command: '', arg: 'jira-pat', via: 'auto' as const, password: true, description: 'Jira PAT' }
     const secret = (k: string) => /PAT|TOKEN|PASSWORD|SECRET/.test(k)
     return {
-      ...ref, venv: ref.runspec_path.split('/').slice(-3, -2)[0] ?? '', path: ref.runspec_path.replace(/bin\/runspec$/, ref.file === 'schedules' ? 'runspec_schedules.env' : '.runspec_env'),
+      ...ref, venv: ref.runspec_path.split('/').slice(-3, -2)[0] ?? '', path: ref.runspec_path.replace(/bin\/runspec$/, ref.file === 'schedules' ? '.runspec_scheduler_env' : '.runspec_env'),
       ok: true, exists: Object.keys(text).length > 0, owner: 'svc-ops', user: 'deploy', as_user: ref.host === 'local' ? '' : 'svc-ops',
       mode: '0600', sha: JSON.stringify(text), writable: !ref.runspec_path.includes('/tools/'),
       write_error: ref.runspec_path.includes('/tools/') ? 'deploy can\'t write /opt/venvs/tools/.runspec_env, and passwordless sudo as svc-tools or root was refused.' : '', warnings: [], overrides: [],
@@ -1960,7 +1960,7 @@ export const mockApi: BridgeApi = {
     // The mock Env files fleet has /opt/venvs/ops on every host, so point there.
     const root = '/opt/venvs/ops'
     return {
-      ok: true, host: p.host, runspec_path: `${root}/bin/runspec`, path: `${root}/runspec_schedules.env`,
+      ok: true, host: p.host, runspec_path: `${root}/bin/runspec`, path: `${root}/.runspec_scheduler_env`,
       shared_path: `${root}/.runspec_env`,
       exists: true, override: '',
       needs: [

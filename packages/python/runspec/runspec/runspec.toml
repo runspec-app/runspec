@@ -274,7 +274,7 @@ examples = [
   {cmd = "runspec exec --label nightly --lock ~/.cache/nightly.lock backup",  description = "Skip (recorded) if the previous run still holds the lock"},
   {cmd = "runspec exec --skip-if-running --timeout 600 report",               description = "Skip if already running per the runs index; kill after 10 min"},
   {cmd = "runspec exec cron -- list",                                         description = "Everything after -- is passed through, incl. subcommands"},
-  {cmd = "runspec exec --env-file /opt/venvs/ops/runspec_schedules.env backup", description = "Add a schedule-only credentials file to this run's environment"},
+  {cmd = "runspec exec --env-file /opt/venvs/ops/.runspec_scheduler_env backup", description = "Add a schedule-only credentials file to this run's environment"},
 ]
 
 [runspec.commands.exec.args]

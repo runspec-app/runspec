@@ -309,6 +309,10 @@ class Daemon:
         self._output_logs = OutputLogs(Path(sys.prefix) / "logs", None)
         self._output_checked = 0.0
         self._state_warned = False
+        # Webhooks (listener + worker), when [hooks] is set up.
+        self._hooks: Any = None
+        self._hooks_sig: tuple[Any, ...] | None = None
+        self._hooks_error: str | None = None
 
     # ── single instance ───────────────────────────────────────────────────
     def acquire_lock(self) -> int | None:
@@ -363,6 +367,59 @@ class Daemon:
             self._settings = settings
             self._entries = {e.id: e for e in entries}
         self._sync_jobs(initial=initial)
+
+    # ── webhooks ──────────────────────────────────────────────────────────
+    def _hooks_changed(self) -> bool:
+        from . import hookconfig
+
+        return hookconfig.signature(self.config_path) != self._hooks_sig
+
+    def load_hooks(self) -> None:
+        """Start, reload or stop the webhook listener + worker to match
+        ``[hooks]`` and the hooks. A broken ``[hooks]`` keeps what's running."""
+        from . import hookconfig
+
+        self._hooks_sig = hookconfig.signature(self.config_path)
+        try:
+            cfg = hookconfig.load_hook_config(self.config_path)
+        except Exception as exc:  # noqa: BLE001 — reported, never fatal to the schedules
+            self._hooks_error = f"{type(exc).__name__}: {exc}"
+            logger.error("webhook settings in %s are invalid — keeping what's running: %s", self.config_path, exc)
+            return
+        for err in cfg.errors:
+            logger.error("webhook %s (%s): %s", err.get("hook") or "-", err.get("file"), err.get("error"))
+        self._hooks_error = None
+        if not cfg.settings.enabled:
+            self.stop_hooks()
+            return
+        geteuid = getattr(os, "geteuid", None)
+        if geteuid is not None and geteuid() == 0:
+            self._hooks_error = "webhooks don't run as root: run the daemon as the venv owner"
+            logger.error(self._hooks_error)
+            self.stop_hooks()
+            return
+        if self._hooks is None:
+            from .hookrun import HookWorker
+            from .listener import HookService
+            from .spool import Spool, spool_path_for
+
+            spool = Spool(spool_path_for(self.config_path))
+            worker = HookWorker(spool, self.config_path)
+            worker.recover()
+            worker.configure(cfg)
+            worker.start()
+            self._hooks = HookService(cfg, spool, worker)
+            self._hooks.start()
+        else:
+            self._hooks.reconfigure(cfg)
+
+    def stop_hooks(self) -> None:
+        if self._hooks is None:
+            return
+        self._hooks.stop()
+        self._hooks.worker.stop()
+        self._hooks.worker.stop_runs()
+        self._hooks = None
 
     def _scheduler_or_start(self) -> Any:
         if self._scheduler is None:
@@ -436,7 +493,7 @@ class Daemon:
             else:
                 changed += 1
         if settings.backend != "daemon":
-            logger.info("backend is %r — the daemon fires nothing (switch with: runspec-scheduler use daemon)", settings.backend)
+            logger.info("backend is %r — the daemon fires no schedules (switch with: runspec-scheduler use daemon); it still serves webhooks when [hooks] is on", settings.backend)
         elif added or changed or removed or initial:
             logger.info("schedules: %d active (%d added, %d rescheduled, %d removed)", len(self._job_keys), added, changed, removed)
 
@@ -687,6 +744,7 @@ class Daemon:
             "running": running,
             "last_fire": last_fire,
             "fires": self._fires,
+            "hooks": self._hooks.state() if self._hooks is not None else ({"error": self._hooks_error} if self._hooks_error else None),
         }
 
     def write_state(self, extra: dict[str, Any] | None = None) -> None:
@@ -741,6 +799,7 @@ class Daemon:
             return 1
         logger.info("runspec-scheduler daemon started (pid %d, config %s, backend %s)", os.getpid(), self.config_path, self._settings.backend)
         audit("scheduler.daemon", "started", target={"venv": sys.prefix}, detail={"pid": os.getpid(), "backend": self._settings.backend, "schedules": len(self._job_keys)})
+        self.load_hooks()
         self.write_state()
         self._last_heartbeat = time.monotonic()
         self._output_logs = OutputLogs.for_venv()
@@ -755,9 +814,14 @@ class Daemon:
                     self._reload.clear()
                     logger.info("SIGHUP — reloading")
                     self.load()
+                    self.load_hooks()
                 elif _signature(self.config_path) != self._sig:
                     logger.info("config changed — reloading")
                     self.load()
+                    self.load_hooks()
+                elif self._hooks_changed():
+                    logger.info("webhook config changed — reloading hooks")
+                    self.load_hooks()
                 elif time.monotonic() - self._pkg_checked >= PACKAGE_CHECK_SECONDS:
                     self._check_packages()
                 self._flush_missed()
@@ -818,6 +882,7 @@ class Daemon:
                 logger.exception("error shutting down the scheduler")
 
     def _shutdown(self, code: int = 0) -> None:
+        self.stop_hooks()
         self._shutdown_scheduler()
         with contextlib.suppress(Exception):
             self._flush_missed()

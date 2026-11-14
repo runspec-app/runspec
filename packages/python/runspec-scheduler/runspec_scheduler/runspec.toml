@@ -17,6 +17,13 @@
 #   runspec-scheduler run-now --id … [--detach] fire one schedule immediately
 #   runspec-scheduler run                     run the daemon (the daemon backend) in the foreground
 #   runspec-scheduler install-service         plan (or --write) what keeps the daemon running
+#   runspec-scheduler hooks list|test|save|… webhooks: apps POST here, runnables run (see [hooks] below)
+#
+# Webhooks, for example:
+#   runspec-scheduler hooks settings --set enabled=true --set port=8977
+#   runspec-scheduler hooks save --new-token < alerts.toml   # prints the token once
+#   runspec-scheduler hooks test --hook alerts < sample.json  # dry run, nothing runs
+#   runspec-scheduler hooks approve --id 42 --note "checked the disk"
 #
 # Two backends, one per venv ([scheduler] backend in the config, switched with
 # `use`), both running every fire through `runspec exec --label sched:<id>`:
@@ -210,3 +217,131 @@ manager = {options = ["auto", "systemd", "systemd-user", "supervisor", "cron"], 
 write   = {type = "flag", default = false, description = "Carry the plan out. Without it nothing changes."}
 remove  = {type = "flag", default = false, description = "Plan removing this venv's keepers (all of them with auto) and stopping the daemon."}
 system  = {type = "flag", default = false, description = "With --manager supervisor: print a program block for the host's system supervisord (run as the venv owner) instead of one in the venv."}
+
+# ---- hooks: webhooks into this venv --------------------------------------
+# The daemon listens on [hooks] port when [hooks] enabled = true (on either
+# backend). Apps POST to {base_path}/hook/<name>; each request is checked
+# (token or basic auth), spooled in {venv}/hooks/spool.sqlite, matched against
+# the hook's rules, and either run here (autonomous runnables), held for an
+# approval from a console (confirm/supervised), refused (manual) or passed to
+# the consoles following this venv as an event. Hooks live in
+# runspec_scheduler.toml ([[hook]], written by `hooks save`) and in
+# {config dir}/hooks.d/*.toml (deployed, e.g. by Ansible; those win).
+[runspec-scheduler.commands.hooks]
+description     = "Webhooks into this venv: list hooks and the listener, test a hook against a body, approve or deny runs waiting for a person, mute hooks, follow events, and set hooks up."
+require-command = true
+
+[runspec-scheduler.commands.hooks.commands.list]
+description = "The listener settings, every hook (console-made and deployed, with its address), who follows this venv, the mutes and the runs waiting for approval."
+output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.deliveries]
+description = "Recent webhook deliveries, newest first: what arrived, what it ran or why not, who decided."
+output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.deliveries.args]
+hook  = {type = "str", required = false, description = "Only this hook's deliveries."}
+state = {type = "str", required = false, description = "Only deliveries in this state (pending, ran, denied, expired, refused, event, no-match, duplicate, error…)."}
+limit = {type = "int", default = 50, description = "How many to show."}
+
+[runspec-scheduler.commands.hooks.commands.show]
+description = "One delivery in full: fields, rule, what it runs, its state, and the body as it was sent."
+output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.show.args]
+id = {type = "int", required = true, description = "Delivery id."}
+
+[runspec-scheduler.commands.hooks.commands.check]
+description = "Check a hook file (a hooks.d/*.toml or a copy of one) and print every problem. Exit 1 when there are any, so Ansible can use it as validate: \"{venv}/bin/runspec-scheduler hooks check %s\"."
+output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.check.args]
+file = {type = "path", position = 1, description = "The TOML file to check."}
+
+[runspec-scheduler.commands.hooks.commands.test]
+description = "Dry run: what a hook does with a body (piped in, or the last one it received, or a stored delivery): the fields it picks out, the rule that matches, what it would run with which args, and at which autonomy. Nothing runs and nothing is stored."
+output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.test.args]
+hook         = {type = "str", required = false, description = "The hook to test (may be left out with --file holding one hook)."}
+id           = {type = "int", required = false, description = "Use this stored delivery's body instead of stdin."}
+last         = {type = "flag", default = false, description = "Use the last body the hook received instead of stdin."}
+file         = {type = "path", required = false, description = "Test the hook as written in this file (e.g. a hooks.d file before deploying it) instead of as set up."}
+content-type = {type = "str", required = false, description = "The body's Content-Type (default: worked out from the body)."}
+
+[runspec-scheduler.commands.hooks.commands.token]
+description = "Make a new random token and print it with its SHA-256. Put the hash in a hook (token_sha256) and the token in the sending app. Nothing is stored."
+output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.save]
+description = "Add or replace a console-made hook from a JSON object or a TOML [[hook]] on stdin (checked first). --new-token makes a token and prints it once; only its hash is kept. A hook deployed in hooks.d can't be saved over."
+output      = "json"
+autonomy    = "confirm"
+
+[runspec-scheduler.commands.hooks.commands.save.args]
+new-token    = {type = "flag", default = false, description = "Make a new token for the hook (printed once)."}
+new-password = {type = "flag", default = false, description = "Make a new basic-auth password for the hook's username (printed once)."}
+
+[runspec-scheduler.commands.hooks.commands.remove]
+description = "Remove a console-made hook. Deployed hooks are removed where they're deployed from."
+output      = "json"
+autonomy    = "confirm"
+
+[runspec-scheduler.commands.hooks.commands.remove.args]
+name = {type = "str", required = true, description = "Hook name."}
+
+[runspec-scheduler.commands.hooks.commands.settings]
+description = "Show the [hooks] and [smtp] settings, or change them: --set key=value for [hooks] (enabled, port, bind, base_path, cert, key, max_body, keep, rate_per_minute, trusted_proxies, approve_within, expect_claim_within, max_runs…), --smtp key=value for [smtp] (relay, port, from, to, starttls). An empty value puts the default back. The daemon picks the change up by itself."
+output      = "json"
+autonomy    = "confirm"
+
+[runspec-scheduler.commands.hooks.commands.settings.args]
+set  = {type = "str", multiple = true, required = false, description = "A [hooks] setting as key=value, e.g. enabled=true, port=8443, cert=/etc/pki/tls/certs/host.pem."}
+smtp = {type = "str", multiple = true, required = false, description = "An [smtp] setting as key=value, e.g. relay=smtp.example.com, from=runspec@example.com, to=[\"ops@example.com\"]."}
+
+[runspec-scheduler.commands.hooks.commands.approve]
+description = "Approve a run waiting for a person. The first approval wins and the daemon runs it here; every console following the venv sees who approved it."
+output      = "json"
+autonomy    = "manual"
+
+[runspec-scheduler.commands.hooks.commands.approve.args]
+id   = {type = "int", required = true, description = "Delivery id."}
+note = {type = "str", required = false, description = "A note kept with the decision."}
+
+[runspec-scheduler.commands.hooks.commands.deny]
+description = "Deny a run waiting for a person. It settles it for everyone (recorded with who denied it)."
+output      = "json"
+autonomy    = "manual"
+
+[runspec-scheduler.commands.hooks.commands.deny.args]
+id   = {type = "int", required = true, description = "Delivery id."}
+note = {type = "str", required = false, description = "A note kept with the decision."}
+
+[runspec-scheduler.commands.hooks.commands.mute]
+description = "Stop counting yourself as watching a hook (or all hooks) for a while: other consoles see who muted what until when, and a waiting approval is mailed straight away when everyone following has muted it."
+output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.mute.args]
+hook   = {type = "str", required = false, description = "The hook to mute (default: all hooks)."}
+for    = {type = "str", default = "1h", description = "How long: 30m, 2h, 1d."}
+reason = {type = "str", required = false, description = "Shown to the others, e.g. off shift."}
+who    = {type = "str", required = false, description = "Mute for this person (default: the person running the command, SUDO_USER under sudo)."}
+
+[runspec-scheduler.commands.hooks.commands.unmute]
+description = "Take a mute off again."
+output      = "json"
+
+[runspec-scheduler.commands.hooks.commands.unmute.args]
+hook = {type = "str", required = false, description = "The hook (default: all of your mutes)."}
+who  = {type = "str", required = false, description = "Whose mute (default: yours)."}
+
+[runspec-scheduler.commands.hooks.commands.follow]
+description = "Stream this venv's webhook events as JSON lines (what runspec-console runs over SSH): a hello line with what's waiting, then each new delivery and every change, until the reader goes away. Never returns by itself."
+output      = "json"
+autonomy    = "manual"
+
+[runspec-scheduler.commands.hooks.commands.follow.args]
+since  = {type = "int", required = false, description = "Resume after this event id (the last one seen)."}
+replay = {type = "str", default = "15m", description = "Without --since: start this far back."}
+who    = {type = "str", required = false, description = "Who is following (default: SUDO_USER, else this account)."}
+once   = {type = "flag", default = false, description = "Print what's there now and stop (for scripts and tests)."}
