@@ -498,6 +498,13 @@ describe('OutputPanel autonomy-gate confirm', () => {
 
   it('says "Waiting for you", not "Running", while the gate is parked, and names the host', () => {
     render(<OutputPanel blocks={[chatBlockWithRunningTool('run_runnable')]} />)
+    // The pill shows once you've scrolled away from the latest output.
+    {
+      const el = document.querySelector('[data-testid="output-scroll"]') as HTMLElement
+      Object.defineProperty(el, 'scrollHeight', { value: 2000, configurable: true })
+      Object.defineProperty(el, 'clientHeight', { value: 200, configurable: true })
+      fireEvent.scroll(el)
+    }
     // Before the gate: the tool is running.
     expect(screen.getByTestId('activity-label').textContent).toBe('Running')
     fireConfirm({

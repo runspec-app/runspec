@@ -143,6 +143,11 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
   const consoleNameGlobs = badHostGlobs.filter(g => scopeNames.includes(g))
 
   const [askRisk, riskHolder] = useRiskConfirm()
+  // The mode the shown hosts are in now (one value when they agree), so the
+  // control can say it and go back to it when a change is cancelled.
+  const liveModes = [...new Set(shownStatus.filter(r => r.ok && r.mode).map(r => r.mode as 'enforce' | 'warn' | 'off'))]
+  const liveMode = liveModes.length === 1 ? liveModes[0] : null
+  useEffect(() => { if (liveMode) setMode(liveMode) }, [liveMode])
   // Every rule in the shown rows, "host/venv: rule", for the Clear ask.
   const allRules = shownStatus.flatMap(r => (r.ok ? r.rules ?? [] : []).map(rule => `${r.host}/${r.venv}: ${ruleText(rule)}`))
   const ruleCount = allRules.length
@@ -442,12 +447,16 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
               consequence: 'Blocked runnables can run until you set the mode back to Enforce.',
               okText: mode === 'off' ? 'Turn off' : 'Only warn',
             })
-            if (!a.ok) return
+            // Cancelled: the control goes back to what the hosts are doing.
+            if (!a.ok) { setMode(liveMode ?? 'enforce'); return }
           }
           await run({ action: 'mode', setting: mode }, 'mode')
         }}>
           Apply mode
         </Button>
+        <Text type="secondary" style={{ fontSize: 12 }} data-testid="denylist-live-mode">
+          {liveMode ? `Now: ${liveMode}` : liveModes.length > 1 ? `Now: mixed (${liveModes.join(', ')})` : ''}
+        </Text>
       </Space>
 
       {riskHolder}

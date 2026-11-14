@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Drawer, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
-import { CloseOutlined, StopOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined, CompressOutlined, ExpandOutlined } from '@ant-design/icons'
+import { Button, Drawer, List, Popconfirm, Popover, Tag, Tooltip, Typography, message } from 'antd'
+import { BellOutlined, CloseOutlined, StopOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined, CompressOutlined, ExpandOutlined } from '@ant-design/icons'
 import { bridge, type ChatConversation, type ChatSessionInfo, type ConversationMeta, type InFlightRecord, type Runnable, type TriggerCard } from '../bridge'
 import { useFeatures } from '../features'
 import { OutputPanel, useInvocationBlocks, maskCallArgs, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
@@ -150,73 +150,95 @@ function elapsed(startedAt: string): string {
   return `${m}m ${s % 60}s`
 }
 
-function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
+/** "2 running · 1 waiting". Pure, for tests. */
+export function activitySummary(running: number, waiting: number): string {
+  return [running ? `${running} running` : '', waiting ? `${waiting} waiting` : ''].filter(Boolean).join(' · ')
+}
+
+/** Everything in flight, in one place: the runs on the fleet (with Stop) and
+ *  the sessions waiting for you (click to open). It replaces the strip that
+ *  sat above the session row; the chips keep their own running/waiting marks,
+ *  and the floating pill only appears when you've scrolled away. */
+export function ActivityControl({ inFlight, waiting, onOpen }: {
+  inFlight: InFlightRecord[]
+  waiting: { id: string; label: string }[]
+  onOpen: (sessionId: string) => void
+}) {
   const [askRisk, riskHolder] = useRiskConfirm()
   const isDark = useIsDark()
+  const [open, setOpen] = useState(false)
   const [, setTick] = useState(0)
-  const ref = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
   useEffect(() => {
-    ref.current = setInterval(() => setTick(t => t + 1), 1000)
-    return () => clearInterval(ref.current)
-  }, [])
+    if (!open || inFlight.length === 0) return
+    const t = setInterval(() => setTick(x => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [open, inFlight.length])
 
-  if (inFlight.length === 0) return null
+  if (inFlight.length === 0 && waiting.length === 0) return riskHolder
+  const label = activitySummary(inFlight.length, waiting.length)
 
-  // Theme surfaces, not a fixed green. Running is motion in the neutral ink;
-  // colour is kept for waiting-for-you and failed (the brand is identity only).
-  const bg     = 'var(--rs-surface-raised)'
-  const border = 'var(--rs-border)'
-  const nameCol = textColor(isDark)
-
-  const handleCancel = async (id: string) => {
-    await bridge.cancel_invocation(id)
+  const stop = async (r: InFlightRecord) => {
+    const isTool = r.kind === 'builtin_tool'
+    const a = await askRisk({
+      level: 'local', title: 'Stop this run?', action: `${isTool ? r.runnable : '/' + r.runnable}${r.host ? ` on ${r.host}` : ''}`,
+      consequence: 'It stops where it is; anything it already changed stays changed.',
+      okText: 'Stop run', cancelText: 'Keep running',
+    })
+    if (a.ok) await bridge.cancel_invocation(r.id)
   }
 
-  return (
-    <div style={{
-      display: 'flex', flexWrap: 'wrap', gap: 8,
-      padding: '8px 12px',
-      background: bg, border: `1px solid ${border}`, borderRadius: RADIUS.sm,
-      marginBottom: 4,
-    }}>
-      {riskHolder}
-      {inFlight.map(r => {
-        // Built-in agent tools (repo_*, outlook_*, denylist, …) show their label
-        // verbatim ("repo_sync: runspec"); a runnable run keeps the /name form.
-        const isTool = r.kind === 'builtin_tool'
-        return (
-        <span key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 12 }} spin />
-          <Text style={{ fontFamily: MONO_FONT, fontSize: 13, color: nameCol }}>{isTool ? r.runnable : `/${r.runnable}`}</Text>
-          {isTool && (
-            <StatusTag tone="info">agent</StatusTag>
-          )}
-          {r.trigger === 'schedule' && (
-            <Tooltip title="Ran on a schedule">
-              <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />
-            </Tooltip>
-          )}
-          {r.host && <Tag style={{ fontSize: 12, margin: 0 }}>{r.host}</Tag>}
-          {r.group && <Text style={{ fontSize: 12, fontFamily: MONO_FONT, color: 'var(--rs-text-muted)' }}>{r.group}</Text>}
-          <Text type="secondary" style={{ fontSize: 12 }}>{r.operator}</Text>
-          <Text style={{ fontSize: 12, color: 'var(--rs-text-secondary)', fontFamily: MONO_FONT }}>{elapsed(r.startedAt)}</Text>
-          <IconAction label={`Stop ${isTool ? r.runnable : '/' + r.runnable}`} tip="Stop this run" icon={<StopOutlined style={{ fontSize: 11 }} />}
-            // A stop mark, not ×: × closes a chip; this stops work on a host.
-            // Neutral: the danger colour is for the confirm button, not for
-            // every running job (a console full of red marks looked mid-incident).
-            style={{ padding: '0 4px', height: 18, lineHeight: 1 }}
-            onClick={async () => {
-              const a = await askRisk({
-                level: 'local', title: 'Stop this run?', action: `${isTool ? r.runnable : '/' + r.runnable}${r.host ? ` on ${r.host}` : ''}`,
-                consequence: 'It stops where it is; anything it already changed stays changed.',
-                okText: 'Stop run', cancelText: 'Keep running',
-              })
-              if (a.ok) handleCancel(r.id)
-            }} />
-        </span>
-        )
-      })}
+  const list = (
+    <div data-testid="activity-list" style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 320, maxWidth: 480, maxHeight: '50vh', overflowY: 'auto' }}>
+      {waiting.length > 0 && (
+        <div>
+          <Text strong style={{ fontSize: 12 }}>Waiting for you</Text>
+          {waiting.map(w => (
+            <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+              <Text style={{ fontSize: 13, flex: 1, minWidth: 0 }} ellipsis>{w.label}</Text>
+              <Button size="small" onClick={() => { setOpen(false); onOpen(w.id) }}>Open</Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {inFlight.length > 0 && (
+        <div>
+          <Text strong style={{ fontSize: 12 }}>Running</Text>
+          {inFlight.map(r => {
+            // Built-in agent tools show their label verbatim; a runnable keeps /name.
+            const isTool = r.kind === 'builtin_tool'
+            const name = isTool ? r.runnable : `/${r.runnable}`
+            return (
+              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                <LoadingOutlined aria-hidden spin style={{ color: 'var(--rs-text-secondary)', fontSize: 12 }} />
+                <Text style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark) }}>{name}</Text>
+                {isTool && <StatusTag tone="info">agent</StatusTag>}
+                {r.trigger === 'schedule' && (
+                  <Tooltip title="Ran on a schedule"><ClockCircleOutlined aria-label="scheduled" style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} /></Tooltip>
+                )}
+                {r.host && <Tag style={{ fontSize: 12, margin: 0 }}>{r.host}</Tag>}
+                <Text type="secondary" style={{ fontSize: 12 }}>{r.operator}</Text>
+                <Text style={{ fontSize: 12, color: 'var(--rs-text-secondary)', fontFamily: MONO_FONT, marginLeft: 'auto' }}>{elapsed(r.startedAt)}</Text>
+                <IconAction label={`Stop ${name}`} tip="Stop this run" icon={<StopOutlined style={{ fontSize: 11 }} />}
+                  onClick={() => { void stop(r) }} />
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
+  )
+
+  return (
+    <>
+      {riskHolder}
+      <Popover open={open} onOpenChange={setOpen} trigger="click" placement="bottomLeft" content={list}>
+        <Button size="small" data-testid="activity-control" aria-label={`Activity: ${label}`}
+          icon={inFlight.length ? <LoadingOutlined aria-hidden spin /> : <BellOutlined aria-hidden />}
+          style={{ flexShrink: 0, height: 24, fontSize: 12, color: waiting.length ? 'var(--rs-waiting)' : undefined, fontWeight: waiting.length ? 600 : undefined }}>
+          {label}
+        </Button>
+      </Popover>
+    </>
   )
 }
 
@@ -729,8 +751,12 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent }: ConsoleViewPr
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
       {riskHolder}
-      <InFlightStrip inFlight={inFlight} />
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
+        <ActivityControl
+          inFlight={inFlight}
+          waiting={sessions.filter(x => statusOf(x) === 'waiting').map(x => ({ id: x.id, label: x.label || x.kind }))}
+          onOpen={select}
+        />
         <SessionStrip
           sessions={sessions}
           selectedId={selectedId}

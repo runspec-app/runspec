@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useEffect } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
-import { askRemembered, confirmWord, consentCount, consentKey, forgetConsents, hasConsent, targetList, useRiskConfirm, type RiskAnswer, type RiskAsk } from './risk'
+import { askRemembered, confirmWord, consentCount, consentKey, consentLabel, forgetConsent, forgetConsents, hasConsent, listConsents, RememberedAnswers, targetList, useRiskConfirm, type RiskAnswer, type RiskAsk } from './risk'
 import { savedRunTargets } from './runShared'
 
 function Harness({ ask, onAnswer }: { ask: RiskAsk; onAnswer: (a: RiskAnswer) => void }) {
@@ -94,5 +94,34 @@ describe('remembered consent', () => {
     expect(savedRunTargets({ ...base, selected_hosts: ['a', 'b'] })).toEqual(['a', 'b'])
     expect(savedRunTargets({ ...base, hosts: ['a', 'b'] })).toEqual(['first connected of a, b'])
     expect(savedRunTargets({ ...base, profile: 'prod' })).toEqual(['profile prod'])
+  })
+})
+
+describe('remembered answers in Settings', () => {
+  beforeEach(() => forgetConsents())
+
+  it('labels each answer and forgets one at a time', async () => {
+    const ask = async (): Promise<RiskAnswer> => ({ ok: true, remember: true })
+    await askRemembered(ask, consentKey('run:backup', ['prod-1']), { level: 'fleet', title: 'Run backup?', action: 'backup', targets: ['prod-1'], okText: 'Run' })
+    await askRemembered(ask, consentKey('copy', ['a', 'b']), { level: 'fleet', title: 'Run uptime on 2 hosts?', action: 'uptime', targets: ['a', 'b'], okText: 'Run' })
+    expect(listConsents().map(c => c.label)).toEqual(['Run backup on prod-1', 'Run uptime on 2 hosts'])
+    render(<RememberedAnswers />)
+    fireEvent.click(screen.getByRole('button', { name: 'Forget: Run backup on prod-1' }))
+    expect(hasConsent(consentKey('run:backup', ['prod-1']))).toBe(false)
+    expect(consentCount()).toBe(1)
+    expect(screen.queryByText('Run backup on prod-1')).toBeNull()
+    forgetConsent(consentKey('copy', ['a', 'b']))
+    expect(consentCount()).toBe(0)
+  })
+
+  it('reads answers stored by earlier versions as bare keys', () => {
+    localStorage.setItem('runspec.consent', JSON.stringify(['run:x:a']))
+    expect(hasConsent('run:x:a')).toBe(true)
+    expect(listConsents()[0].label).toBe('run:x:a')
+  })
+
+  it('names an answer by its question and targets', () => {
+    expect(consentLabel({ level: 'fleet', title: 'Run backup?', action: '', targets: ['prod-1'], okText: '' })).toBe('Run backup on prod-1')
+    expect(consentLabel({ level: 'local', title: 'Run disk-check?', action: '', okText: '' })).toBe('Run disk-check')
   })
 })

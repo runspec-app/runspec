@@ -45,14 +45,15 @@ describe('WebhookApprovals', () => {
     expect(screen.getByText('web-01 / ops')).toBeTruthy()
     expect(screen.getByText('system-service restart --name nginx')).toBeTruthy()
     expect(screen.getByText(/received 2m ago · from 10.2.4.17/)).toBeTruthy()
-    await userEvent.click(screen.getByRole('button', { name: /Show 2 fields/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Show the 2 fields/ }))
     expect(screen.getByText('labels.severity')).toBeTruthy()
   })
 
   it('approves with the note', async () => {
     decide.mockResolvedValue({ ok: true, result: { ok: true } })
     render(<WebhookApprovals status={status([d(41)])} />)
-    await userEvent.type(screen.getByLabelText('Note for the record'), 'known issue')
+    await userEvent.click(screen.getByRole('button', { name: 'Add a reason…' }))
+    await userEvent.type(screen.getByLabelText('Note for the record (optional)'), 'known issue')
     await userEvent.click(screen.getByRole('button', { name: /Approve/ }))
     expect(decide).toHaveBeenCalledWith({ host: 'web-01', venv: 'ops', id: 41, verdict: 'approve', note: 'known issue' })
   })

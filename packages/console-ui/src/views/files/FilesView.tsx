@@ -299,7 +299,11 @@ export function FilesView({ hosts, selectedHost, active }: {
           onCancel={() => setDrop(null)}
           onCopy={choice => {
             const pd = drop; setDrop(null)
-            if (choice.remember) { const key = copyConsent(pd); if (key) rememberConsent(key) }
+            if (choice.remember) {
+              const key = copyConsent(pd)
+              const a = panes[pd.from].target, b = panes[pd.to].target
+              if (key && a && b) rememberConsent(key, `Copy files ${targetLabel(a)} → ${targetLabel(b)}`)
+            }
             startCopy(pd, choice)
           }}
         />

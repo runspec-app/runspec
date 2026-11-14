@@ -10,10 +10,19 @@
  *   3. a finished turn shows no activity footer.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 
 import { OutputPanel } from './OutputPanel'
 import type { InvocationBlock, BlockSegment } from './OutputPanel'
+
+/** The pill shows only when you've scrolled away from the latest output. */
+function scrollAway() {
+  const el = document.querySelector('[data-testid="output-scroll"]') as HTMLElement
+  Object.defineProperty(el, 'scrollHeight', { value: 2000, configurable: true })
+  Object.defineProperty(el, 'clientHeight', { value: 200, configurable: true })
+  el.scrollTop = 0
+  fireEvent.scroll(el)
+}
 
 // The real `bridge` waits on window.pywebview — stub it, as the other tests do.
 vi.mock('../bridge', () => ({
@@ -36,6 +45,7 @@ const runningTool: BlockSegment = {
 describe('OutputPanel activity indicator', () => {
   it('shows the running tool name while a tool is executing', () => {
     render(<OutputPanel blocks={[chatBlock({ segments: [runningTool] })]} />)
+    scrollAway()
     expect(screen.getByText('Running')).toBeTruthy()
     // The host prefix is stripped to the bare tool name (shown in the footer;
     // the tool card renders it too, hence getAllByText).
@@ -44,11 +54,13 @@ describe('OutputPanel activity indicator', () => {
 
   it('shows "Responding…" while the model streams text with no tool running', () => {
     render(<OutputPanel blocks={[chatBlock({ currentText: 'here is my answer' })]} />)
+    scrollAway()
     expect(screen.getByText('Responding…')).toBeTruthy()
   })
 
   it('shows no activity footer once the turn is done', () => {
     render(<OutputPanel blocks={[chatBlock({ done: true, segments: [{ kind: 'text', text: 'done' }] })]} />)
+    scrollAway()
     expect(screen.queryByText('Running')).toBeNull()
     expect(screen.queryByText('Responding…')).toBeNull()
     expect(screen.queryByText('Working…')).toBeNull()
@@ -59,6 +71,7 @@ describe('OutputPanel activity indicator — thinking summaries', () => {
   it('shows the latest reasoning line from runspec:thinking while between steps', async () => {
     const { act } = await import('@testing-library/react')
     render(<OutputPanel blocks={[chatBlock()]} />)
+    scrollAway()
     act(() => {
       window.dispatchEvent(new CustomEvent('runspec:thinking', { detail: { id: 'c1', text: 'Listing kernels.\nChecking /boot usage' } }))
     })
@@ -69,6 +82,7 @@ describe('OutputPanel activity indicator — thinking summaries', () => {
   it('ignores thinking for another turn and yields to a running tool', async () => {
     const { act } = await import('@testing-library/react')
     render(<OutputPanel blocks={[chatBlock({ segments: [runningTool] })]} />)
+    scrollAway()
     act(() => {
       window.dispatchEvent(new CustomEvent('runspec:thinking', { detail: { id: 'c1', text: 'planning' } }))
       window.dispatchEvent(new CustomEvent('runspec:thinking', { detail: { id: 'other', text: 'elsewhere' } }))
@@ -108,6 +122,7 @@ describe('OutputPanel activity indicator — longer summaries', () => {
   it('renders a multi-row (wrapping, clamped) summary rather than a one-line ellipsis', async () => {
     const { act } = await import('@testing-library/react')
     render(<OutputPanel blocks={[chatBlock()]} />)
+    scrollAway()
     const long = 'The user wants the disk usage on web-01 so I will check /var first and then /home before deciding'
     act(() => {
       window.dispatchEvent(new CustomEvent('runspec:thinking', { detail: { id: 'c1', text: long } }))
@@ -116,5 +131,14 @@ describe('OutputPanel activity indicator — longer summaries', () => {
     expect(el.textContent).toBe(long)
     expect(el.style.whiteSpace).toBe('normal')
     expect(el.style.maxWidth).toBe('640px')
+  })
+})
+
+describe('OutputPanel activity pill placement', () => {
+  it('stays hidden while you are at the latest output', () => {
+    render(<OutputPanel blocks={[chatBlock({ segments: [runningTool] })]} />)
+    expect(screen.queryByTestId('activity-label')).toBeNull()
+    scrollAway()
+    expect(screen.getByTestId('activity-label').textContent).toBe('Running')
   })
 })

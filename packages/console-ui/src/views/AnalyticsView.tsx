@@ -6,7 +6,7 @@ import type { ColumnType } from 'antd/es/table'
 import { bridge, type AnalyticsData, type AnalyticsBucket, type AnalyticsException } from '../bridge'
 import { ThemeContext, chartPalette, statusText, useIsDark } from '../ThemeContext'
 import {
-  filterBuckets, computeKpis, runsOverTime, successRateOverTime,
+  filterBuckets, computeKpis, runsOverTime, successRateOverTime, listText,
   durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown,
 } from './analytics'
 import { EmptyState, StatusTag } from '../components/kit'
@@ -230,24 +230,28 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         <Col xs={24} lg={16}>
           <Card size="small" title="Runs over time" style={cardStyle}>
             {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
-              <Area
-                data={runsSeries} xField="date" yField="value" colorField="status"
-                stack height={chartHeight} theme={plotTheme} legend={{ color: { position: 'top' } }}
-                scale={{ color: { domain: ['success', 'failure'], range: [SUCCESS, FAILURE] } }}
-                style={{ fillOpacity: 0.6 }} axis={{ x: { labelAutoHide: true } }}
-              />
+              <div role="img" aria-label={`Runs over time: ${kpis.total} runs, ${kpis.failure} failed`}>
+                <Area
+                  data={runsSeries} xField="date" yField="value" colorField="status"
+                  stack height={chartHeight} theme={plotTheme} legend={{ color: { position: 'top' } }}
+                  scale={{ color: { domain: ['success', 'failure'], range: [SUCCESS, FAILURE] } }}
+                  style={{ fillOpacity: 0.6 }} axis={{ x: { labelAutoHide: true } }}
+                />
+              </div>
             )}
           </Card>
         </Col>
         <Col xs={24} lg={8}>
           <Card size="small" title="Success rate %" style={cardStyle}>
             {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
-              <Line
-                data={rateSeries.filter(d => d.rate !== null)} xField="date" yField="rate"
-                height={chartHeight} theme={plotTheme} shapeField="smooth"
-                scale={{ y: { domain: [0, 100] } }} style={{ stroke: ACCENT }}
-                axis={{ x: { labelAutoHide: true }, y: { labelFormatter: (v: number) => `${v}%` } }}
-              />
+              <div role="img" aria-label={`Success rate over time: ${Math.round(kpis.rate)}% overall`}>
+                <Line
+                  data={rateSeries.filter(d => d.rate !== null)} xField="date" yField="rate"
+                  height={chartHeight} theme={plotTheme} shapeField="smooth"
+                  scale={{ y: { domain: [0, 100] } }} style={{ stroke: ACCENT }}
+                  axis={{ x: { labelAutoHide: true }, y: { labelFormatter: (v: number) => `${v}%` } }}
+                />
+              </div>
             )}
           </Card>
         </Col>
@@ -258,23 +262,27 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         <Col xs={24} lg={12}>
           <Card size="small" title="Top runnables" extra={<Text type="secondary" style={{ fontSize: 12 }}>click to drill</Text>} style={cardStyle}>
             {topRuns.length === 0 ? <EmptyState message="No runs in this range." /> : (
-              <Column
-                data={topRuns} xField="runnable" yField="runs"
-                height={chartHeight} theme={plotTheme} onReady={drillToRunnable}
-                style={{ fill: ACCENT }} axis={{ x: { labelAutoRotate: true } }}
-              />
+              <div role="img" aria-label={`Top runnables by runs: ${listText(topRuns.map(r => ({ label: r.runnable, value: r.runs })))}`}>
+                <Column
+                  data={topRuns} xField="runnable" yField="runs"
+                  height={chartHeight} theme={plotTheme} onReady={drillToRunnable}
+                  style={{ fill: ACCENT }} axis={{ x: { labelAutoRotate: true } }}
+                />
+              </div>
             )}
           </Card>
         </Col>
         <Col xs={24} lg={12}>
           <Card size="small" title="Duration p50 / p95 (ms)" style={cardStyle}>
             {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
-              <Line
-                data={durationSeries} xField="date" yField="value" colorField="metric"
-                height={chartHeight} theme={plotTheme} shapeField="smooth"
-                scale={{ color: { domain: ['p50', 'p95'], range: [ACCENT, WARNING] } }}
-                legend={{ color: { position: 'top' } }} axis={{ x: { labelAutoHide: true } }}
-              />
+              <div role="img" aria-label={'Duration p50 and p95 over time, in milliseconds'}>
+                <Line
+                  data={durationSeries} xField="date" yField="value" colorField="metric"
+                  height={chartHeight} theme={plotTheme} shapeField="smooth"
+                  scale={{ color: { domain: ['p50', 'p95'], range: [ACCENT, WARNING] } }}
+                  legend={{ color: { position: 'top' } }} axis={{ x: { labelAutoHide: true } }}
+                />
+              </div>
             )}
           </Card>
         </Col>
@@ -285,24 +293,28 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
         <Col xs={24} lg={12}>
           <Card size="small" title="Runs by operator" style={cardStyle}>
             {operators.length === 0 ? <EmptyState message="No runs in this range." /> : (
-              <Pie
-                data={operators} angleField="value" colorField="type"
-                height={chartHeight} theme={plotTheme} innerRadius={0.5}
-                scale={{ color: { range: BRAND_RANGE } }} legend={{ color: { position: 'right' } }}
-                label={{ text: 'value', position: 'inside' }}
-              />
+              <div role="img" aria-label={`Runs by operator: ${listText(operators.map(o => ({ label: o.type, value: o.value })))}`}>
+                <Pie
+                  data={operators} angleField="value" colorField="type"
+                  height={chartHeight} theme={plotTheme} innerRadius={0.5}
+                  scale={{ color: { range: BRAND_RANGE } }} legend={{ color: { position: 'right' } }}
+                  label={{ text: 'value', position: 'inside' }}
+                />
+              </div>
             )}
           </Card>
         </Col>
         <Col xs={24} lg={12}>
           <Card size="small" title="User vs agent" style={cardStyle}>
             {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
-              <Pie
-                data={initiated} angleField="value" colorField="type"
-                height={chartHeight} theme={plotTheme} innerRadius={0.5}
-                scale={{ color: { domain: ['user', 'agent'], range: [PALETTE[0], PALETTE[1]] } }}
-                legend={{ color: { position: 'right' } }} label={{ text: 'value', position: 'inside' }}
-              />
+              <div role="img" aria-label={`User vs agent: ${listText(initiated.map(o => ({ label: o.type, value: o.value })))}`}>
+                <Pie
+                  data={initiated} angleField="value" colorField="type"
+                  height={chartHeight} theme={plotTheme} innerRadius={0.5}
+                  scale={{ color: { domain: ['user', 'agent'], range: [PALETTE[0], PALETTE[1]] } }}
+                  legend={{ color: { position: 'right' } }} label={{ text: 'value', position: 'inside' }}
+                />
+              </div>
             )}
           </Card>
         </Col>

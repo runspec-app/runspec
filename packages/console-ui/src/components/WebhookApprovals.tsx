@@ -9,21 +9,20 @@
  * "approved by …" line until the run finishes. Works with AI off: nothing here
  * goes through the assistant.
  */
-import { useState } from 'react'
-import { Button, Input, Tooltip, message } from 'antd'
-import { CaretRightOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
+import { useRef, useState } from 'react'
+import { Button, message } from 'antd'
+import { DownOutlined, RightOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
 import type { WebhookDelivery, WebhookVenv, WebhooksStatus } from '../bridge'
 import {
-  useIsDark, textColor, textMuted, textSecondary, textWarning, approveColors, MONO_FONT, RADIUS,
+  useIsDark, textColor, textMuted, textSecondary, textWarning, MONO_FONT, RADIUS,
 } from '../ThemeContext'
 import { StatusTag, RowActions } from './kit'
+import { APPROVAL_BG, APPROVAL_BORDER, ApprovalActions, QueueMark, useGatePosition } from './approval'
 import { flatFields, inFlight, relTime, runLine, waitingApprovals, deliveryStatus } from '../webhooks'
 
-// Same amber panel as a chat Approve/Deny card (OutputPanel), so a waiting
-// webhook reads as the same kind of thing.
-const AWAIT_BORDER = 'color-mix(in srgb, #e3b341 45%, var(--rs-border))'
-const AWAIT_BG = 'color-mix(in srgb, #e3b341 8%, var(--rs-surface-raised))'
+// The same approval card as the assistant's (approval.tsx): same panel, same
+// buttons and reason, and Alt+A / Alt+D answer it when it's first in line.
 /** Cards shown before the rest fold behind "N more". */
 export const SHOWN_AT_ONCE = 3
 
@@ -34,8 +33,9 @@ const AUTONOMY_WHY: Record<string, string> = {
 
 export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; d: WebhookDelivery; now?: number }) {
   const isDark = useIsDark()
-  const go = approveColors(isDark)
   const [note, setNote] = useState('')
+  const gateRef = useRef<HTMLElement>(null)
+  const queue = useGatePosition(gateRef)
   const [busy, setBusy] = useState<'' | 'approve' | 'deny'>('')
   const [showFields, setShowFields] = useState(false)
   const target = { host: venv.host, venv: venv.venv }
@@ -74,9 +74,11 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
 
   return (
     <section
+      ref={gateRef}
+      data-rs-confirm-gate=""
       aria-label={`Webhook ${d.hook} on ${venv.host} waiting for approval`}
       data-testid="webhook-card"
-      style={{ background: AWAIT_BG, border: `1px solid ${AWAIT_BORDER}`, borderRadius: 14, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}
+      style={{ background: APPROVAL_BG, border: `1px solid ${APPROVAL_BORDER}`, borderRadius: 16, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <StatusTag tone="waiting">webhook</StatusTag>
@@ -86,17 +88,20 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
           {[d.received ? `received ${relTime(d.received, now)}` : '', d.source ? `from ${d.source}` : '', (d.count ?? 1) > 1 ? `${d.count} times` : '']
             .filter(Boolean).join(' · ')}
         </span>
-        {Number.isFinite(due) && (
-          <span style={{ marginLeft: 'auto', fontSize: 12, color: soon ? textWarning(isDark) : textMuted(isDark) }}>
-            {due > 0 ? `expires ${relTime(d.expires, now)}` : 'expiring'}
-          </span>
-        )}
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
+          {Number.isFinite(due) && (
+            <span style={{ fontSize: 12, color: soon ? textWarning(isDark) : textMuted(isDark) }}>
+              {due > 0 ? `expires ${relTime(d.expires, now)}` : 'expiring'}
+            </span>
+          )}
+          <QueueMark {...queue} />
+        </span>
       </div>
 
       {line ? (
         <div>
           <div style={{ fontSize: 12, color: textMuted(isDark), marginBottom: 2 }}>
-            Wants to run{d.rule ? <> (rule <span style={{ fontFamily: MONO_FONT }}>{d.rule}</span>)</> : null}
+            It wants to run this on <span style={{ fontFamily: MONO_FONT }}>{venv.host}</span>{d.rule ? <>, from its rule <span style={{ fontFamily: MONO_FONT }}>{d.rule}</span></> : null}
           </div>
           <code style={{
             display: 'block', fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark), whiteSpace: 'pre-wrap', wordBreak: 'break-word',
@@ -112,7 +117,7 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
         <div>
           <Button type="text" size="small" aria-expanded={showFields} onClick={() => setShowFields(s => !s)}
             icon={showFields ? <DownOutlined /> : <RightOutlined />} style={{ padding: '0 4px', color: textSecondary(isDark) }}>
-            {showFields ? 'Hide' : 'Show'} {fields.length} field{fields.length === 1 ? '' : 's'} it was sent
+            {showFields ? 'Hide' : 'Show'} the {fields.length} field{fields.length === 1 ? '' : 's'} it received
           </Button>
           {showFields && (
             <dl style={{ margin: '4px 0 0', display: 'grid', gridTemplateColumns: 'minmax(80px, max-content) 1fr', columnGap: 12, rowGap: 2, fontFamily: MONO_FONT, fontSize: 12 }}>
@@ -127,21 +132,17 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <Input size="small" value={note} onChange={e => setNote(e.target.value)} maxLength={500}
-          placeholder="Note for the record (optional)" aria-label="Note for the record"
-          style={{ flex: '1 1 220px', maxWidth: 420 }} />
-        <Tooltip title={line ? `Run it on ${venv.host} now` : 'Let the hook go on'}>
-          <Button shape="round" size="small" icon={<CaretRightOutlined />} loading={busy === 'approve'} disabled={!!busy}
-            className="rs-approve" onClick={() => { void decide('approve') }}
-            style={{ background: go.bg, borderColor: go.bg, color: go.text, ['--rs-approve-hover' as string]: go.hover }}>
-            Approve
-          </Button>
-        </Tooltip>
-        <Button shape="round" size="small" loading={busy === 'deny'} disabled={!!busy} onClick={() => { void decide('deny') }}>
-          Deny
-        </Button>
-        <RowActions testId="webhook-card-more" more={[{ key: 'hide', label: 'Hide on this console', onClick: () => { void dismiss() } }]} />
+      <div>
+        <ApprovalActions
+          verb={line ? 'run' : 'continue'}
+          onApprove={() => { void decide('approve') }}
+          onDeny={() => { void decide('deny') }}
+          reason={note} setReason={s => setNote(s.slice(0, 500))}
+          reasonHint="It's recorded with your decision, whichever it is."
+          reasonLabel="Note for the record (optional)"
+          busy={busy}
+          extra={<RowActions testId="webhook-card-more" more={[{ key: 'hide', label: 'Hide on this console', onClick: () => { void dismiss() } }]} />}
+        />
       </div>
     </section>
   )

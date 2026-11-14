@@ -505,7 +505,7 @@ export function ProvisionModal({
       )}
       {!op && (
         <Button type="primary" onClick={start} disabled={readyHosts.length === 0}>
-          Provision {readyHosts.length || ''} host{readyHosts.length !== 1 ? 's' : ''}
+          {readyHosts.length ? `Provision ${readyHosts.length} host${readyHosts.length !== 1 ? 's' : ''}` : 'Provision'}
         </Button>
       )}
     </div>

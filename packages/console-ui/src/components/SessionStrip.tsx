@@ -244,7 +244,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
           <Button
             size="small"
             data-testid="session-overflow"
-            aria-label={`${overflow.length} more sessions`}
+            aria-label={`${overflow.length} more session${overflow.length === 1 ? '' : 's'}`}
             style={{ flexShrink: 0, height: 24, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
           >
             +{overflow.length} more

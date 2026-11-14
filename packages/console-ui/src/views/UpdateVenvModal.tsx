@@ -393,7 +393,7 @@ export function UpdateVenvModal({
           <Button onClick={onClose}>Close</Button>
           {!op && (
             <Button type="primary" disabled={!canStart} onClick={start}>
-              Update {ready.length || ''} host{ready.length !== 1 ? 's' : ''}
+              {ready.length ? `Update ${ready.length} host${ready.length !== 1 ? 's' : ''}` : 'Update'}
             </Button>
           )}
         </div>

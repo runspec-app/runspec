@@ -182,3 +182,12 @@ describe('mock get_analytics', () => {
     expect(d.buckets.every(b => b.runnable === 'backup')).toBe(true)
   })
 })
+
+describe('listText', () => {
+  it('reads a chart for a screen reader', async () => {
+    const { listText } = await import('./analytics')
+    expect(listText([])).toBe('none')
+    expect(listText([{ label: 'backup', value: 40 }, { label: 'deploy', value: 12 }])).toBe('backup 40, deploy 12')
+    expect(listText(Array.from({ length: 7 }, (_, i) => ({ label: `r${i}`, value: i })), 5)).toBe('r0 0, r1 1, r2 2, r3 3, r4 4 and 2 more')
+  })
+})

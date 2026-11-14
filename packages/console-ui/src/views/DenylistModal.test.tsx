@@ -119,7 +119,7 @@ describe('DenylistModal', () => {
     expect(manageDenylist.mock.calls[0][0]).toMatchObject({ action: 'all', targets: SCOPE })
   })
 
-  it('turning the mode off asks first; Cancel leaves it alone', async () => {
+  it('turning the mode off asks first; Cancel changes nothing', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
     await screen.findByText('Disable all runnables')
     const user = userEvent.setup()
@@ -128,6 +128,8 @@ describe('DenylistModal', () => {
     expect((await screen.findByTestId('risk-action')).textContent).toMatch(/Mode: off/)
     await act(async () => { await user.click(screen.getByRole('button', { name: 'Cancel' })) })
     expect(manageDenylist).not.toHaveBeenCalled()
+    // Cancel put the control back, so pick Off again.
+    await act(async () => { await user.click(screen.getByText('Off')) })
     await act(async () => { await user.click(screen.getByRole('button', { name: 'Apply mode' })) })
     await act(async () => { await user.click(await screen.findByTestId('risk-ok')) })
     await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
@@ -202,6 +204,18 @@ describe('DenylistModal per-rule actions and host globs', () => {
     await act(async () => { await user.click(await screen.findByTestId('risk-ok')) })
     await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
     expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'enable', targets: ['prod-2'], venv: 'app' })
+  })
+
+  it('cancelling "turn off" puts the mode control back to what the hosts are doing', async () => {
+    render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
+    const user = userEvent.setup()
+    await screen.findByText('little-girl')
+    expect(screen.getByTestId('denylist-live-mode').textContent).toBe('Now: enforce')
+    await act(async () => { await user.click(screen.getByText('Off')) })
+    await act(async () => { await user.click(screen.getByRole('button', { name: 'Apply mode' })) })
+    await act(async () => { await user.click(await screen.findByRole('button', { name: 'Cancel' })) })
+    await waitFor(() => expect((screen.getByRole('radio', { name: 'Enforce' }) as HTMLInputElement).checked).toBe(true))
+    expect(manageDenylist).not.toHaveBeenCalled()
   })
 
   it('"Re-enable all" undoes Disable all only; the rules stay', async () => {
