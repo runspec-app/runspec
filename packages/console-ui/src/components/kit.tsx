@@ -178,10 +178,12 @@ export interface RowAction {
   disabled?: boolean
   danger?: boolean
   // Ask before running it, through the shared confirmation dialog (risk.tsx,
-  // local level). A string is the question; OK repeats the action's label.
+  // local level). `what` names the object the action touches ("/log-rotate
+  // on prod-1 · Sundays 03:00"): the dialog shows it, so it never just repeats
+  // the button's label. OK repeats the action's label unless okText is given.
   // (This used antd's static Modal.confirm, which doesn't render under
   // React 19, so the ask, and the action, silently never happened.)
-  confirm?: string | { title: string; content?: ReactNode; okText?: string }
+  confirm?: { title: string; what: ReactNode; consequence?: ReactNode; okText?: string }
 }
 
 /** One visible primary action, quiet secondaries beside it, and everything else
@@ -201,9 +203,9 @@ export function RowActions({ primary, secondary = [], more = [], style, testId =
   const [askRisk, riskHolder] = useRiskConfirm()
   const runAction = async (a: RowAction) => {
     if (!a.confirm) { a.onClick(); return }
-    const c = typeof a.confirm === 'string' ? { title: a.confirm } : a.confirm
+    const c = a.confirm
     const answer = await askRisk({
-      level: 'local', title: c.title, action: c.content ?? a.label,
+      level: 'local', title: c.title, action: c.what, consequence: c.consequence,
       okText: c.okText ?? a.label, danger: !!a.danger,
     })
     if (answer.ok) a.onClick()

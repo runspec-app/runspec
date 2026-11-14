@@ -18,6 +18,9 @@ describe('risk ladder', () => {
 
   it('types the target count unless told otherwise', () => {
     expect(confirmWord({ level: 'destructive', title: '', action: '', okText: '', targets: ['a', 'b'] })).toBe('2')
+    // One target: its name, not "1".
+    expect(confirmWord({ level: 'destructive', title: '', action: '', okText: '', targets: ['web-01'] })).toBe('web-01')
+    expect(confirmWord({ level: 'destructive', title: '', action: '', okText: '' })).toBe('delete')
     expect(confirmWord({ level: 'destructive', title: '', action: '', okText: '', typeToConfirm: 'ops' })).toBe('ops')
   })
 

@@ -75,7 +75,7 @@ describe('DenylistModal', () => {
 
   it('loads the status table on mount and refresh re-reads it', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
-    await screen.findByText('Kill switch')
+    await screen.findByText('Disable all runnables')
 
     // status table populated on mount (one rule on prod-1/app)
     await waitFor(() => expect(denylistStatus).toHaveBeenCalled())
@@ -93,7 +93,7 @@ describe('DenylistModal', () => {
 
   it('apply mode sends the selected enforcement setting', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
-    await screen.findByText('Kill switch')
+    await screen.findByText('Disable all runnables')
 
     const user = userEvent.setup()
     await act(async () => {
@@ -106,7 +106,7 @@ describe('DenylistModal', () => {
 
   it('an empty deny rule asks like Disable all, because it blocks everything', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
-    await screen.findByText('Kill switch')
+    await screen.findByText('Disable all runnables')
 
     const user = userEvent.setup()
     await act(async () => {
@@ -121,7 +121,7 @@ describe('DenylistModal', () => {
 
   it('turning the mode off asks first; Cancel leaves it alone', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
-    await screen.findByText('Kill switch')
+    await screen.findByText('Disable all runnables')
     const user = userEvent.setup()
     await act(async () => { await user.click(screen.getByText('Off')) })
     await act(async () => { await user.click(screen.getByRole('button', { name: 'Apply mode' })) })
@@ -143,7 +143,7 @@ describe('DenylistModal scope', () => {
 
   it('does not query when nothing is connected and says so', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={[]} />)
-    await screen.findByText('Kill switch')
+    await screen.findByText('Disable all runnables')
     await screen.findByText('No connected hosts.')
     expect(denylistStatus).not.toHaveBeenCalled()
   })

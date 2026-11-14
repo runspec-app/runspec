@@ -90,7 +90,7 @@ export function ScheduleScopeCards({ value, onChange, counts, hostsPending, noDa
                 <span
                   aria-label={`${problems} problem${problems === 1 ? '' : 's'}`}
                   title={`${problems} problem${problems === 1 ? '' : 's'}`}
-                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: withAlpha(statusText(isDark).warn, isDark ? 0.2 : 0.14), color: statusText(isDark).warn }}
+                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: isDark ? 'transparent' : withAlpha(statusText(isDark).warn, 0.14), border: isDark ? `1px solid ${statusText(isDark).warn}` : undefined, color: statusText(isDark).warn }}
                 >
                   <WarningFilled style={{ fontSize: 11 }} />{problems}
                 </span>

@@ -143,7 +143,7 @@ describe('RowActions', () => {
       <RowActions
         primary={{ key: 'rerun', label: 'Rerun', onClick: rerun }}
         secondary={[{ key: 'edit', label: 'Edit', onClick: edit }]}
-        more={[{ key: 'del', label: 'Delete', icon: <DeleteOutlined />, danger: true, onClick: del, confirm: 'Delete this run?' }]}
+        more={[{ key: 'del', label: 'Delete', icon: <DeleteOutlined />, danger: true, onClick: del, confirm: { title: 'Delete this run?', what: '/backup on prod-1' } }]}
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Rerun' }))
@@ -155,6 +155,8 @@ describe('RowActions', () => {
     fireEvent.click(await screen.findByText('Delete'))
     // The shared dialog asks (antd's static Modal.confirm never rendered).
     expect(await screen.findByText('Delete this run?')).toBeTruthy()
+    // It names the object, not the button's own label.
+    expect(screen.getByTestId('risk-action').textContent).toBe('/backup on prod-1')
     expect(del).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('risk-ok'))
     await waitFor(() => expect(del).toHaveBeenCalled())

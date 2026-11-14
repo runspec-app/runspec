@@ -124,10 +124,11 @@ The [desktop console](console-quickstart.md) drives the same `runspec deny` acro
 fleet over the SSH connections it already holds — one call per venv on each host
 — in two ways:
 
-- **The Denylist button (the no-entry icon) at the bottom of the hosts panel** — a modal scoped to
+- **The Denylist button (the no-entry icon) at the bottom of the hosts panel, or Ctrl+K → Denylist** — a modal scoped to
   the hosts *connected right now* in the active profile (greyed out until the
-  fleet sweep has settled): a host picker (empty ⇒ every connected host),
-  **Disable all** / **Re-enable all** buttons, an
+  fleet sweep has settled). It opens on **Disable all runnables** (with
+  **Re-enable all** set apart, and how it works folded away underneath), then a
+  host picker (empty ⇒ every connected host), an
   *add specific rule* form (runnable / user / host globs + reason), and an
   enforcement-mode toggle (`enforce`/`warn`/`off`). Anything that blocks
   everything or lowers the safety asks first, in a dialog that names the action

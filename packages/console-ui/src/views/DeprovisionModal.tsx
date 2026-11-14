@@ -11,6 +11,7 @@ import {
 import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
 import { membersOf } from './ProvisionModal'
 import { StatusIcon, pressable } from '../components/kit'
+import { useRiskConfirm } from '../components/risk'
 
 const { Text } = Typography
 
@@ -67,7 +68,9 @@ export function DeprovisionModal({
   const [preview, setPreview] = useState<DeprovisionPreviewRow[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [keepLogs, setKeepLogs] = useState(true)
-  const [confirm, setConfirm] = useState('')
+  // Deleting goes through the shared dialog's destructive level (type the
+  // venv's name); this used to be its own inline gate.
+  const [askRisk, riskHolder] = useRiskConfirm()
   const [op, setOp] = useState<string | null>(null)
   const [results, setResults] = useState<ProvisionResult[] | null>(null)
   const opRef = useRef<string | null>(null)
@@ -75,7 +78,7 @@ export function DeprovisionModal({
   const wasOpen = useRef(false)
   useEffect(() => {
     if (open && !wasOpen.current) {
-      setPreview(null); setConfirm(''); setKeepLogs(true); setOp(null); opRef.current = null; setResults(null)
+      setPreview(null); setKeepLogs(true); setOp(null); opRef.current = null; setResults(null)
       const first = initialTargets?.[0]
       setRoot(first ? venvRoot(first.runspec_path) : '')
       setSelected((initialTargets ?? []).map(t => t.host))
@@ -119,14 +122,26 @@ export function DeprovisionModal({
   }, [onDone, name])
 
   const removable = (preview ?? []).filter(r => r.ok)
-  const canDelete = removable.length > 0 && confirm.trim() === name && !op
+  const canDelete = removable.length > 0 && !op
 
   const del = async () => {
     if (!canDelete) return
+    const a = await askRisk({
+      level: 'destructive',
+      title: `Delete ${root} on ${removable.length} host${removable.length !== 1 ? 's' : ''}?`,
+      action: keepLogs ? `Delete everything in ${root} except logs/` : `Delete ${root} and its logs`,
+      targets: removable.map(r => r.host),
+      consequence: keepLogs
+        ? 'The venv and its runnables are gone; its logs/ folder stays for History.'
+        : 'The venv, its runnables and its run history are gone.',
+      typeToConfirm: name,
+      okText: 'Delete',
+    })
+    if (!a.ok) return
     try {
       const res = await bridge.deprovision_start({
         targets: removable.map(r => ({ host: r.host, runspec_path: r.runspec_path })),
-        confirm: confirm.trim(),
+        confirm: name,
         keep_logs: keepLogs,
       })
       opRef.current = res.op
@@ -158,7 +173,7 @@ export function DeprovisionModal({
           <Button onClick={onClose}>Close</Button>
           {!results && (
             <Button danger type="primary" disabled={!canDelete} loading={op !== null && !results} onClick={del}>
-              {removable.length ? `Delete on ${removable.length} host${removable.length !== 1 ? 's' : ''}` : 'Delete'}
+              {removable.length ? `Delete on ${removable.length} host${removable.length !== 1 ? 's' : ''}…` : 'Delete…'}
             </Button>
           )}
         </div>
@@ -170,7 +185,7 @@ export function DeprovisionModal({
           <Select
             style={{ width: '100%' }}
             value={root || undefined}
-            onChange={v => { setRoot(v); setSelected([]); setConfirm('') }}
+            onChange={v => { setRoot(v); setSelected([]) }}
             aria-label="Venv"
             placeholder="Pick a venv the hosts already list"
             disabled={op !== null}
@@ -239,13 +254,10 @@ export function DeprovisionModal({
                 ? `Everything in ${root} except logs/ will be deleted on ${removable.length} host${removable.length !== 1 ? 's' : ''}.`
                 : `${root} and its logs will be deleted on ${removable.length} host${removable.length !== 1 ? 's' : ''}. This can't be undone.`}
             />
-            <div>
-              {label(`Please confirm: type ${name} to enable Delete`)}
-              <Input value={confirm} onChange={e => setConfirm(e.target.value)} placeholder={name} style={{ fontFamily: MONO_FONT }} aria-label="Confirm venv name" disabled={op !== null} />
-            </div>
           </>
         )}
       </div>
+      {riskHolder}
     </Modal>
   )
 }

@@ -1046,6 +1046,17 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
     return w.timezone ? `${base}  (${w.timezone})` : base
   }
 
+  // One line naming a schedule, for a confirmation: what it runs, where, when.
+  const scheduleSummary = (s: Schedule): string => {
+    const what = s.action === 'runnable'
+      ? `/${s.runnable ?? ''}${s.command?.length ? ` ${s.command.join(' ')}` : ''}`
+      : s.action === 'prompt' ? `prompt: ${(s.prompt ?? '').slice(0, 48)}`
+        : `${s.action.replace('_', ' ')} ${s.runbook ?? s.saved_run ?? s.saved_transfer ?? s.eval_fixture ?? s.event ?? ''}`.trim()
+    const where = s.host ? `on ${s.host}` : s.group ? `on group ${s.group}` : (s.hosts?.length || s.selected_hosts?.length)
+      ? `on ${(s.hosts ?? s.selected_hosts ?? []).join(', ')}` : ''
+    return [s.name, what, where, whenText(s.when)].filter(Boolean).join(' · ')
+  }
+
   const detailFor = (s: Schedule): Record<string, unknown> =>
     s.action === 'event' ? (s.fields ?? {})
       : s.action === 'runbook' || s.action === 'saved_run' || s.action === 'saved_transfer' ? (s.values ?? {})
@@ -1099,7 +1110,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       width: 56,
       render: (_: unknown, s: Schedule) => (
         <Tooltip title={s.enabled === false ? 'Disabled — won’t fire' : 'Enabled'}>
-          <Switch size="small" checked={s.enabled !== false} onChange={v => handleToggle(s, v)} />
+          <Switch size="small" aria-label={`Enable ${s.name || s.runnable || 'schedule'}`} checked={s.enabled !== false} onChange={v => handleToggle(s, v)} />
         </Tooltip>
       ),
     },
@@ -1170,7 +1181,8 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
           <IconAction label={`Edit ${s.name || 'schedule'}`} tip="Edit" icon={<EditOutlined />} onClick={() => openEdit(s)} />
           <RowActions more={[{
             key: 'delete', label: 'Delete', icon: <DeleteOutlined />, danger: true,
-            confirm: 'Delete this schedule?', onClick: () => handleDelete(s.id),
+            confirm: { title: 'Delete this schedule?', what: scheduleSummary(s), consequence: 'It stops firing; past runs stay in History.' },
+            onClick: () => handleDelete(s.id),
           }]} />
         </Space>
       ),

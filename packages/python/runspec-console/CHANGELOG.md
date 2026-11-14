@@ -9,6 +9,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.436.0] — 2026-11-14
+
+### Changed
+
+- **Running is neutral.** Spinners and elapsed timers in the Console, run
+  cards and the activity bar used the raw brand colour, so under a red brand
+  every running job looked like an error. They are motion in the neutral ink
+  now; colour is kept for "waiting for you" and failed. A running job's ×
+  is no longer red (the danger colour is for the confirm button).
+- **Confirmations name what they touch.** A row action's confirm now needs
+  `what` (the object), so Schedules' Delete shows "/log-rotate · on prod-1 ·
+  0 3 * * 0" instead of repeating the button's label.
+- **Fleet consequences are spelled out.**
+  - Rotate key names the disconnected hosts it won't reach. A host without a
+    role was left out of that list.
+  - Removing a credential says which runnables and features stop getting it.
+  - Generate new key says what can't be undone: the lockout, not the
+    backed-up key.
+- **Deprovision uses the shared dialog** (destructive: type the venv's name,
+  with an empty field, not one showing the answer). Cancelling a run asks
+  **Stop this run?** with **Keep running** / **Stop run**. A destructive ask
+  with one target makes you type its name, never a bare "1".
+- **The kill switch is quicker.**
+  - The Denylist window opens on **Disable all runnables**, with **Re-enable
+    all** set apart and the explanation folded away.
+  - Its host picker says "Every connected host, or pick some".
+  - Searching Settings for denylist, env files, terminals or log cleanup says
+    where they are instead of "No section matches".
+- **Contrast and names.**
+  - Table sort and filter arrows use the muted text, and the active one the
+    strong text (they were 2.5–2.9:1).
+  - Alert warning, success and error icons use the theme's status colours.
+  - Inline code is readable on the dark dialogs.
+  - On dark, the Schedules problem counts are outlined and checked filter
+    chips have dark text.
+  - Schedules' enable switches and the MCP section switch have names.
+
 ## [0.435.0] — 2026-11-14
 
 ### Fixed

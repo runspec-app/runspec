@@ -1077,7 +1077,7 @@ function ActivityIndicator({ block, pending, onClick }: { block: InvocationBlock
         >
           {act.waiting
             ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)', fontSize: 13 }} />
-            : <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} spin />}
+            : <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 13 }} spin />}
           <Text data-testid="activity-label" style={{ fontSize: 13, color: act.waiting ? statusText(c.isDark).waiting : c.dim, fontWeight: act.waiting ? 600 : undefined, flexShrink: 0 }}>{thinkingLine ? 'Thinking…' : act.label}</Text>
           {thinkingLine && (
             // Wraps up to 3 rows (and widens to 640px) so a longer summary
@@ -1500,7 +1500,7 @@ function ToolCallBlock({
         {awaiting
           ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)', fontSize: 14 }} />
           : entry.running
-            ? <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 13 }} />
+            ? <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 13 }} />
             : <CheckCircleOutlined style={{ color: 'var(--rs-ok)', fontSize: 13 }} />}
         {display.via ? (
           <Tooltip title={`Run via ${display.via}`}>
@@ -1927,7 +1927,7 @@ function LiveThought({ text }: { text: string }) {
       padding: '8px 12px',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: c.dim, marginBottom: 4 }}>
-        <LoadingOutlined style={{ color: 'var(--rs-accent)', fontSize: 12 }} />
+        <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 12 }} />
         <BulbOutlined style={{ fontSize: 12 }} />
         Thinking…
       </div>
@@ -2020,7 +2020,7 @@ function RenderingPlaceholder({ chars, lines }: { chars: number; lines: number }
       padding: '18px 14px', display: 'flex', alignItems: 'center', gap: 10,
       color: c.dim, fontFamily: MONO_FONT, fontSize: 13,
     }}>
-      <LoadingOutlined style={{ color: 'var(--rs-accent)' }} />
+      <LoadingOutlined style={{ color: 'var(--rs-text-secondary)' }} />
       Rendering result… ({fmtBytes(chars)}{lines > 1 ? `, ${lines.toLocaleString()} lines` : ''})
     </div>
   )
@@ -2186,7 +2186,7 @@ const BlockCard = memo(function BlockCard({
   const statusIcon = !block.done && pendingConfirm
     ? <PauseCircleOutlined style={{ color: 'var(--rs-waiting)' }} />
     : !block.done
-    ? <LoadingOutlined style={{ color: 'var(--rs-accent)' }} />
+    ? <LoadingOutlined style={{ color: 'var(--rs-text-secondary)' }} />
     : block.stopped
       ? <PauseCircleOutlined style={{ color: '#8c8c8c' }} />
       : block.exitCode === 0
@@ -2371,7 +2371,7 @@ const BlockCard = memo(function BlockCard({
           <Text data-testid="card-waiting" style={{ color: statusText(c.isDark).waiting, fontSize: 12, fontWeight: 600 }}>waiting for you</Text>
         )}
         {!block.done && !pendingConfirm && (
-          <Text style={{ color: 'var(--rs-accent)', fontSize: 12, fontFamily: MONO_FONT }}>{fmtElapsed(block.startedAt)}</Text>
+          <Text style={{ color: 'var(--rs-text-secondary)', fontSize: 12, fontFamily: MONO_FONT }}>{fmtElapsed(block.startedAt)}</Text>
         )}
         {toolCount > 0 && (
           <Tooltip title={`${toolCount} tool call${toolCount !== 1 ? 's' : ''} this turn`}>

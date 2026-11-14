@@ -1284,7 +1284,7 @@ export default function App() {
             Modal: { contentBg: sf.overlay, headerBg: sf.overlay, footerBg: sf.overlay },
             Drawer: { colorBgElevated: sf.overlay },
             Table: { headerBg: sf.overlay, headerSplitColor: 'transparent', borderColor: sf.border, rowHoverBg: withAlpha(ctrlCol, isDark ? 0.06 : 0.04) },
-            Tag: { borderRadiusSM: 4 },
+            Tag: { borderRadiusSM: 4, colorTextLightSolid: isDark ? sf.base : sf.overlay },
             // Primary buttons are ink, not the brand (inkColors): routine actions
             // stay neutral and only danger is hot. Hover on a default button
             // follows the same ink. The focus ring keeps the readable accent.
@@ -2350,8 +2350,10 @@ export default function App() {
           open={settingsOpen}
           initialTab={settingsTab}
           onClose={() => { setSettingsOpen(false); setSettingsTab(undefined) }}
-          connectedHosts={hosts.filter(h => h.connected && h.name !== 'local' && h.role !== undefined).map(h => h.name)}
-          allRemoteHosts={hosts.filter(h => h.name !== 'local' && h.role !== undefined).map(h => h.name)}
+          // Every remote host, so key rotation can name the disconnected ones it
+          // won't reach (a host without a role was silently left out).
+          connectedHosts={hosts.filter(h => h.connected && h.name !== 'local').map(h => h.name)}
+          allRemoteHosts={hosts.filter(h => h.name !== 'local').map(h => h.name)}
           activeProfile={activeProfile}
           onHostsChanged={() => {
             bridge.get_hosts().then(setHosts)

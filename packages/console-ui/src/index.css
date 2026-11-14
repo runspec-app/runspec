@@ -415,3 +415,22 @@ a.ant-typography:not(.ant-typography-disabled),
    light); use the field outline colour. Disabled controls keep Ant's look. */
 .ant-select:not(.ant-select-disabled) .ant-select-arrow { color: var(--rs-field); }
 .ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled) { background: var(--rs-field); }
+
+/* Table sort and filter icons: Ant's quaternary grey was 2.9:1, and the active
+   arrow barely differed from the idle one. Idle in the muted text, active in
+   the strong text. */
+.ant-table-column-sorter,
+.ant-table-filter-trigger { color: var(--rs-text-muted); }
+.ant-table-column-sorter-up.active,
+.ant-table-column-sorter-down.active,
+.ant-table-filter-trigger.active { color: var(--rs-text); }
+
+/* Alert icons in the theme's status colours (Ant's warning and success icons
+   were 1.6–1.8:1 on their light tints). */
+.ant-alert-warning .ant-alert-icon { color: var(--rs-warn); }
+.ant-alert-success .ant-alert-icon { color: var(--rs-ok); }
+.ant-alert-error .ant-alert-icon { color: var(--rs-danger); }
+
+/* Inline code: the secondary text on its own tint (muted text measured 4.2:1
+   on the dark dialogs). */
+.ant-typography code { color: var(--rs-text-secondary); }
