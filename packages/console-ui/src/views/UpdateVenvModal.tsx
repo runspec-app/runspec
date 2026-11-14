@@ -205,11 +205,14 @@ export function retentionNowText(rows: VenvUpdateRow[]): string {
 /**
  * The hosts that list this venv but won't be updated (not ticked, or not
  * connected, which includes every host outside the active profile), so nobody
- * thinks they changed the venv everywhere. '' when every host is ticked.
+ * thinks they changed the venv everywhere. '' when every host is ticked, or
+ * none is yet.
  */
 export function untouchedHostsText(hosts: string[], selected: string[], connected: Set<string>): string {
   const left = hosts.filter(h => !selected.includes(h))
-  if (left.length === 0) return ''
+  // Nothing ticked yet: the checklist above already shows every host, and
+  // "N other hosts won't change" would contradict it.
+  if (left.length === 0 || selected.length === 0) return ''
   const shown = left.slice(0, 6).map(h => (connected.has(h) ? h : `${h} (not connected)`))
   const more = left.length > shown.length ? `, and ${left.length - shown.length} more` : ''
   const cold = left.some(h => !connected.has(h))

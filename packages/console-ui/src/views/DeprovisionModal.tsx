@@ -158,7 +158,7 @@ export function DeprovisionModal({
           <Button onClick={onClose}>Close</Button>
           {!results && (
             <Button danger type="primary" disabled={!canDelete} loading={op !== null && !results} onClick={del}>
-              Delete on {removable.length} host{removable.length !== 1 ? 's' : ''}
+              {removable.length ? `Delete on ${removable.length} host${removable.length !== 1 ? 's' : ''}` : 'Delete'}
             </Button>
           )}
         </div>
@@ -211,11 +211,11 @@ export function DeprovisionModal({
                   <span style={{ fontFamily: MONO_FONT, minWidth: 100 }}>{r.host}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <Text style={{ fontFamily: MONO_FONT, fontSize: 12 }}>{r.root}</Text>
-                    {r.ok && <Text type="secondary" style={{ fontSize: 11 }}> · owner {r.owner || '?'} · {formatKb(r.size_kb)} (logs {formatKb(r.logs_kb)})</Text>}
-                    {r.runnables.length > 0 && <div><Text type="secondary" style={{ fontSize: 11 }}>Runnables: {r.runnables.join(', ')}</Text></div>}
-                    {r.scheduler && <div><Text type="secondary" style={{ fontSize: 11 }}>Scheduler: {r.scheduler_pid ? `daemon running (pid ${r.scheduler_pid})` : 'daemon not running'}; its keepers are removed and the daemon stopped first{r.backend === 'daemon' ? '' : ', and its schedule lines are taken out of the crontab'}</Text></div>}
+                    {r.ok && <Text type="secondary" style={{ fontSize: 12 }}> · owner {r.owner || '?'} · {formatKb(r.size_kb)} (logs {formatKb(r.logs_kb)})</Text>}
+                    {r.runnables.length > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>Runnables: {r.runnables.join(', ')}</Text></div>}
+                    {r.scheduler && <div><Text type="secondary" style={{ fontSize: 12 }}>Scheduler: {r.scheduler_pid ? `daemon running (pid ${r.scheduler_pid})` : 'daemon not running'}; its keepers are removed and the daemon stopped first{r.backend === 'daemon' ? '' : ', and its schedule lines are taken out of the crontab'}</Text></div>}
                     {r.blockers.map(b => <div key={b}><Text type="danger" style={{ fontSize: 12 }}>{b}</Text></div>)}
-                    {res && <div><Text type={res.ok ? 'secondary' : 'danger'} style={{ fontSize: 11 }}>{res.summary}</Text></div>}
+                    {res && <div><Text type={res.ok ? 'secondary' : 'danger'} style={{ fontSize: 12 }}>{res.summary}</Text></div>}
                   </span>
                 </div>
               )

@@ -396,6 +396,7 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
       </Divider>
       <Space style={{ marginBottom: 12 }}>
         <Segmented
+          aria-label="Enforcement mode"
           size="small"
           value={mode}
           onChange={v => setMode(v as 'enforce' | 'warn' | 'off')}

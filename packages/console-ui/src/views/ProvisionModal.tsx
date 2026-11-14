@@ -125,7 +125,7 @@ export function SchedulerSettingsFields({ value, onChange, leave = false, hint }
         <Input value={value.timezone ?? ''} allowClear aria-label="Schedule time zone" style={{ fontFamily: MONO_FONT }}
           placeholder={leave ? 'leave as it is' : "the host's"}
           onChange={e => onChange({ ...value, timezone: e.target.value })} />
-        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
           An IANA zone like Europe/London for schedules with none of their own.{hint ? ` ${hint}` : ''}
         </Text>
       </div>
@@ -137,7 +137,7 @@ export function SchedulerSettingsFields({ value, onChange, leave = false, hint }
             ...(leave ? [{ value: '', label: 'Leave as it is' }] : []),
             ...PACKAGE_POLICY_OPTIONS.map(o => ({ value: o.value, label: o.label })),
           ]} />
-        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
           Schedules a package suggests in its runspec.toml. {help ?? ''}
         </Text>
       </div>
@@ -295,7 +295,7 @@ export function LogCleanupField({
           </>
         )}
       </div>
-      <Text type={error ? 'danger' : 'secondary'} style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+      <Text type={error ? 'danger' : 'secondary'} style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
         {error || hint}
       </Text>
     </>
@@ -349,6 +349,7 @@ export function ProvisionModal({
   const retentionError = retention ? retentionProblem(retention) : ''
   const [checking, setChecking] = useState(false)
   const [rows, setRows] = useState<ProvisionPreflightRow[] | null>(null)
+  const preflightRef = useRef<HTMLDivElement>(null)
   const [op, setOp] = useState<string | null>(null)
   const [progress, setProgress] = useState<Record<string, HostProgress>>({})
   const [results, setResults] = useState<ProvisionResult[] | null>(null)
@@ -437,6 +438,8 @@ export function ProvisionModal({
     try {
       const res = await bridge.provision_preflight(payload)
       setRows(res.rows)
+      // The result renders below a long form: bring it into view.
+      window.setTimeout(() => preflightRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50)
     } catch (e) {
       message.error(String(e))
     } finally {
@@ -495,7 +498,11 @@ export function ProvisionModal({
       {running && <Button onClick={() => op && bridge.provision_cancel(op)}>Cancel</Button>}
       {results && results.some(r => !r.ok) && <Button icon={<ReloadOutlined />} onClick={retryFailed}>Retry failed</Button>}
       <Button onClick={onClose}>Close</Button>
-      {!op && <Button onClick={check} loading={checking} disabled={!formReady}>Check hosts</Button>}
+      {!op && (
+        <Tooltip title={formReady ? '' : 'Tick at least one host and name the venv first'}>
+          <Button onClick={check} loading={checking} disabled={!formReady}>Check hosts</Button>
+        </Tooltip>
+      )}
       {!op && (
         <Button type="primary" onClick={start} disabled={readyHosts.length === 0}>
           Provision {readyHosts.length || ''} host{readyHosts.length !== 1 ? 's' : ''}
@@ -546,7 +553,7 @@ export function ProvisionModal({
           </div>
           <div>
             {label('Venv name')}
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="ops" style={{ fontFamily: MONO_FONT }} aria-label="Venv name" />
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. ops" style={{ fontFamily: MONO_FONT }} aria-label="Venv name" />
           </div>
         </div>
         {payload.dest && <Text style={{ fontSize: 12, color: textMuted(isDark), marginTop: -6 }}>Venv: <Text code>{payload.dest}</Text></Text>}
@@ -584,7 +591,7 @@ export function ProvisionModal({
           ) : (
             <Input value={pyVersion} onChange={e => setPyVersion(e.target.value)} placeholder="3.12" style={{ width: 120, fontFamily: MONO_FONT }} aria-label="Python version" />
           )}
-          <Text style={{ fontSize: 11, color: textMuted(isDark) }}>
+          <Text style={{ fontSize: 12, color: textMuted(isDark) }}>
             {pyMode === 'path'
               ? `Uses this path on every host. runspec needs Python ${opts?.min_python ?? '3.10'} or newer.`
               : 'Each host uses its own interpreter of this version (e.g. /usr/bin/python3.12 on one, /opt/python312/bin/python3.12 on another).'}
@@ -625,7 +632,7 @@ export function ProvisionModal({
         <div>
           {label('Shared schedules')}
           <Select value={rootOwner ? '' : scheduler} onChange={setScheduler} options={SCHEDULER_OPTIONS} disabled={rootOwner} style={{ width: '100%' }} aria-label="Shared schedules" />
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
             {rootOwner
               ? ROOT_SCHEDULES_NOTE
               : scheduler
@@ -656,6 +663,7 @@ export function ProvisionModal({
         </div>
       </div>
 
+      <div ref={preflightRef} />
       {rows && !op && (
         <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {label(`Preflight: ${readyHosts.length} of ${rows.length} ready (nothing has been changed yet)`)}

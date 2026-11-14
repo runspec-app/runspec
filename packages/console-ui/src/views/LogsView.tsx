@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import {
   Table, Typography, Button, Tooltip, message, Modal, Drawer,
-  Input, InputNumber, Switch, Form, Spin, Alert, Popconfirm,
+  Input, InputNumber, Switch, Form, Spin, Alert,
 } from 'antd'
 import {
   ReloadOutlined, DeleteOutlined, InboxOutlined, EyeOutlined, FolderOutlined,
@@ -18,6 +18,7 @@ import { EmptyState, IconAction, PageToolbar, RowActions, StatusTag, type RowAct
 import { RunsIndexModal, type RunsIndexTarget } from './RunsIndexModal'
 import { LogCleanupModal, type LogCleanupTarget } from './LogCleanupModal'
 import { When, plural } from '../when'
+import { useRiskConfirm } from '../components/risk'
 
 // Analytics is a per-host drill off the Logs tab (not a standalone tab): the
 // operator opens a host's disk usage here, then its run analytics in a drawer,
@@ -105,6 +106,9 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
     return () => { cancelled = true }
   }, [target])
 
+  // Hooks stay above the early return (a hook after it crashes on open).
+  const [askRisk, riskHolder] = useRiskConfirm()
+
   if (!target) return null
   const { host, group, runnable, verb } = target
   const isHome = group === '~/logs'
@@ -113,6 +117,39 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
   const hasPolicy = verb === 'compact'
     ? olderThan.trim().length > 0
     : (olderThan.trim().length > 0 || maxFiles != null || maxTotalSize.trim().length > 0)
+
+  // Apply runs the same pass dry first and shows what it would do. Deleting
+  // logs can't be undone (the ladder's destructive level: type the venv's
+  // name); compacting keeps the data in archives (fleet level).
+  const apply = async () => {
+    setBusy(true); setError(null); setPreview(null)
+    let line = ''
+    let n = 0
+    try {
+      if (verb === 'prune') {
+        const r = await bridge.logs_prune(host, group, runnable, olderThan.trim() || undefined, maxFiles ?? undefined, maxTotalSize.trim() || undefined, true, runAs.trim() || undefined)
+        if (!r.ok) { setError(r.error || 'Prune failed.'); return }
+        n = r.count ?? 0
+        line = `Delete ${plural(n, 'file')} (${humanSize(r.freed_bytes)} freed)`
+      } else {
+        const r = await bridge.logs_compact(host, group, runnable, olderThan.trim() || undefined, gzip, true, runAs.trim() || undefined)
+        if (!r.ok) { setError(r.error || 'Compact failed.'); return }
+        n = r.compacted ?? 0
+        line = `Roll ${plural(n, 'file')} into ${plural(r.archives?.length ?? 0, 'archive')}`
+      }
+    } catch (e) { setError(String(e)); return } finally { setBusy(false) }
+    if (!n) { setPreview('Nothing matches, so there is nothing to do.'); return }
+    const a = await askRisk({
+      level: verb === 'prune' ? 'destructive' : 'fleet',
+      title: verb === 'prune' ? `Delete logs in ${scopeLabel}?` : `Compact logs in ${scopeLabel}?`,
+      action: line,
+      targets: [`${host} / ${group}`],
+      consequence: verb === 'prune' ? 'Deleted run files are gone from History.' : 'The files stay readable inside the archives.',
+      typeToConfirm: verb === 'prune' ? (runnable || group) : undefined,
+      okText: verb === 'prune' ? 'Delete' : 'Compact',
+    })
+    if (a.ok) await run(false)
+  }
 
   const run = async (dryRun: boolean) => {
     setBusy(true)
@@ -155,21 +192,14 @@ function MaintenanceModal({ target, onClose, onApplied }: MaintModalProps) {
         <Button key="preview" onClick={() => run(true)} loading={busy} disabled={!hasPolicy}>
           Preview (dry-run)
         </Button>,
-        <Popconfirm
-          key="apply"
-          title={verb === 'prune' ? 'Delete matching log files?' : 'Roll matching files into archives?'}
-          description="This cannot be undone."
-          okText={verb === 'prune' ? 'Delete' : 'Compact'}
-          okButtonProps={{ danger: verb === 'prune' }}
-          onConfirm={() => run(false)}
-          disabled={!hasPolicy || busy}
-        >
-          <Button type="primary" danger={verb === 'prune'} disabled={!hasPolicy || busy}>
-            Apply
+        <Tooltip key="apply" title={hasPolicy ? '' : 'Set an age, a count or a size above first'}>
+          <Button type="primary" danger={verb === 'prune'} disabled={!hasPolicy || busy} onClick={() => { void apply() }}>
+            Apply…
           </Button>
-        </Popconfirm>,
+        </Tooltip>,
       ]}
     >
+      {riskHolder}
       <Text type="secondary" style={{ fontSize: 13 }}>
         Target: <Text code>{scopeLabel}</Text> on <Text code>{host}</Text>
       </Text>

@@ -63,6 +63,9 @@ describe('CopyKeyAllModal', () => {
     await user.type(pwd(), 'hunter2{Enter}')
     expect(copySshIdAll).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Copy to 3 hosts' }))
+    // A fleet write: it names the hosts first.
+    expect((await screen.findByTestId('risk-action')).textContent).toMatch(/authorized_keys/)
+    await user.click(screen.getByTestId('risk-ok'))
     expect(copySshIdAll).toHaveBeenCalledWith('hunter2', ['db-1', 'web-1', 'web-2'])
   })
 

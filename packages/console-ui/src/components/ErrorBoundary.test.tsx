@@ -84,7 +84,7 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     )
     expect(reload).not.toHaveBeenCalled()
-    expect(screen.getByText('The console hit a snag while loading.')).toBeTruthy()
+    expect(screen.getByText('Part of the console broke.')).toBeTruthy()
   })
 
   it('renders children unchanged when nothing throws', () => {

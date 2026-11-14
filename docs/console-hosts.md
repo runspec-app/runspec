@@ -430,7 +430,9 @@ setgid), so members of that group write it directly.
 **Settings → SSH → Copy key to all hosts…** authorises this machine on every
 selected host over a one-time password connection (the password is never
 stored) — useful right after a [Config Sync](console-team.md) pull hands you a
-pre-configured fleet.
+pre-configured fleet. Filter the list by name, or pick **All**, **Not
+connected** or **None**; **Copy to N hosts** lists the hosts and asks before it
+writes to any of them.
 
 ---
 

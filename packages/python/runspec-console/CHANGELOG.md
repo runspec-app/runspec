@@ -9,6 +9,60 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.434.0] — 2026-11-14
+
+### Fixed
+
+- **History → Logs → Log cleanup… no longer crashes the console.** Since
+  0.432.0 the window's confirmation hook ran after an early return, so
+  opening it threw and replaced the whole app with the error screen. A test
+  now mounts it closed, then open.
+- **The error screen is readable and honest.** Its background used a variable
+  that doesn't exist, so on the light theme the heading was dark on dark
+  (about 1.1:1). A render bug no longer says "This is usually a transient
+  startup race".
+
+### Changed
+
+- **A red brand keeps controls neutral.** When the white-label accent reads as
+  red, focus rings, links and checked switches, boxes and radios use a
+  neutral ink instead of the brand, so a focused field doesn't look invalid
+  and danger keeps red to itself. The brand stays on the title and tabs
+  (`controlAccent`, `isRedBrand`, `--rs-focus`).
+- **More actions use the shared confirmation dialog.** Runs index **Prune…**
+  names what it deletes and that Reindex restores it. Logs **Apply…** runs the
+  pass dry first: deleting needs the name typed, and compacting asks.
+  **Copy key to all hosts** lists the hosts before writing to any. The Env
+  files venv switch focuses Cancel. A disabled Prune or Apply says what to fill
+  in.
+- **Send to terminals.**
+  - Hidden (password) text past 10 windows now asks like any line.
+  - The confirmation lists only the terminals that will receive it, and names
+    the ones that aren't open yet.
+  - Typing carries on in the field after the confirmation closes.
+  - The danger button uses the console's tuned red.
+  - The arrow-key buttons are named ("Up arrow"…).
+- **Form controls are outlined at 3:1.** Field borders, select arrows,
+  checkboxes and unchecked switches were 1.4–2.1:1 against their surfaces; a
+  new `field` surface token keeps them at 3:1 on every surface in both
+  themes. A focused Remove button in the Env files grid is now visible. The
+  Copy key password and the Denylist mode and Env files view switches have
+  names.
+- **Smaller fixes.**
+  - Placeholders read "e.g. ops" / "e.g. 30d" so an empty field doesn't look
+    filled.
+  - Runs index shows "crashed" apart from "failed".
+  - Provision scrolls to the check result.
+  - Provision and Deprovision help text is 12px.
+  - Deprovision's button reads "Delete" until hosts are picked.
+  - Update venv no longer says "N other hosts won't change" before any host is
+    ticked.
+  - A value revealed in Env files' Across venvs view hides again after 30
+    seconds.
+  - Schedules' problem count uses the theme's warning colour.
+  - Env files' edit tints use the theme's status colours.
+  - The colour test also catches Badge colours and rgb() literals.
+
 ## [0.433.0] — 2026-11-14
 
 ### Changed

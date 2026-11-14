@@ -20,7 +20,7 @@ import { Alert, App as AntApp, Button, Checkbox, ConfigProvider, Input, Modal, T
 import { AimOutlined, LockOutlined, SendOutlined, UnlockOutlined } from '@ant-design/icons'
 import { bridge, type TerminalWindow } from '../bridge'
 import {
-  BRAND_PRIMARY, DEFAULT_ACCENT, MONO_FONT, RADIUS, ThemeContext, UI_FONT, inkColors, readableAccent, statusText, surfaces,
+  BRAND_PRIMARY, MONO_FONT, RADIUS, ThemeContext, UI_FONT, controlAccent, dangerColors, inkColors, statusText, surfaces,
   textMuted, useIsDark, withAlpha,
 } from '../ThemeContext'
 import {
@@ -76,6 +76,11 @@ export function SendBar() {
 
   const ticked = useMemo(() => tickedIds(windows, unticked), [windows, unticked])
   const hostOf = useMemo(() => new Map(windows.map(w => [w.id, w.host])), [windows])
+  const readyOf = useMemo(() => new Map(windows.map(w => [w.id, w.ready])), [windows])
+  // After a confirm closes, typing carries on in the field it came from.
+  const refocus = () => window.setTimeout(() => {
+    (document.querySelector('[aria-label="Command"], input[aria-label="Hidden text"]') as HTMLElement | null)?.focus()
+  }, 0)
 
   const send = async (opts: { key?: string; line?: string }) => {
     if (!ticked.length || busy) return
@@ -89,17 +94,27 @@ export function SendBar() {
     }
     if (plan.kind === 'ask') {
       const keyLabel = KEY_BUTTONS.find(k => k.key === opts.key)?.title
+      // Only windows that are open receive it: list those, and name the rest.
+      const ready = ticked.filter(id => readyOf.get(id))
+      const waiting = ticked.filter(id => !readyOf.get(id)).map(id => hostOf.get(id) ?? id)
       const answer = await askRisk({
         level: 'fleet',
-        title: `Send to ${ticked.length} terminal${ticked.length === 1 ? '' : 's'}?`,
-        action: keyLabel ? `Press ${keyLabel}` : opts.line,
-        targets: ticked.map(id => hostOf.get(id) ?? id),
-        consequence: plan.disruptive
-          ? 'It stops, ends or removes something, so this asks every time.'
-          : 'Typed into each window as if you typed it there.',
-        okText: `Send to ${ticked.length}`,
+        title: hidden
+          ? `Type hidden text into ${ready.length} terminal${ready.length === 1 ? '' : 's'}?`
+          : `Send to ${ready.length} terminal${ready.length === 1 ? '' : 's'}?`,
+        action: keyLabel ? `Press ${keyLabel}` : hidden ? 'Hidden text (not shown)' : opts.line,
+        targets: ready.map(id => hostOf.get(id) ?? id),
+        consequence: <>
+          {plan.disruptive
+            ? 'It stops, ends or removes something, so this asks every time.'
+            : hidden ? 'Typed into each window as if you typed it: check each is at a password prompt.'
+              : 'Typed into each window as if you typed it there.'}
+          {waiting.length > 0 && <> Not ready, so not sent: {waiting.join(', ')}.</>}
+        </>,
+        okText: `Send to ${ready.length}`,
         rememberLabel: plan.canRemember ? "Don't ask again for these terminals (until the ticked set changes)" : undefined,
       })
+      refocus()
       if (!answer.ok) return
       if (answer.remember) confirmed.current = signature(ticked)
     }
@@ -248,7 +263,7 @@ export function SendBar() {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
         {KEY_BUTTONS.map(k => (
           <Tooltip key={k.key} title={`${k.title} in the ticked terminals`}>
-            <Button size="small" disabled={!ticked.length || busy}
+            <Button size="small" disabled={!ticked.length || busy} aria-label={k.title}
               onClick={() => { void send({ key: k.key }) }}>{k.label}</Button>
           </Tooltip>
         ))}
@@ -277,8 +292,9 @@ export function SendBarApp() {
   useEffect(() => {
     Promise.resolve(bridge.brand_theme()).then(t => setBrand(t?.accent_color ?? '')).catch(() => {})
   }, [])
-  const accent = brand ? readableAccent(brand, isDark) : (isDark ? DEFAULT_ACCENT.dark : DEFAULT_ACCENT.light)
+  const accent = controlAccent(brand || undefined, isDark)
   const ink = inkColors(isDark)
+  const danger = dangerColors(brand || undefined, isDark)
   useEffect(() => {
     document.title = 'Send to terminals'
     document.body.style.background = sf.base
@@ -302,6 +318,11 @@ export function SendBarApp() {
           colorPrimaryBorder: accent,
           lineWidthFocus: 2,
           colorTextPlaceholder: textMuted(isDark),
+          // The same danger red as the main window (Ant's default was 3.3:1
+          // under white text on light).
+          colorError: danger.text,
+          colorErrorHover: danger.text,
+          colorErrorText: danger.text,
           colorBgBase: sf.base,
           colorBgLayout: sf.base,
           colorBgContainer: sf.raised,
@@ -311,6 +332,7 @@ export function SendBarApp() {
           Button: {
             colorPrimary: ink.bg, colorPrimaryHover: ink.hover, colorPrimaryActive: ink.active,
             primaryColor: ink.text, primaryShadow: 'none', colorPrimaryBorder: accent,
+            dangerColor: danger.onFill, dangerShadow: 'none',
           },
           Input: { activeBorderColor: accent, hoverBorderColor: accent, activeShadow: `0 0 0 3px ${withAlpha(accent, 0.18)}` },
           Checkbox: { colorPrimary: accent, colorPrimaryHover: accent, colorWhite: sf.base },
