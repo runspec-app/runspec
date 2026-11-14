@@ -543,6 +543,11 @@ describe('approvals in other chats', () => {
 })
 
 describe('approval card wording', () => {
+  it('announces the resolved host when the call named none', () => {
+    expect(approvalAnnouncement([{ request_id: 'r', id: 'c', tool_name: 'flush-dns', tool_input: {}, autonomy: 'confirm', target_host: 'web01' }]))
+      .toBe('Approval needed: flush-dns on web01')
+  })
+
   it('names the host even when the call did not, from the resolved target', () => {
     render(<OutputPanel blocks={[chatBlockWithRunningTool('flush-dns')]} />)
     fireConfirm({

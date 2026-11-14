@@ -417,6 +417,26 @@ export function historyStatusMatches(record: Pick<HistoryRecord, 'exitCode' | 's
   return value === 0 ? record.exitCode === 0 : record.exitCode !== 0
 }
 
+const PAGE_SIZES = [10, 20, 50, 100, 200]
+const PAGE_SIZE_KEY = 'runspec.history.pageSize'
+
+/** The remembered rows-per-page, else 50. */
+export function readPageSize(): number {
+  try {
+    const n = Number(localStorage.getItem(PAGE_SIZE_KEY))
+    return PAGE_SIZES.includes(n) ? n : 50
+  } catch { return 50 }
+}
+function writePageSize(n: number) {
+  try { localStorage.setItem(PAGE_SIZE_KEY, String(n)) } catch { /* storage unavailable */ }
+}
+
+/** A page that still exists once the list shrinks (a refresh or a filter):
+ *  never past the last page, never below 1. Pure, for tests. */
+export function clampPage(current: number, rows: number, pageSize: number): number {
+  return Math.min(Math.max(1, current), Math.max(1, Math.ceil(rows / pageSize)))
+}
+
 export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeScope, onScopeToggle, active, onOpenAnalytics }: HistoryViewProps) {
   // History reads one host at a time (local + every connected remote) and merges
   // the results, so each host renders as it arrives. recordsByHost holds each
@@ -439,6 +459,11 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   // Read window in days (0 = all) — bounds the backend read so a first visit is
   // quick. Changing it refetches (see the effect's deps).
   const [sinceDays, setSinceDays] = useState(7)
+  // The page and page size, held here: a fixed `pageSize` in the pagination
+  // prop pinned the size changer to 50 whatever you picked. The size is
+  // remembered; the page goes back to 1 whenever what's listed changes.
+  const [page, setPage] = useState<{ current: number; pageSize: number }>(() => ({ current: 1, pageSize: readPageSize() }))
+  useEffect(() => { setPage(p => (p.current === 1 ? p : { ...p, current: 1 })) }, [search, sinceDays, colFilters])
   // Runs of runnables declared `discoverable = false` (internal helpers, e.g. a
   // job cron runs every minute) are left out server-side unless this is on.
   const [showHidden, setShowHidden] = useState(loadShowHidden)
@@ -938,8 +963,21 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
             />
           ),
         }}
-        pagination={{ pageSize: 50, showSizeChanger: true }}
-        onChange={(_, filters) => setColFilters(filters)}
+        pagination={{
+          current: clampPage(page.current, filtered.length, page.pageSize),
+          pageSize: page.pageSize,
+          pageSizeOptions: PAGE_SIZES,
+          showSizeChanger: true,
+          showTotal: (total, [from, to]) => `${from}–${to} of ${total}`,
+        }}
+        onChange={(pg, filters, _sorter, extra) => {
+          if (extra.action === 'filter') setColFilters(filters)
+          if (extra.action === 'paginate') {
+            const pageSize = pg.pageSize ?? page.pageSize
+            writePageSize(pageSize)
+            setPage({ current: pageSize !== page.pageSize ? 1 : (pg.current ?? 1), pageSize })
+          }
+        }}
         // Each run row is a keyboard stop: Enter or Space opens and closes it,
         // the same as its arrow.
         onRow={(record) => {

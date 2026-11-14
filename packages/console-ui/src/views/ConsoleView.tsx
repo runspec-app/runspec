@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Drawer, List, Popconfirm, Tag, Tooltip, Typography, message } from 'antd'
-import { CloseOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined, CompressOutlined, ExpandOutlined } from '@ant-design/icons'
+import { CloseOutlined, StopOutlined, LoadingOutlined, PlusOutlined, ClockCircleOutlined, HistoryOutlined, DeleteOutlined, CompressOutlined, ExpandOutlined } from '@ant-design/icons'
 import { bridge, type ChatConversation, type ChatSessionInfo, type ConversationMeta, type InFlightRecord, type Runnable, type TriggerCard } from '../bridge'
 import { useFeatures } from '../features'
 import { OutputPanel, useInvocationBlocks, maskCallArgs, type RerunData, type InvocationBlock, type BlockSegment } from '../components/OutputPanel'
@@ -200,9 +200,10 @@ function InFlightStrip({ inFlight }: { inFlight: InFlightRecord[] }) {
           {r.group && <Text style={{ fontSize: 12, fontFamily: MONO_FONT, color: 'var(--rs-text-muted)' }}>{r.group}</Text>}
           <Text type="secondary" style={{ fontSize: 12 }}>{r.operator}</Text>
           <Text style={{ fontSize: 12, color: 'var(--rs-text-secondary)', fontFamily: MONO_FONT }}>{elapsed(r.startedAt)}</Text>
-          <IconAction label={`Cancel ${isTool ? r.runnable : '/' + r.runnable}`} icon={<CloseOutlined style={{ fontSize: 11 }} />}
+          <IconAction label={`Stop ${isTool ? r.runnable : '/' + r.runnable}`} tip="Stop this run" icon={<StopOutlined style={{ fontSize: 11 }} />}
+            // A stop mark, not ×: × closes a chip; this stops work on a host.
             // Neutral: the danger colour is for the confirm button, not for
-            // every running job's × (a console full of red ×s looked mid-incident).
+            // every running job (a console full of red marks looked mid-incident).
             style={{ padding: '0 4px', height: 18, lineHeight: 1 }}
             onClick={async () => {
               const a = await askRisk({

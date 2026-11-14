@@ -1114,7 +1114,7 @@ export function approvalAnnouncement(pending: PendingConfirm[]): string {
   if (pending.length === 0) return ''
   const latest = [...pending].sort((a, b) => (b.since ?? 0) - (a.since ?? 0))[0]
   const name = (latest.display_name || latest.tool_name).replace(/^[^_]+__/, '')
-  const host = confirmHost(latest.display_input, latest.tool_input)
+  const host = confirmHost(latest.display_input, latest.tool_input) || latest.target_host || ''
   const more = pending.length > 1 ? ` (${pending.length - 1} more waiting)` : ''
   return `Approval needed: ${name}${host ? ` on ${host}` : ''}${more}`
 }

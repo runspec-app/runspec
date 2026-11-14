@@ -1,5 +1,5 @@
 import { Button, Tooltip, message } from 'antd'
-import { CopyOutlined } from '@ant-design/icons'
+import { CopyOutlined, LoadingOutlined } from '@ant-design/icons'
 import { RADIUS, useAccent, useIsDark } from '../ThemeContext'
 import { statusTone, type StatusTone } from './kit'
 import { fmtClock } from '../when'
@@ -45,12 +45,16 @@ const COLUMN_TONE: Record<string, StatusTone> = {
   running: 'running', done: 'ok', failed: 'failed',
 }
 
+/** A run's status: in flight it spins in the neutral ink (motion, not colour);
+ *  otherwise a dot in the status tone's own colour, so the dot reads like its
+ *  word (the fixed cyan and green dots were 1.7:1 on light). */
 export function StatusBadge({ status }: { status: string }) {
-  const color = COLUMN_COLOR[status] ?? '#8c8c8c'
   const text = statusTone(COLUMN_TONE[status] ?? 'neutral', useIsDark(), useAccent()).color
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: text, flexShrink: 0, width: 110 }}>
-      <span style={{ width: 8, height: 8, borderRadius: RADIUS.md, background: color }} />
+      {RUNNING_STATUSES.has(status)
+        ? <LoadingOutlined aria-hidden spin style={{ fontSize: 10 }} />
+        : <span aria-hidden style={{ width: 8, height: 8, borderRadius: RADIUS.md, background: text }} />}
       {STATUS_LABEL[status] ?? status}
     </span>
   )
