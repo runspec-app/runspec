@@ -57,7 +57,7 @@ describe('SessionStrip', () => {
     expect(chip('s1').textContent).toContain('waiting for you')
     expect(screen.getAllByTestId('session-chip')[0].dataset.sessionId).toBe('s1')
     expect(screen.getByLabelText('unread')).toBeTruthy()
-    // An unlabelled chat reads as "New chat"; a running session has no close ×.
+    // A running session has no close ×.
     expect(screen.queryAllByLabelText(/^Close /)).toHaveLength(1)
   })
 
@@ -156,5 +156,14 @@ describe('chipText', () => {
     expect(chipText(sess({ kind: 'trigger', interactive: false, label: 'Trigger x · new_mail', createdAt: at }))).toBe('Trigger x · new_mail · 09:05')
     expect(chipText(sess({ kind: 'trigger', interactive: false, label: 'x · 09:05 · subject', createdAt: at }))).toBe('x · 09:05 · subject')
     expect(chipText(sess({ label: 'restart nginx', createdAt: at }))).toBe('restart nginx')
+  })
+})
+
+describe('chipText', () => {
+  it('names a fresh chat by the time it opened, then by its first message', async () => {
+    const { chipText } = await import('./SessionStrip')
+    const at = new Date(2026, 10, 15, 14, 5).getTime()
+    expect(chipText(sess({ id: 'n', label: '', createdAt: at }))).toBe('New · 14:05')
+    expect(chipText(sess({ id: 'n', label: 'restart nginx on web-01', createdAt: at }))).toBe('restart nginx on web-01')
   })
 })

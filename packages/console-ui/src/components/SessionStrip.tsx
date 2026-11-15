@@ -53,10 +53,16 @@ export const VISIBLE_AUTOMATION = 4
 /** A chip's text. An automation run whose label carries no time gets its
  *  start time, so two runs of one trigger never read the same. */
 export function chipText(s: Session): string {
-  const base = s.label || (s.interactive ? 'New chat' : s.kind)
+  const hhmm = (t: number) => {
+    const d = new Date(t)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+  // A chat with nothing sent yet: "New · 14:05", so two fresh chats can be told
+  // apart. Its first message becomes its name.
+  if (s.interactive && !s.label) return s.createdAt ? `New · ${hhmm(s.createdAt)}` : 'New'
+  const base = s.label || s.kind
   if (s.interactive || /\b\d\d:\d\d\b/.test(base) || !s.createdAt) return base
-  const d = new Date(s.createdAt)
-  return `${base} · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return `${base} · ${hhmm(s.createdAt)}`
 }
 
 /**

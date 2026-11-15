@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.448.1] — 2026-11-15
+
+### Changed
+
+- **"+ New" on the Console.** The button that opens another chat says **New**
+  (its tooltip and screen-reader name still say "New chat", as do Ctrl+K and
+  the shortcut sheet).
+- **A fresh chat's tab shows when it opened:** "New · 14:05" instead of "New
+  chat", so two fresh chats can be told apart. Its first message still
+  becomes its name.
+
 ## [0.448.0] — 2026-11-15
 
 ### Changed
