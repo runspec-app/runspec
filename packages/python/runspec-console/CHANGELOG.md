@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.452.1] — 2026-11-15
+
+### Fixed
+
+- **Knowledge: "no such table: about".** The Knowledge tab could fail to load
+  its graph while the hourly auto-capture rebuilt the wiki index. The rebuild
+  dropped and recreated the index's tables one statement at a time, each
+  committed on its own, so a read in between found a table missing. It now
+  runs in one transaction: a read meanwhile sees the whole old index, and the
+  new one once it's done.
+
 ## [0.452.0] — 2026-11-15
 
 ### Changed

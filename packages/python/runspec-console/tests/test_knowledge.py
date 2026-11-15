@@ -1142,3 +1142,31 @@ def test_check_wiki_tool_reads_pages_against_discovery(kn, tmp_path, monkeypatch
     out = json.loads(b._run_knowledge_tool_inner("check_wiki", {}, ""))
     assert out["summary"] == {"clash": 1, "stale": 0, "duplicate": 0, "gap": 1}
     assert out["findings"][0]["flags"] == ["line"]
+
+
+def test_index_rebuild_is_atomic_for_other_readers(store, kn, tmp_path):
+    """A rebuild runs in one transaction, so another connection reading
+    meanwhile sees the old index whole, never missing tables (the Knowledge
+    tab's graph read failed with "no such table: about" while auto-capture
+    rebuilt)."""
+    import sqlite3
+
+    store.add_approved(_fact(kn, "first fact", status="approved"))
+    store.index()  # built, one fact
+    path = store.root / kn.INDEX_FILE
+    seen = []
+
+    def facts_while_reading():
+        yield _fact(kn, "first fact", status="approved")
+        reader = sqlite3.connect(str(path), timeout=1)
+        seen.append(
+            reader.execute(
+                "SELECT count(*) FROM about a JOIN facts f ON f.id = a.fact_id"
+            ).fetchone()[0]
+        )
+        reader.close()
+        yield _fact(kn, "second fact", status="approved")
+
+    idx = kn.KnowledgeIndex.open(path, "changed", facts_while_reading)
+    assert seen == [1]  # the old index, whole, mid-rebuild
+    assert idx.conn.execute("SELECT count(*) FROM facts").fetchone()[0] == 2
