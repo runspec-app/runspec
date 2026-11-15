@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Modal, Input, Select, Typography, message } from 'antd'
 import type { ArgDef, Runbook } from '../bridge'
-import { ArgField, ArgError, ArgFieldHeader, ArgGrid, ArgInput, DefaultArgsCollapse, argSpansRow, partitionArgs } from './formsShared'
+import { ArgField, ArgError, ArgFieldHeader, ArgGrid, ArgInput, DefaultArgsCollapse, argSpansRow, partitionArgs, exampleText } from './formsShared'
 import { MONO_FONT } from '../ThemeContext'
 
 const { Text } = Typography
@@ -62,7 +62,7 @@ export function RunbookField({ arg, hostNames, value, error, onChange }: {
         size="small"
         value={(value as string) ?? ''}
         onChange={e => onChange(e.target.value)}
-        placeholder={arg.hint}
+        placeholder={exampleText(arg.hint)}
         status={error ? 'error' : undefined}
         style={{ fontFamily: MONO_FONT, fontSize: 13 }}
       />

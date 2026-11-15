@@ -228,14 +228,14 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
       lines.push(
         <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
           <Text style={{ fontSize: 13, flex: 1, wordBreak: 'break-word' }}>{ruleText(rule)}</Text>
-          <Button size="small" type="text" danger icon={<DeleteOutlined />} loading={busy === label} aria-label={`Remove rule ${i + 1} on ${rowKey}`}
+          <Button size="small" type="text" danger className="rs-quiet-danger" icon={<DeleteOutlined aria-hidden />} loading={busy === label} aria-label={`Remove rule ${i + 1} on ${rowKey}`}
             onClick={async () => {
               const a = await askRisk({
                 level: 'fleet', title: 'Remove this deny rule?', action: ruleText(rule), targets: [rowKey],
                 consequence: 'What it blocked can run again here.', okText: 'Remove rule',
               })
               if (a.ok) await run({ action: 'remove', targets: [r.host], venv: r.venv, runnable: rule.runnables, user: rule.users, host: rule.hosts }, label)
-            }} />
+            }}>Remove</Button>
         </div>,
       )
     })

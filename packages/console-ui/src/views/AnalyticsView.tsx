@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from 'react'
+import { useHistoryRange, chartDays } from './historyRange'
 import { Row, Col, Card, Statistic, Select, Segmented, Table, Tag, Tooltip, Alert, Empty, Spin, Typography } from 'antd'
 import { ReloadOutlined, WarningOutlined } from '@ant-design/icons'
 import { Area, Line, Column, Pie } from '@ant-design/plots'
@@ -28,12 +29,13 @@ const RANGE_OPTIONS = [
 ]
 
 interface AnalyticsViewProps {
-  selectedHost: string
+  /** Start on one host (the Log files drawer); else every profile host. */
+  host?: string
   activeScope: string[]
   active: boolean
 }
 
-export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsViewProps) {
+export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps) {
   const isDark = useContext(ThemeContext)
   // A fixed series palette, never the brand (chartPalette).
   const PALETTE = chartPalette(useIsDark())
@@ -49,7 +51,22 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
 
   // Fetch-scope filters — changing these refetches (server recomputes
   // percentiles + the daily series for the new scope).
-  const [sinceDays, setSinceDays] = useState(30)
+  // The range is shared with History → Runs; charts read at most 30 days.
+  const [range, setRange] = useHistoryRange()
+  const sinceDays = chartDays(range)
+  // Every host History → Runs reads (local + the profile's connected hosts),
+  // or one picked from the Host filter.
+  const [targets, setTargets] = useState<string[]>([])
+  const [hostFilter, setHostFilter] = useState<string | undefined>(host)
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    Promise.resolve(bridge.history_targets())
+      .then(t => { if (!cancelled) setTargets(Array.isArray(t) ? t : ['local']) })
+      .catch(() => { if (!cancelled) setTargets(['local']) })
+    return () => { cancelled = true }
+  }, [active])
+  const targetsKey = targets.join(',')
   const [runnableFilter, setRunnableFilter] = useState<string | undefined>(undefined)
 
   // Client-side filters — applied instantly over the `buckets` grain.
@@ -63,11 +80,9 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
   useEffect(() => {
     let cancelled = false
     let inFlight = false
-    // Analytics is a per-host drill off the Logs tab, so the host IS the sidebar
-    // selection (same model as History) — one host's scan, not a fleet-wide
-    // fan-out. There's deliberately no separate host picker here; it duplicated
-    // the sidebar selection.
-    const hostsArg = selectedHost ? [selectedHost] : []
+    // All the profile's hosts (as History → Runs), or the one the Host filter
+    // names. Most remotes read the local history cache, so no SSH per host.
+    const hostsArg = hostFilter && targets.includes(hostFilter) ? [hostFilter] : targets
     // The view stays mounted across tab switches (App keeps it alive once first
     // opened), so `data` persists — returning shows the dashboard instantly.
     // Poll only while visible so a hidden tab isn't running the 45 s fleet scan
@@ -88,7 +103,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
     load()
     const id = setInterval(load, 45000)
     return () => { cancelled = true; clearInterval(id) }
-  }, [sinceDays, runnableFilter, selectedHost, active])
+  }, [sinceDays, runnableFilter, hostFilter, targetsKey, active])
 
   // activeScope (sidebar group tags) acts as an implicit group filter when the
   // view's own group filter is empty.
@@ -116,7 +131,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
   if (loading && !data) {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>
   }
-  if (!data) return <EmptyState message="No run data for this host yet." />
+  if (!data) return <EmptyState message="No run data on these hosts yet." />
 
   const dims = data.dimensions
   const cardStyle = { background: 'var(--rs-surface-raised)', borderColor: 'var(--rs-border)' }
@@ -152,9 +167,15 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
             aria-label="Chart range"
             options={RANGE_OPTIONS}
             value={sinceDays}
-            onChange={(v) => setSinceDays(v as number)}
+            onChange={(v) => setRange(v as number)}
           />
         </Tooltip>
+        <Select
+          allowClear aria-label="Filter by host" placeholder={`All hosts (${targets.length})`}
+          style={{ minWidth: 150 }} value={hostFilter} onChange={setHostFilter}
+          options={targets.map(h => ({ label: h, value: h }))}
+          showSearch
+        />
         <Select
           mode="multiple" allowClear aria-label="Filter by group" placeholder={activeScope.length ? `scope: ${activeScope.join(', ')}` : 'All groups'}
           style={{ minWidth: 160 }} value={groupFilter} onChange={setGroupFilter}

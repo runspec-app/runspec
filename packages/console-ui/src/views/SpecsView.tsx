@@ -118,7 +118,7 @@ function SectionLabel({ label }: { label: string }) {
   const isDark = useIsDark()
   return (
     <div style={{
-      fontSize: 11, fontFamily: MONO_FONT, color: textFaint(isDark),
+      fontSize: 11, fontFamily: MONO_FONT, color: textMuted(isDark),
       textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6, userSelect: 'none',
     }}>
       {label}
@@ -139,12 +139,12 @@ function FieldRow({ name, value, isDefault }: { name: string; value: React.React
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', minHeight: 22 }}>
       <span style={{
-        fontSize: 12, fontFamily: MONO_FONT, color: isDefault ? textFaint(isDark) : textMuted(isDark),
+        fontSize: 12, fontFamily: MONO_FONT, color: textMuted(isDark),
         width: 150, flexShrink: 0, userSelect: 'none',
       }}>{name}</span>
       <span style={{ fontSize: 13, opacity: isDefault ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
         {value}
-        {isDefault && <span style={{ fontSize: 11, fontFamily: MONO_FONT, color: textFaint(isDark), fontStyle: 'italic' }}>default</span>}
+        {isDefault && <span style={{ fontSize: 11, fontFamily: MONO_FONT, color: textMuted(isDark), fontStyle: 'italic' }}>default</span>}
       </span>
     </div>
   )

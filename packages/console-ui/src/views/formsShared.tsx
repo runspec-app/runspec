@@ -103,6 +103,12 @@ export function argSpansRow(arg: ArgDef): boolean {
 // subcommand always shows a level rather than nothing.
 // The same words as the Forms cards ("asks first", "manual"), so a level reads
 // the same on the card and in its dialog.
+/** A placeholder that reads as an example: "e.g. …" (unless it says so already). */
+export function exampleText(hint?: string): string | undefined {
+  if (!hint) return undefined
+  return /^(e\.g\.|eg\b|example\b)/i.test(hint.trim()) ? hint : `e.g. ${hint}`
+}
+
 export function autonomyTagProps(level?: string): { color: string; label: string } {
   switch ((level || 'confirm').toLowerCase()) {
     case 'autonomous': return { color: 'green', label: 'runs at once' }
@@ -263,7 +269,8 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
   const isDark = useIsDark()
   // `hint` (if declared) is the form placeholder; otherwise fall back to a
   // visible $VAR_REF default so the operator sees where the value comes from.
-  const placeholder = arg.hint ?? (isVarRef(arg.default) ? arg.default as string : undefined)
+  // Prefixed so an example never passes for a filled-in value.
+  const placeholder = exampleText(arg.hint) ?? (isVarRef(arg.default) ? `default: ${arg.default as string}` : undefined)
 
   const inputStyle = {
     fontFamily: MONO_FONT,

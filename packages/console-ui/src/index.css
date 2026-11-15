@@ -151,9 +151,22 @@ body {
   transition: color var(--rs-motion), background var(--rs-motion), border-color var(--rs-motion);
 }
 .rs-nav-tab:hover { background: var(--rs-hover); }
+/* An unselected tab's grey is 4.4:1 on the hover fill; lift it while hovered. */
+.rs-nav-tab:not([aria-current]):hover { color: var(--rs-text-secondary) !important; }
 .rs-nav-tab:focus-visible {
   outline: 2px solid var(--rs-focus, var(--rs-accent));
   outline-offset: -2px;
+}
+
+/* Status bar: its clickable items fill the bar's height (a 24px+ target; the
+   text alone was 15-17px tall). */
+.rs-statusbar [role="button"] { align-self: stretch; display: inline-flex; align-items: center; }
+
+/* Console toolbar: when the column is narrow the session chips take a row of
+   their own under the actions, instead of shrinking to one clipped chip. */
+.rs-console-col { container-type: inline-size; }
+@container (max-width: 640px) {
+  .rs-session-strip { order: 10; flex-basis: 100% !important; }
 }
 
 /* Top-bar "Search commands" button: the visible way into the Ctrl+K palette. */

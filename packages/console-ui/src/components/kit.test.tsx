@@ -227,7 +227,7 @@ describe('SectionSwitch', () => {
       { key: 'triggers', label: 'Triggers', count: 2, countTone: 'waiting' },
       { key: 'rota', label: 'Working hours' },
     ]} />)
-    expect(screen.getByText('2').getAttribute('data-tone')).toBe('waiting')
+    expect(screen.getByText('2 waiting').getAttribute('data-tone')).toBe('waiting')
     fireEvent.click(screen.getByText('Working hours'))
     expect(go).toHaveBeenCalledWith('rota')
   })

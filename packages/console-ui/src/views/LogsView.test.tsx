@@ -8,11 +8,12 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 
 import { LogsView, cleanupPlan } from './LogsView'
 
-const { logsStatus, logsPrune, shareVenvLogs, venvOwner } = vi.hoisted(() => ({
+const { logsStatus, logsPrune, shareVenvLogs, venvOwner, historyTargets } = vi.hoisted(() => ({
   logsStatus: vi.fn(),
   logsPrune: vi.fn(),
   shareVenvLogs: vi.fn(),
   venvOwner: vi.fn(),
+  historyTargets: vi.fn(),
 }))
 
 vi.mock('../bridge', () => ({
@@ -22,18 +23,19 @@ vi.mock('../bridge', () => ({
       : p === 'logs_prune' ? logsPrune
       : p === 'share_venv_logs' ? shareVenvLogs
       : p === 'venv_owner' ? venvOwner
+      : p === 'history_targets' ? historyTargets
       : vi.fn(),
   }),
 }))
 
 const PROPS = {
-  selectedHost: 'local',
   activeScope: [] as string[],
   onScopeToggle: () => {},
   active: true,
 }
 
 beforeEach(() => {
+  historyTargets.mockReset().mockResolvedValue(['local'])
   logsStatus.mockReset().mockResolvedValue([
     {
       group: 'ops-tools', ok: true, dirs: ['/opt/venvs/ops-tools/logs'],
@@ -178,5 +180,16 @@ describe('cleanupPlan', () => {
     expect(cleanupPlan({ ...blank, compressAfter: '7d' })).toEqual({ compress: true, delete: false, any: true })
     expect(cleanupPlan({ ...blank, keepFiles: 50 })).toEqual({ compress: false, delete: true, any: true })
     expect(cleanupPlan({ ...blank, compressAfter: '7d', keepSize: '5GB' })).toEqual({ compress: true, delete: true, any: true })
+  })
+})
+
+describe('LogsView across hosts', () => {
+  it('lists every profile host, each read on its own', async () => {
+    historyTargets.mockResolvedValue(['local', 'web-01'])
+    render(<LogsView {...PROPS} />)
+    expect(await screen.findByRole('region', { name: 'Logs on web-01' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Logs on local' })).toBeTruthy()
+    expect(logsStatus).toHaveBeenCalledWith('local')
+    expect(logsStatus).toHaveBeenCalledWith('web-01')
   })
 })

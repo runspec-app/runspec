@@ -304,7 +304,8 @@ export function SectionSwitch({ label, sections, value, onChange, style }: {
           label: (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               {s.label}
-              {s.count ? <StatusTag tone={s.countTone ?? 'info'} style={{ lineHeight: '16px', padding: '0 5px' }}>{s.count}</StatusTag> : null}
+              {/* "2 running", not a bare spinner and a number. */}
+              {s.count ? <StatusTag tone={s.countTone ?? 'info'} style={{ lineHeight: '16px', padding: '0 5px' }}>{s.count}{s.countTone === 'running' ? ' running' : s.countTone === 'waiting' ? ' waiting' : ''}</StatusTag> : null}
             </span>
           ),
         }))}

@@ -7,13 +7,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 
 import { AnalyticsView } from './AnalyticsView'
+import { setHistoryRange } from './historyRange'
 import type { AnalyticsData } from '../bridge'
 
-const { getAnalytics } = vi.hoisted(() => ({ getAnalytics: vi.fn() }))
+const { getAnalytics, historyTargets } = vi.hoisted(() => ({ getAnalytics: vi.fn(), historyTargets: vi.fn() }))
 
 vi.mock('../bridge', () => ({
   bridge: new Proxy({}, {
-    get: (_t, p) => (p === 'get_analytics' ? getAnalytics : vi.fn()),
+    get: (_t, p) => (p === 'get_analytics' ? getAnalytics : p === 'history_targets' ? historyTargets : vi.fn()),
   }),
 }))
 
@@ -34,19 +35,28 @@ function data(over: Partial<AnalyticsData> = {}): AnalyticsData {
   } as AnalyticsData
 }
 
-const PROPS = { selectedHost: 'web-01', activeScope: [], active: true }
+const PROPS = { activeScope: [], active: true }
 
 beforeEach(() => {
   getAnalytics.mockReset().mockResolvedValue(data())
+  historyTargets.mockReset().mockResolvedValue(['local', 'web-01'])
+  setHistoryRange(7)
 })
 
 describe('AnalyticsView', () => {
-  it('reads a 30-day window and offers no range beyond it', async () => {
+  it('reads every profile host over the range Runs uses, at most 30 days', async () => {
+    setHistoryRange(90)
     render(<AnalyticsView {...PROPS} />)
     expect(await screen.findByText('30 Aug – 28 Sep')).toBeTruthy()
-    expect(getAnalytics).toHaveBeenCalledWith(['web-01'], 30, undefined)
+    expect(getAnalytics).toHaveBeenCalledWith(['local', 'web-01'], 30, undefined)
     expect(screen.getByText('30d')).toBeTruthy()
     expect(screen.queryByText('90d')).toBeNull()
+  })
+
+  it('starts on one host when opened for it', async () => {
+    render(<AnalyticsView {...PROPS} host="web-01" />)
+    expect(await screen.findByText('30 Aug – 28 Sep')).toBeTruthy()
+    expect(getAnalytics).toHaveBeenCalledWith(['web-01'], 7, undefined)
   })
 
   it('notes hosts whose runs lack log-event counts in the index', async () => {

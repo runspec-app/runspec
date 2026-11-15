@@ -400,7 +400,6 @@ function VenvActions({ group, home, onShare, onIndex, onCleanup, onCleanNow }: {
 // ── main view ─────────────────────────────────────────────────────────────────
 
 interface LogsViewProps {
-  selectedHost: string
   activeScope: string[]
   onScopeToggle: (group: string) => void
   active: boolean
@@ -408,9 +407,15 @@ interface LogsViewProps {
   onOpenAnalytics?: () => void
 }
 
-export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }: LogsViewProps) {
-  const [venvs, setVenvs] = useState<LogStatusVenv[]>([])
-  const [loading, setLoading] = useState(false)
+interface HostLogs { loading: boolean; venvs: LogStatusVenv[]; error?: string }
+
+export function LogsView({ activeScope, active, onOpenAnalytics }: LogsViewProps) {
+  // Every host History → Runs reads (local + the profile's connected hosts),
+  // each asked on its own and shown as soon as it answers, so one slow host
+  // never holds the rest. The Host filter narrows to one.
+  const [targets, setTargets] = useState<string[]>([])
+  const [hostFilter, setHostFilter] = useState<string | undefined>(undefined)
+  const [byHost, setByHost] = useState<Record<string, HostLogs>>({})
   const [maintTarget, setMaintTarget] = useState<MaintTarget | null>(null)
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null)
   const [indexTarget, setIndexTarget] = useState<RunsIndexTarget | null>(null)
@@ -418,33 +423,37 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
   const [viewTarget, setViewTarget] = useState<ViewTarget | null>(null)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
 
-  const host = selectedHost || 'local'
+  const hosts = hostFilter && targets.includes(hostFilter) ? [hostFilter] : targets
+  const hostsKey = hosts.join(',')
 
-  const refresh = useCallback(() => {
-    setLoading(true)
-    bridge.logs_status(host)
-      .then(setVenvs)
-      .catch(e => message.error(String(e)))
-      .finally(() => setLoading(false))
-  }, [host])
+  const refreshHost = useCallback((host: string) => {
+    setByHost(prev => ({ ...prev, [host]: { venvs: prev[host]?.venvs ?? [], loading: true } }))
+    Promise.resolve(bridge.logs_status(host))
+      .then(venvs => setByHost(prev => ({ ...prev, [host]: { venvs: Array.isArray(venvs) ? venvs : [], loading: false } })))
+      .catch(e => setByHost(prev => ({ ...prev, [host]: { venvs: prev[host]?.venvs ?? [], loading: false, error: String(e) } })))
+  }, [])
 
-  // Switching host drops the old host's venvs so a switch never briefly shows
-  // another host's inventory (and the spinner shows while the new one loads).
-  // Also close the per-host Analytics drawer so it can't show the old host's
-  // charts under the new host.
-  useEffect(() => { setVenvs([]); setAnalyticsOpen(false) }, [host])
+  const loadTargets = useCallback(() => {
+    Promise.resolve(bridge.history_targets())
+      .then(t => setTargets(Array.isArray(t) && t.length > 0 ? t : ['local']))
+      .catch(() => setTargets(['local']))
+  }, [])
 
-  // The view stays mounted across tab switches (App toggles display), so venvs
-  // persist — returning shows the inventory instantly. The logs_status SSH call
-  // only runs while visible (and on host change), not eagerly at startup or in
-  // a hidden tab. The spinner already shows only when venvs is empty.
-  useEffect(() => { if (active) refresh() }, [refresh, active])
+  // The view stays mounted across tab switches (App toggles display), so the
+  // inventory persists; it's only read while visible.
+  useEffect(() => { if (active) loadTargets() }, [loadTargets, active])
+  useEffect(() => {
+    if (!active) return
+    for (const h of hostsKey ? hostsKey.split(',') : []) refreshHost(h)
+  }, [hostsKey, active, refreshHost])
 
-  const shown = activeScope.length > 0
-    ? venvs.filter(v => activeScope.includes(v.group))
-    : venvs
+  const refreshAll = () => { loadTargets(); hosts.forEach(refreshHost) }
+  const loading = hosts.some(h => byHost[h]?.loading)
+  const scoped = (venvs: LogStatusVenv[]) => activeScope.length > 0 ? venvs.filter(v => activeScope.includes(v.group)) : venvs
+  const anyShown = hosts.some(h => scoped(byHost[h]?.venvs ?? []).length > 0 || byHost[h]?.error)
+  const waiting = hosts.length === 0 || hosts.every(h => !byHost[h] || (byHost[h].loading && byHost[h].venvs.length === 0))
 
-  const runnableColumns = (v: LogStatusVenv): ColumnType<LogStatusRunnable>[] => [
+  const runnableColumns = (host: string, v: LogStatusVenv): ColumnType<LogStatusRunnable>[] => [
     {
       title: 'Runnable',
       dataIndex: 'runnable',
@@ -489,87 +498,104 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
         <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
           <IconAction label={`View ${r.runnable} log`} tip="View the merged log" icon={<EyeOutlined />}
             onClick={() => setViewTarget({ host, group: v.group, runnable: r.runnable })} />
-
         </div>
       ),
     },
   ]
 
+  const venvBlock = (host: string, v: LogStatusVenv) => (
+    <div key={`${host}/${v.group}`} style={{ marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <FolderOutlined style={{ color: 'var(--rs-text-muted)' }} />
+        <Text strong style={{ fontFamily: MONO_FONT }}>{v.group}</Text>
+        {v.group === HOME_GROUP && (
+          <StatusTag tone="neutral" tip="Your home log dir (~/logs) — the per-user fallback runspec writes to when a venv's own logs dir isn't writable. Personal to your login on this host (the venv dirs above are the shared ones); pruning here affects only ~/logs.">home</StatusTag>
+        )}
+        {v.ok ? (
+          <Text type="secondary" style={{ fontSize: 13 }}>
+            {plural(v.total_files ?? 0, 'file')}, {humanSize(v.total_bytes)}
+          </Text>
+        ) : (
+          <StatusTag tone="failed">{v.error || 'unavailable'}</StatusTag>
+        )}
+        <div style={{ flex: 1 }} />
+        {v.ok && <VenvActions
+          group={v.group}
+          home={v.group === HOME_GROUP}
+          onShare={() => setShareTarget({ host, venv: v.group })}
+          onIndex={() => setIndexTarget({ host, group: v.group })}
+          onCleanup={() => setCleanupTarget({ host, group: v.group })}
+          onCleanNow={() => setMaintTarget({ host, group: v.group, runnables: (v.runnables ?? []).map(r => r.runnable) })}
+        />}
+      </div>
+      {v.ok && (
+        <Table
+          dataSource={v.runnables ?? []}
+          columns={runnableColumns(host, v)}
+          rowKey="runnable"
+          size="small"
+          pagination={false}
+        />
+      )}
+      {v.ok && v.dirs && v.dirs.length > 0 && (
+        <Text type="secondary" style={{ fontSize: 12 }}>{v.dirs.join('  ·  ')}</Text>
+      )}
+    </div>
+  )
+
   return (
     <div>
       <PageToolbar
         actions={<>
-          <Tooltip title="Run analytics for this host — charts, success rate, durations and top runnables, scanned over the connection this tab just warmed">
+          <Tooltip title="Run analytics for these hosts: charts, success rate, durations and top runnables">
             <Button size="small" icon={<BarChartOutlined />} onClick={() => (onOpenAnalytics ? onOpenAnalytics() : setAnalyticsOpen(true))}>Charts</Button>
           </Tooltip>
-          <IconAction label="Refresh" tip="Read this host's logs again" icon={<ReloadOutlined spin={loading} />} onClick={refresh} />
+          <IconAction label="Refresh" tip="Read the logs again" icon={<ReloadOutlined spin={loading} />} onClick={refreshAll} />
         </>}
       >
-        <Text style={{ color: 'var(--rs-text-secondary)' }}>Host <span style={{ fontFamily: MONO_FONT, fontWeight: 600 }}>{host}</span></Text>
+        <Select
+          allowClear aria-label="Filter by host" placeholder={`All hosts (${targets.length})`}
+          style={{ minWidth: 180 }} value={hostFilter} onChange={setHostFilter}
+          options={targets.map(h => ({ label: h, value: h }))}
+          showSearch
+        />
       </PageToolbar>
 
-      {loading && venvs.length === 0 ? (
+      {waiting ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>
-      ) : shown.length === 0 ? (
+      ) : !anyShown && !loading ? (
         <EmptyState
-          message={activeScope.length > 0 ? 'No run logs in the venvs in scope on this host.' : 'No run logs on this host yet.'}
-          action={{ label: 'Refresh', icon: <ReloadOutlined />, onClick: refresh }}
+          message={activeScope.length > 0 ? 'No run logs in the venvs in scope.' : 'No run logs on these hosts yet.'}
+          action={{ label: 'Refresh', icon: <ReloadOutlined />, onClick: refreshAll }}
         />
       ) : (
-        shown.map(v => (
-          <div key={v.group} style={{ marginBottom: 28 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <FolderOutlined style={{ color: 'var(--rs-text-muted)' }} />
-              <Text strong style={{ fontFamily: MONO_FONT }}>{v.group}</Text>
-              {v.group === HOME_GROUP && (
-                <StatusTag tone="neutral" tip="Your home log dir (~/logs) — the per-user fallback runspec writes to when a venv's own logs dir isn't writable. Personal to your login on this host (the venv dirs above are the shared ones); pruning here affects only ~/logs.">home</StatusTag>
-              )}
-              {v.ok ? (
-                <Text type="secondary" style={{ fontSize: 13 }}>
-                  {plural(v.total_files ?? 0, 'file')}, {humanSize(v.total_bytes)}
-                </Text>
-              ) : (
-                <StatusTag tone="failed">{v.error || 'unavailable'}</StatusTag>
-              )}
-              <div style={{ flex: 1 }} />
-              {v.ok && <VenvActions
-                group={v.group}
-                home={v.group === HOME_GROUP}
-                onShare={() => setShareTarget({ host, venv: v.group })}
-                onIndex={() => setIndexTarget({ host, group: v.group })}
-                onCleanup={() => setCleanupTarget({ host, group: v.group })}
-                onCleanNow={() => setMaintTarget({ host, group: v.group, runnables: (v.runnables ?? []).map(r => r.runnable) })}
-              />}
-            </div>
-            {v.ok && (
-              <Table
-                dataSource={v.runnables ?? []}
-                columns={runnableColumns(v)}
-                rowKey="runnable"
-                size="small"
-                pagination={false}
-              />
-            )}
-            {v.ok && v.dirs && v.dirs.length > 0 && (
-              <Text type="secondary" style={{ fontSize: 12 }}>{v.dirs.join('  ·  ')}</Text>
-            )}
-          </div>
-        ))
+        hosts.map(host => {
+          const st = byHost[host]
+          const venvs = scoped(st?.venvs ?? [])
+          if (!st || (venvs.length === 0 && !st.loading && !st.error)) return null
+          return (
+            <section key={host} aria-label={`Logs on ${host}`} style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 12px', paddingBottom: 6, borderBottom: '1px solid var(--rs-border)' }}>
+                <Text strong style={{ fontFamily: MONO_FONT, fontSize: 14 }}>{host}</Text>
+                {st.loading && <Spin size="small" />}
+                {st.error && <StatusTag tone="failed" tip={st.error}>could not read</StatusTag>}
+              </div>
+              {venvs.map(v => venvBlock(host, v))}
+            </section>
+          )
+        })
       )}
 
       <CleanupNowModal
         target={maintTarget}
         onClose={() => setMaintTarget(null)}
         onOpenPolicy={t => setCleanupTarget(t)}
-        // Refresh only when the host that was acted on is still the one in view,
-        // so a mid-modal host switch can't paint the acted host's inventory under
-        // a different host's title.
-        onApplied={(actedHost) => { if (actedHost === host) refresh() }}
+        onApplied={refreshHost}
       />
       <ShareLogsModal
         target={shareTarget}
         onClose={() => setShareTarget(null)}
-        onApplied={(actedHost) => { if (actedHost === host) refresh() }}
+        onApplied={refreshHost}
       />
       <RunsIndexModal target={indexTarget} onClose={() => setIndexTarget(null)} />
       <LogCleanupModal target={cleanupTarget} onClose={() => setCleanupTarget(null)} />
@@ -581,13 +607,13 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
         // Match the merged-stream drawer's wide, responsive panel — the dashboard
         // needs the room for its chart grid.
         width={Math.min(1500, Math.max(720, window.innerWidth - 80))}
-        title={<span>Analytics — {host}</span>}
+        title={<span>Analytics{hostFilter ? ` — ${hostFilter}` : ''}</span>}
         // Unmount on close so the plots chunk isn't kept live in the background,
         // and a reopen re-scans fresh.
         destroyOnClose
       >
         <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spin /></div>}>
-          <AnalyticsView selectedHost={host} activeScope={activeScope} active={analyticsOpen} />
+          <AnalyticsView host={hostFilter} activeScope={activeScope} active={analyticsOpen} />
         </Suspense>
       </Drawer>
     </div>

@@ -377,12 +377,12 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
       width: 44,
       render: (_: unknown, r: DraftRow) => {
         const i = rows.indexOf(r)
-        if (r.removed) return <Button size="small" type="text" icon={<UndoOutlined />} aria-label={`Keep ${r.key}`} onClick={() => update(i, { removed: false })} />
+        if (r.removed) return <Button size="small" type="text" icon={<UndoOutlined aria-hidden />} aria-label={`Keep ${r.key}`} onClick={() => update(i, { removed: false })}>Keep</Button>
         return (
           <Button
-            size="small" type="text" danger className="rs-quiet-danger" icon={<DeleteOutlined />} aria-label={`Remove ${r.key}`}
+            size="small" type="text" danger className="rs-quiet-danger" icon={<DeleteOutlined aria-hidden />} aria-label={`Remove ${r.key}`}
             onClick={() => (r.isNew ? setRows(prev => prev.filter((_, j) => j !== i)) : update(i, { removed: true }))}
-          />
+          >Remove</Button>
         )
       },
     },
@@ -466,7 +466,8 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
                     ),
                   }))}
                   filterOption={(input, opt) => String(opt?.value ?? '').toUpperCase().includes(input.toUpperCase())}
-                  placeholder="Add a variable (suggestions are what this venv's runnables read)"
+                  placeholder="Add a variable…"
+                  title="Suggestions are the variables this venv's runnables read"
                   aria-label="New variable"
                   onKeyDown={e => { if (e.key === 'Enter' && newKey && !suggestions.some(s => s.key === newKey)) addKey(newKey) }}
                 />
@@ -1030,9 +1031,9 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
             </div>
             <SetEverywhere keyName={r.key} secret={r.secret} count={shownRefs.filter(writable).length} onSet={v => setEverywhere(r.key, v)} />
             <Tooltip title="Remove from every venv shown">
-              <Button size="small" type="text" danger className="rs-quiet-danger" icon={<DeleteOutlined />} aria-label={`Remove ${r.key} everywhere`}
+              <Button size="small" type="text" danger className="rs-quiet-danger" icon={<DeleteOutlined aria-hidden />} aria-label={`Remove ${r.key} everywhere`}
                 disabled={!shownRefs.some(ref => writable(ref) && gridCell(views[ref], r.key, undefined).present)}
-                onClick={() => removeEverywhere(r.key)} />
+                onClick={() => removeEverywhere(r.key)}>Remove</Button>
             </Tooltip>
             {rowEdited && (
               <Tooltip title="Undo this row's changes">
@@ -1122,7 +1123,8 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
             ),
           }))}
           filterOption={(input, opt) => String(opt?.value ?? '').toUpperCase().includes(input.toUpperCase())}
-          placeholder="Add a variable row (suggestions are what these venvs' runnables read)"
+          placeholder="Add a variable row…"
+          title="Suggestions are the variables these venvs' runnables read"
           aria-label="New variable"
           onKeyDown={e => { if (e.key === 'Enter' && newKey && !suggestions.some(s => s.key === newKey)) addKey(newKey) }}
         />

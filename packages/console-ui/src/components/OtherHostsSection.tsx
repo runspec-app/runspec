@@ -13,7 +13,7 @@ import { useState } from 'react'
 import { Dropdown, Tooltip, type MenuProps } from 'antd'
 import { CodeOutlined, DownOutlined, KeyOutlined, PlusOutlined, RightOutlined, SwapOutlined } from '@ant-design/icons'
 import type { OtherHost } from '../bridge'
-import { MONO_FONT, textFaint, textMuted, textSecondary } from '../ThemeContext'
+import { MONO_FONT, textMuted, textSecondary } from '../ThemeContext'
 import { pressable } from './kit'
 
 export const OTHER_HOSTS_OPEN_KEY = 'runspec.sidebar.otherHostsOpen'
@@ -117,7 +117,7 @@ export function OtherHostsSection(props: OtherHostsSectionProps) {
   if (!activeProfile || hosts.length === 0) return null
 
   const muted = textMuted(isDark)
-  const faint = textFaint(isDark)
+
   const ring = isDark ? '#6a6a6a' : '#a0a0a0'
   const { keys, map } = groupOtherHosts(hosts)
   const toggleOpen = () => { setOpen(o => { writeOpen(!o); return !o }) }
@@ -150,7 +150,7 @@ export function OtherHostsSection(props: OtherHostsSectionProps) {
         key: 'note',
         disabled: true,
         label: (
-          <span style={{ display: 'block', maxWidth: 240, whiteSpace: 'normal', fontSize: 11, lineHeight: 1.4, color: faint }}>
+          <span style={{ display: 'block', maxWidth: 240, whiteSpace: 'normal', fontSize: 11, lineHeight: 1.4, color: muted }}>
             Outside {activeProfile}: no standing connection, runnables not loaded
           </span>
         ),
@@ -182,7 +182,7 @@ export function OtherHostsSection(props: OtherHostsSectionProps) {
       </div>
       {open && (
         <>
-          <div style={{ fontSize: 11, color: faint, padding: '2px 14px 0', lineHeight: 1.4 }}>
+          <div style={{ fontSize: 11, color: muted, padding: '2px 14px 0', lineHeight: 1.4 }}>
             Not in {activeProfile}: terminal only, runnables not loaded
           </div>
           {keys.map(g => {
