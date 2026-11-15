@@ -191,3 +191,12 @@ describe('listText', () => {
     expect(listText(Array.from({ length: 7 }, (_, i) => ({ label: `r${i}`, value: i })), 5)).toBe('r0 0, r1 1, r2 2, r3 3, r4 4 and 2 more')
   })
 })
+
+describe('shortDay', () => {
+  it('turns an ISO day into a short label', async () => {
+    const { shortDay } = await import('./analytics')
+    expect(shortDay('2026-11-14')).toBe('14 Nov')
+    expect(shortDay('2026-11-14T03:00:00Z')).toBe('14 Nov')
+    expect(shortDay('not a date')).toBe('not a date')
+  })
+})

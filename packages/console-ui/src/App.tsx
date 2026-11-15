@@ -1086,7 +1086,9 @@ export default function App() {
 
   // What a tab's badge says, in words: part of its accessible name (the icon
   // and the badge number are hidden from screen readers).
-  const runsStatus = inFlight.length > 0 ? `${inFlight.length} run${inFlight.length === 1 ? '' : 's'} in progress` : ''
+  // Runs on hosts, as Activity's "Runs on hosts" list counts them (chats
+  // working are on the session chips).
+  const runsStatus = inFlight.length > 0 ? `${inFlight.length} run${inFlight.length === 1 ? '' : 's'} on hosts in progress` : ''
   const updatesStatus = marketplaceUpdates > 0 ? `${marketplaceUpdates} package update${marketplaceUpdates === 1 ? '' : 's'} available` : ''
   const automationStatus = triggerAwaiting > 0 ? `${triggerAwaiting} waiting for you`
     : scheduleRunning > 0 ? `${scheduleRunning} scheduled run${scheduleRunning === 1 ? '' : 's'} in progress`
@@ -1097,7 +1099,7 @@ export default function App() {
       status: runsStatus,
       label: 'Console',
       icon: inFlight.length > 0
-        ? <Badge count={inFlight.length} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${inFlight.length} run${inFlight.length === 1 ? '' : 's'} in progress`}><ThunderboltOutlined /></Badge>
+        ? <Badge count={inFlight.length} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${inFlight.length} run${inFlight.length === 1 ? '' : 's'} on hosts in progress`}><ThunderboltOutlined /></Badge>
         : <ThunderboltOutlined />,
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
@@ -1128,7 +1130,7 @@ export default function App() {
       label: 'Triggers',
       icon: triggerAwaiting > 0
         ? <Badge count={triggerAwaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting} waiting for you`}><BellOutlined /></Badge>
-        : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><BellOutlined /></Badge>,
+        : <Badge dot={triggerUnseen} styles={{ indicator: { background: 'var(--rs-focus)' } }} offset={[2, -1]}><BellOutlined /></Badge>,
     },
     {
       key: 'webhooks' as ViewKey,
@@ -1150,7 +1152,7 @@ export default function App() {
     ? <Badge count={triggerAwaiting + webhookWaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${triggerAwaiting + webhookWaiting} waiting for you`}><ControlOutlined /></Badge>
     : scheduleRunning > 0
       ? <Badge count={scheduleRunning} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${scheduleRunning} scheduled run${scheduleRunning === 1 ? '' : 's'} in progress`}><ControlOutlined /></Badge>
-      : <Badge dot={triggerUnseen} color="blue" offset={[2, -1]}><ControlOutlined /></Badge>
+      : <Badge dot={triggerUnseen} styles={{ indicator: { background: 'var(--rs-focus)' } }} offset={[2, -1]}><ControlOutlined /></Badge>
   const PARENT_META: Record<string, { label: string; icon: React.ReactNode; status?: string }> = {
     forms: { label: 'Forms', icon: <FormOutlined /> },
     history: { label: 'History', icon: <HistoryOutlined /> },
@@ -1382,6 +1384,9 @@ export default function App() {
             // surfaces, moved to magenta when the brand itself is red so a
             // primary and a destructive button never share a colour.
             colorError: danger.text,
+            // Info notices in the neutral control colour, not Ant's blue
+            // (#1677ff, 3.4–3.7:1, and off the theme).
+            colorInfo: ctrlCol,
             colorErrorHover: danger.text,
             colorErrorText: danger.text,
             colorErrorTextHover: danger.text,
@@ -1639,7 +1644,7 @@ export default function App() {
                               </div>
                             }
                           >
-                            <span style={{ fontSize: 11, color: iconCol, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                            <span style={{ fontSize: 11, color: textSecondary(isDark), fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                               {count}
                             </span>
                           </Tooltip>
@@ -2377,7 +2382,6 @@ export default function App() {
                 {updateInfo?.updateAvailable ? (
                   <Tooltip title={`Update available: v${updateInfo.latest} — open documentation`}>
                     <Tag
-                      color="blue"
                       onClick={() => bridge.open_docs().catch(console.error)}
                       style={{ cursor: 'pointer', margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}
                     >

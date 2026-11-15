@@ -1420,6 +1420,7 @@ function ToolCallBlock({
   // The row's label: search-mode wrappers show the runnable / tool they ran.
   const display = toolDisplay(entry)
   const denied = entry.operatorDecision === 'denied'
+  const rowHost = confirmHost(resolved?.input, entry.input)
   // Edit-and-rerun target when this call is a runnable invocation (search /
   // per_host / dedup); null for built-ins / MCP tools (no affordance).
   const rerun = !entry.running && !awaiting ? rerunFromToolEntry(entry) : null
@@ -1531,13 +1532,20 @@ function ToolCallBlock({
             : entry.operatorDecision === 'edited' ? 'You edited the arguments before approving'
             : 'You approved this call'
           }>
-            <Text style={{
-              fontSize: 11, flexShrink: 0, fontWeight: 600, textTransform: 'uppercase',
+            <Text data-testid="tool-decision" style={{
+              fontSize: 11, flexShrink: 0, fontWeight: 600,
               color: entry.operatorDecision === 'denied' ? 'var(--rs-text-muted)' : entry.operatorDecision === 'edited' ? 'var(--rs-warn)' : 'var(--rs-ok)',
             }}>
-              {entry.operatorDecision}
+              {/* Who decided, in words: the record says a person stood behind it. */}
+              {entry.operatorDecision === 'denied' ? 'denied by you' : entry.operatorDecision === 'edited' ? 'edited and approved by you' : 'approved by you'}
             </Text>
           </Tooltip>
+        )}
+        {/* Where it ran, when the call names a host. */}
+        {!awaiting && rowHost && (
+          <Text data-testid="tool-host" style={{ fontSize: 12, color: c.dim, flexShrink: 0 }}>
+            on <span style={{ fontFamily: MONO_FONT }}>{rowHost}</span>
+          </Text>
         )}
         {headerArgs.length > 0 && (
           <Text ellipsis data-testid="tool-header-args" style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 12 }}>
@@ -1615,7 +1623,8 @@ function ToolCallBlock({
                 {' '}({consequence.fanout} host{consequence.fanout === 1 ? '' : 's'})
               </Text>
             )}
-            . It waits for your go-ahead.
+            {/* The header already says "waiting for you": the sentence doesn't repeat it. */}
+            .
             {' '}<QueueMark {...queue} />
           </div>
           {consequence && (consequence.description || consequence.markers.length > 0) && (

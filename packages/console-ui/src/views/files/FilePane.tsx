@@ -340,19 +340,21 @@ export function FilePane({
           aria-label={`${side} pane path`}
           style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0 }}
         />
-        <Tooltip title={canHostActions ? 'New folder' : 'New folder works on this computer and configured hosts'}>
-          <Button size="small" icon={<FolderAddOutlined />} aria-label="New folder" disabled={!canHostActions} onClick={() => setNewFolder('')} />
-        </Tooltip>
-        <Tooltip title={canHostActions ? 'Rename (F2)' : 'Rename works on this computer and configured hosts'}>
-          <Button size="small" icon={<EditOutlined />} aria-label="Rename" disabled={!canHostActions || selected.length !== 1} onClick={startRename} />
-        </Tooltip>
-        <Tooltip title={canHostActions ? 'Delete (Del)' : 'Delete works on this computer and configured hosts'}>
-          <Button size="small" icon={<DeleteOutlined />} aria-label="Delete" danger disabled={!canHostActions || selected.length === 0} onClick={startDelete} />
-        </Tooltip>
       </div>
 
-      <div style={{ padding: '0 10px 6px' }}>
-        <Input size="small" allowClear value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" aria-label={`${side} pane name filter`} />
+      {/* Navigation stays as icons (Up, Home, Refresh read as a browser);
+          what changes files is named, beside the filter. */}
+      <div style={{ padding: '0 10px 6px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Input size="small" allowClear value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" aria-label={`${side} pane name filter`} style={{ flex: '1 1 160px', minWidth: 160 }} />
+        <Tooltip title={canHostActions ? '' : 'Works on this computer and configured hosts'}>
+          <Button size="small" type="text" icon={<FolderAddOutlined aria-hidden />} aria-label="New folder" disabled={!canHostActions} onClick={() => setNewFolder('')}>New folder</Button>
+        </Tooltip>
+        <Tooltip title={canHostActions ? 'F2' : 'Works on this computer and configured hosts'}>
+          <Button size="small" type="text" icon={<EditOutlined aria-hidden />} aria-label="Rename" disabled={!canHostActions || selected.length !== 1} onClick={startRename}>Rename</Button>
+        </Tooltip>
+        <Tooltip title={canHostActions ? 'Del' : 'Works on this computer and configured hosts'}>
+          <Button size="small" type="text" icon={<DeleteOutlined aria-hidden />} aria-label="Delete" danger className="rs-quiet-danger" disabled={!canHostActions || selected.length === 0} onClick={startDelete}>Delete</Button>
+        </Tooltip>
       </div>
 
       <div style={{
@@ -522,7 +524,7 @@ function ApproveCard({ open, title, who, note, danger, busy, okDisabled, onAppro
       onCancel={onCancel}
       destroyOnClose
     >
-      <div style={{ borderLeft: '3px solid var(--rs-warning, #d6a23c)', paddingLeft: 10 }}>
+      <div style={{ borderLeft: '3px solid var(--rs-warn)', paddingLeft: 10 }}>
         {children}
         <div style={{ marginTop: 10, fontSize: 12 }}>
           <Text type="secondary">Runs as {who}. {note}</Text>

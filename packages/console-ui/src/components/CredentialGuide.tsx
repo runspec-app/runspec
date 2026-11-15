@@ -215,7 +215,6 @@ export function CredentialUsageLine({
       {features.map(f => (
         <Tag
           key={f.feature}
-          color="blue"
           style={{ margin: 0, fontSize: 11, cursor: f.tab && onOpenTab ? 'pointer' : undefined }}
           onClick={f.tab && onOpenTab ? () => onOpenTab(f.tab) : undefined}
         >

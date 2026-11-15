@@ -14,8 +14,8 @@ import { gateShown, shortcutHint } from '../shortcuts'
 import { StatusTag } from './kit'
 
 /** The waiting panel: a warm tint, the same for every kind of approval. */
-export const APPROVAL_BORDER = 'color-mix(in srgb, #e3b341 45%, var(--rs-border))'
-export const APPROVAL_BG = 'color-mix(in srgb, #e3b341 8%, var(--rs-surface-raised))'
+export const APPROVAL_BORDER = 'color-mix(in srgb, var(--rs-waiting-tint) 45%, var(--rs-border))'
+export const APPROVAL_BG = 'color-mix(in srgb, var(--rs-waiting-tint) 8%, var(--rs-surface-raised))'
 
 const GATE = '[data-rs-confirm-gate]'
 const GATES_CHANGED = 'runspec:gates_changed'

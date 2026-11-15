@@ -35,6 +35,7 @@ import {
   argNeedsValue,
   argSpansRow,
   autonomyTagProps,
+  autonomyTip,
   bindingsForArgs,
   credEnvNames,
   filterSavedRuns,
@@ -76,7 +77,7 @@ const { Text } = Typography
 function AutonomyTag({ level }: { level?: string }) {
   const { color, label } = autonomyTagProps(level)
   return (
-    <Tooltip title={`autonomy: ${level || 'confirm'}`}>
+    <Tooltip title={autonomyTip(level)}>
       <StatusTag tone={antTone(color)}>{label}</StatusTag>
     </Tooltip>
   )

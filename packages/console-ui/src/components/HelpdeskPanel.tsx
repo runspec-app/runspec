@@ -216,7 +216,7 @@ export function HelpdeskPanel() {
                         ? `${String(card.detail.visitor_name)} <${String(card.detail?.visitor ?? '')}>`
                         : String(card.detail?.visitor ?? 'A visitor')}
                       {card.detail?.team ? (
-                        <Tag color="geekblue" style={{ margin: '0 0 0 6px', fontSize: 11 }}>{String(card.detail.team)}</Tag>
+                        <Tag style={{ margin: '0 0 0 6px', fontSize: 11 }}>{String(card.detail.team)}</Tag>
                       ) : null}{' '}
                       requested
                     </div>

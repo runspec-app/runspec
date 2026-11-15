@@ -407,7 +407,7 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus, onRun
                 </section>
               )
             }) : (
-              <div data-testid="no-page" style={{ padding: '14px 16px', borderRadius: RADIUS.md, background: sf.raised, border: `1px solid ${sf.border}` }}>
+              <div data-testid="no-page" style={{ padding: '4px 0' }}>
                 <Text style={{ color: textColor(isDark) }}>No team page for <span style={{ fontFamily: MONO_FONT }}>{tool?.name}</span> yet.</Text>
                 <div style={{ marginTop: 4, color: textSecondary(isDark), fontSize: 13 }}>
                   {wiki.configured

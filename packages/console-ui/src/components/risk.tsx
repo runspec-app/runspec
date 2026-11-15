@@ -154,7 +154,7 @@ function RiskDialog({ ask, cover, onDone }: { ask: RiskAsk; cover: boolean; onDo
         onKeyDown={e => { if (e.key === 'Escape') cancel() }}
         style={{
           position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', flexDirection: 'column',
-          padding: '8px 12px', background: token.colorBgElevated, color: token.colorText,
+          padding: '8px 16px', background: token.colorBgElevated, color: token.colorText,
         }}>
         <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{title}</div>
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{body}</div>

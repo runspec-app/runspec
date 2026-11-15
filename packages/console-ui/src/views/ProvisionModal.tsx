@@ -13,7 +13,7 @@ import {
   type ProvisionRetention,
   type PackageSchedulePolicy,
 } from '../bridge'
-import { MONO_FONT, RADIUS, useIsDark, textMuted, textSecondary } from '../ThemeContext'
+import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary } from '../ThemeContext'
 import { PathInput } from './PathInput'
 import { StatusIcon, StatusTag, pressable } from '../components/kit'
 
@@ -491,6 +491,10 @@ export function ProvisionModal({
   const pickedPy = pythons.find(p => p.path === pyPath)
 
   const label = (s: string) => <Text style={{ fontSize: 12, color: textSecondary(isDark) }}>{s}</Text>
+  // The dialog in sections (it was about twelve fields in one column).
+  const section = (t: string) => (
+    <div role="heading" aria-level={3} style={{ fontSize: 13, fontWeight: 600, color: textColor(isDark), borderTop: '1px solid var(--rs-border)', paddingTop: 8, marginBottom: -4 }}>{t}</div>
+  )
   const box = { border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: '8px 10px' }
 
   const footer = (
@@ -526,6 +530,7 @@ export function ProvisionModal({
           Creates a Python venv on each selected host, installs runspec and your packages into it, sets up the logs inbox, and adds the new path to the host.
         </Text>
 
+        {section('Where')}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
             {label('Hosts')}
@@ -558,6 +563,7 @@ export function ProvisionModal({
         </div>
         {payload.dest && <Text style={{ fontSize: 12, color: textMuted(isDark), marginTop: -6 }}>Venv: <Text code>{payload.dest}</Text></Text>}
 
+        {section('Python')}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             {label('Python')}
@@ -601,6 +607,7 @@ export function ProvisionModal({
           )}
         </div>
 
+        {section('Owner')}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 8 }}>
           <div>
             {label('Run as (owner of the venv)')}
@@ -612,6 +619,7 @@ export function ProvisionModal({
           </div>
         </div>
 
+        {section('What to install')}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
           <div>
             {label('Packages (runspec is always installed)')}
@@ -629,6 +637,15 @@ export function ProvisionModal({
           </div>
         </div>
 
+        {/* The optional parts, folded: most venvs take the defaults. */}
+        <details style={{ borderTop: '1px solid var(--rs-border)', paddingTop: 8 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 600, color: textColor(isDark) }}>
+            More options: shared schedules, log cleanup
+            <span style={{ fontWeight: 400, color: textSecondary(isDark) }}>
+              {' '}({rootOwner || !scheduler ? 'no scheduler' : 'scheduler on'}, {cleanup ? 'log cleanup on' : 'log cleanup off'})
+            </span>
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 10 }}>
         <div>
           {label('Shared schedules')}
           <Select value={rootOwner ? '' : scheduler} onChange={setScheduler} options={SCHEDULER_OPTIONS} disabled={rootOwner} style={{ width: '100%' }} aria-label="Shared schedules" />
@@ -661,6 +678,8 @@ export function ProvisionModal({
               : 'Run logs from other accounts pile up in logs/ until someone prunes them.'}
           />
         </div>
+          </div>
+        </details>
       </div>
 
       <div ref={preflightRef} />

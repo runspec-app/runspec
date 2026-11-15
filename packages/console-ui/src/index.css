@@ -41,6 +41,9 @@ html, body, #root {
   /* Focus rings, links and selections: the neutral control colour (the brand
      is identity only; App.tsx sets it from controlAccent). */
   --rs-focus: #c3ccd2;
+  /* The warm tint of anything waiting for a person (approval cards, the
+     webhook pointer), the same in both themes. */
+  --rs-waiting-tint: #e3b341;
   --rs-hover: rgba(255, 255, 255, 0.05);
   --rs-scroll-thumb: #4d5860;
   --rs-scroll-thumb-hover: #5f6b74;
@@ -187,6 +190,15 @@ body {
 .rs-composer textarea::placeholder { color: var(--rs-text-muted); opacity: 1; }
 /* An input's clear (x) is a control, not decoration: the muted text, not
    antd's 25% grey (1.8:1). */
+/* A delete or reject control repeated on every row or card is quiet at rest
+   and turns red on hover or keyboard focus: a list of red marks reads as
+   alarms. The confirmation it opens is still red. */
+/* Settings help paragraphs: about 80 characters a line, not the window's width. */
+.rs-settings-modal .ant-typography:is(div, p), .rs-settings-modal .ant-form-item-extra { max-width: 80ch; }
+.rs-quiet-danger.ant-btn-dangerous:not(:hover):not(:focus-visible):not(:disabled) {
+  color: var(--rs-text-muted) !important;
+  border-color: var(--rs-border) !important;
+}
 .ant-input-clear-icon, .ant-select-clear { color: var(--rs-text-muted) !important; }
 /* A focused field gets the 2px focus ring, not a border a shade darker plus an
    18% halo (the change was 1.9-2.2:1). */

@@ -849,7 +849,7 @@ function Inbox({ facts, toolbar, onApprove, onAddToPage, onReject, onEdit, onEnt
               consequence: "It leaves the inbox and isn't added to the wiki.", okText: 'Reject',
             }}>
               {/* Ant's danger red is ~2.8:1 on the gunmetal card; lift it for text. */}
-              <Button size="small" type="text" danger data-rs-reject="" icon={<CloseOutlined />} style={isDark ? { color: DANGER_TEXT_DARK } : undefined}>Reject</Button>
+              <Button size="small" type="text" danger className="rs-quiet-danger" data-rs-reject="" icon={<CloseOutlined />}>Reject</Button>
             </AskFirst>
           </Space>
         } />
@@ -862,8 +862,6 @@ function Inbox({ facts, toolbar, onApprove, onAddToPage, onReject, onEdit, onEnt
   )
 }
 
-// Danger text that clears 4.5:1 on the dark card (Ant's #dc4446 is ~2.8:1).
-const DANGER_TEXT_DARK = '#ff8f87'
 
 // ── add / edit / edit-and-approve ────────────────────────────────────────────
 

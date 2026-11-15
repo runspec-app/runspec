@@ -405,7 +405,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent, waitingTotal, w
     }
   }, [restoreBlocks])
 
-  const sessionsApi = useSessions({ blocksRef, onSessionRemoved: removeSession, onCard: applyCard, onRestore: restoreChats })
+  const sessionsApi = useSessions({ blocksRef, onSessionRemoved: removeSession, onCard: applyCard, onRestore: restoreChats, openOnChat: ai })
   const { sessions, selectedId, selected, pendingConfirmIds, select, newChat, close, ensureInteractive, adopt } = sessionsApi
   const sessionsRef = useRef(sessionsApi)
   sessionsRef.current = sessionsApi

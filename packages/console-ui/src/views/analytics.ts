@@ -45,6 +45,12 @@ export function listText(items: { label: string; value: number }[], shown = 5): 
   return items.length > shown ? `${head} and ${items.length - shown} more` : head
 }
 
+/** A chart's day label: "14 Nov", not the rotated ISO date. Pure. */
+export function shortDay(iso: string): string {
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+
 export interface RunsPoint { date: string; status: string; value: number }
 
 /**

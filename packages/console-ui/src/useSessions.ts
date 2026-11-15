@@ -52,9 +52,13 @@ interface Options {
   // Cold start found these interactive chats already open on the backend (the
   // page was reloaded) — refill their transcripts from the saved conversations.
   onRestore?: (chats: ChatSessionInfo[]) => void
+  // Open on a chat you can type into: when the cold start leaves a read-only
+  // automation session selected (no chat is open yet), start one. Off with
+  // AI off, where there is no chat to type into.
+  openOnChat?: boolean
 }
 
-export function useSessions({ blocksRef, onSessionRemoved, onCard, onRestore }: Options): SessionsApi {
+export function useSessions({ blocksRef, onSessionRemoved, onCard, onRestore, openOnChat = false }: Options): SessionsApi {
   const [sessions, setSessions] = useState<Session[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [pendingConfirmIds, setPendingConfirmIds] = useState<Set<string>>(() => new Set())
@@ -67,6 +71,9 @@ export function useSessions({ blocksRef, onSessionRemoved, onCard, onRestore }: 
   cardRef.current = onCard
   const restoreRef = useRef(onRestore)
   restoreRef.current = onRestore
+  const openOnChatRef = useRef(openOnChat)
+  openOnChatRef.current = openOnChat
+  const ensureRef = useRef<(() => Promise<string | null>) | null>(null)
 
   const setSelected = useCallback((id: string | null) => {
     selectedRef.current = id
@@ -131,6 +138,12 @@ export function useSessions({ blocksRef, onSessionRemoved, onCard, onRestore }: 
       if (current && listRef.current.some(s => s.id === current.id)) setSelected(current.id)
       const open = chatList.filter(c => c.interactive && c.turns > 0)
       if (open.length) restoreRef.current?.(open)
+      // The first thing the composer shows shouldn't be "read-only".
+      // Only for what this fetch found (automation runs, no chat open): a card
+      // that arrives live later never moves the operator off their chat.
+      const sel = listRef.current.find(s => s.id === selectedRef.current)
+      const noChat = !chatList.some(c => c.interactive)
+      if (openOnChatRef.current && cards.length > 0 && noChat && sel && !sel.interactive) void ensureRef.current?.()
     })()
     return () => { cancelled = true }
   }, [commit])
@@ -261,6 +274,7 @@ export function useSessions({ blocksRef, onSessionRemoved, onCard, onRestore }: 
     return newChat()
   }, [newChat, select])
 
+  ensureRef.current = ensureInteractive
   const selected = useMemo(() => sessions.find(s => s.id === selectedId) ?? null, [sessions, selectedId])
 
   return { sessions, selectedId, selected, pendingConfirmIds, select, newChat, close, ensureInteractive, adopt }
