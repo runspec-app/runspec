@@ -677,7 +677,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           const syncBtn = (
             <Tooltip title={`Sync ${r.host} / ${r.venv}'s crontab with its config (only # runspec:sched: lines change)`}>
               <Button type="text" size="small" icon={<SyncOutlined />} aria-label="Sync crontab"
-                loading={busy === v.key} onClick={() => syncVenv(v)} />
+                loading={busy === v.key} onClick={() => syncVenv(v)}>Sync</Button>
             </Tooltip>
           )
           if (r.kind === 'stale') return syncBtn

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react'
+import React, { useEffect, useLayoutEffect, useState, useMemo, useRef, Suspense } from 'react'
 import { ConfigProvider, Badge, theme, Button, Tooltip, Tag, Dropdown, Spin, Popover, Select, Input, message, Modal } from 'antd'
 import {
   ThunderboltOutlined,
@@ -104,7 +104,7 @@ import {
   type GroupsMode, type SidebarGroupsState,
 } from './sidebarGroups'
 import { FeaturesContext, AI_ONLY_VIEWS, visibleNavTabs, type Features } from './features'
-import { layoutNavTabs, hostMatches, groupViews, parentOf } from './navGroups'
+import { layoutNavTabs, fitNavLayout, hostMatches, groupViews, parentOf } from './navGroups'
 import { useShortcuts, shortcutHint, answerPendingConfirm, revealPendingConfirm, hasPendingConfirm, firstShownGate } from './shortcuts'
 import type { PaletteAction } from './components/CommandPalette'
 import { PageHeader, pressable, SectionSwitch } from './components/kit'
@@ -1168,8 +1168,44 @@ export default function App() {
     return { key: g.key as ViewKey, label: meta.label, icon: meta.icon, status: meta.status ?? '', sections: g.sections }
   })
   // Grouped tab bar + More menu (navGroups.ts); Ctrl+1…9 follows this order.
-  const navLayout = layoutNavTabs(navTabs)
+  const fullNavLayout = layoutNavTabs(navTabs)
   const currentTab = parentOf(view)
+  // Fit the bar to its width: tabs that don't fit join More (navGroups
+  // fitNavLayout). Each tab's width is measured off-screen; the nav's own width
+  // comes from a ResizeObserver. Search commands drops to its icon first.
+  const navRef = useRef<HTMLElement>(null)
+  const navMeasureRef = useRef<HTMLDivElement>(null)
+  const [navWidth, setNavWidth] = useState(0)
+  const [navTabWidths, setNavTabWidths] = useState<Record<string, number>>({})
+  const navMeasureKey = navTabs.map(t => `${t.key}:${t.label}:${t.status}`).join('|') + (currentTab ?? '')
+  useLayoutEffect(() => {
+    const el = navMeasureRef.current
+    if (!el) return
+    const w: Record<string, number> = {}
+    el.querySelectorAll<HTMLElement>('[data-nav-key]').forEach(b => { w[b.dataset.navKey!] = b.offsetWidth })
+    setNavTabWidths(w)
+  }, [navMeasureKey])
+  useEffect(() => {
+    const el = navRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => setNavWidth(el.clientWidth))
+    ro.observe(el)
+    setNavWidth(el.clientWidth)
+    return () => ro.disconnect()
+  }, [])
+  const NAV_SEP = 13, NAV_MORE = 96, PALETTE_FULL = 230, PALETTE_ICON = 56
+  const navAllWidth = Object.values(navTabWidths).reduce((a, b) => a + b, 0) + NAV_SEP * 2 + NAV_MORE
+  // No measurement yet (tests, first paint): show the full layout.
+  const paletteCompact = navWidth > 0 && navAllWidth + PALETTE_FULL > navWidth
+  const navLayout = (() => {
+    if (navWidth <= 0 || Object.keys(navTabWidths).length === 0) return fullNavLayout
+    const room = navWidth - (paletteCompact ? PALETTE_ICON : PALETTE_FULL)
+    const fit = fitNavLayout(fullNavLayout, navTabWidths, room, NAV_MORE, NAV_SEP)
+    // More takes the open tab's name when that tab is in it: refit with room for it.
+    return fit.overflow.some(t => t.key === currentTab)
+      ? fitNavLayout(fullNavLayout, navTabWidths, room, Math.max(NAV_MORE, (navTabWidths[currentTab] ?? 0) + 24), NAV_SEP)
+      : fit
+  })()
   // Open a tab: a parent opens the section used last (remembered per viewer),
   // else its first visible section.
   const openTab = (key: string) => {
@@ -1502,7 +1538,7 @@ export default function App() {
                       aria-label={expanded ? 'Collapse all groups' : 'Expand all groups'}
                       icon={expanded ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
                       onClick={() => setAllGroupsMode(expanded ? 'collapsed' : 'expanded')}
-                      style={{ color: textMuted(isDark), padding: '0 4px', height: 22 }}
+                      style={{ color: textMuted(isDark), padding: '0 4px', height: 24, minWidth: 24 }}
                     />
                   </Tooltip>
                 )
@@ -1722,7 +1758,7 @@ export default function App() {
                             {collapsed && (
                               <span style={{ display: 'flex', alignItems: 'center', gap: 6, letterSpacing: 0 }}>
                                 <span style={{ color: 'var(--rs-ok)' }}>● {up}</span>
-                                {down > 0 && <span style={{ color: textFaint(isDark) }}>● {down}</span>}
+                                {down > 0 && <span style={{ color: textMuted(isDark) }}>● {down}</span>}
                               </span>
                             )}
                           </div>
@@ -1830,11 +1866,19 @@ export default function App() {
           <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
             {/* Tab bar */}
-            <nav aria-label="Views" style={{
-              height: 44, flexShrink: 0,
+            <nav ref={navRef} aria-label="Views" style={{
+              height: 44, flexShrink: 0, position: 'relative', overflow: 'hidden',
               background: headerBg, borderBottom: `1px solid ${borderCol}`,
               display: 'flex', alignItems: 'stretch',
             }}>
+              {/* Off-screen copies of every tab, measured for fitNavLayout. */}
+              <div ref={navMeasureRef} aria-hidden style={{ position: 'absolute', left: -10000, top: 0, visibility: 'hidden', display: 'flex', pointerEvents: 'none' }}>
+                {navTabs.map(tab => (
+                  <span key={tab.key} data-nav-key={tab.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap', fontWeight: 600 }}>
+                    <span style={{ display: 'inline-flex' }}>{tab.icon}</span>{tab.label}
+                  </span>
+                ))}
+              </div>
               {navLayout.groups.map((group, gi) => (
                 <React.Fragment key={gi}>
                   {gi > 0 && <div aria-hidden style={{ width: 1, margin: '12px 6px', background: borderCol, flexShrink: 0 }} />}
@@ -1912,10 +1956,11 @@ export default function App() {
                   className="rs-palette-btn"
                   onClick={() => setPaletteOpen(true)}
                   aria-label="Search commands"
+                  title={paletteCompact ? `Search commands (${shortcutHint('palette')})` : undefined}
                 >
                   <SearchOutlined />
-                  <span>Search commands</span>
-                  <span className="rs-kbd">{shortcutHint('palette')}</span>
+                  {!paletteCompact && <span>Search commands</span>}
+                  {!paletteCompact && <span className="rs-kbd">{shortcutHint('palette')}</span>}
                 </button>
               </div>
             </nav>
@@ -1982,7 +2027,7 @@ export default function App() {
                 {viewsVisited.current.has('logs') && (
                   <div className="rs-view" style={{ display: view === 'logs' ? 'block' : 'none', flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
-                      <LogsView selectedHost={selectedHost} activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} onOpenAnalytics={() => setView('analytics')} />
+                      <LogsView activeScope={activeScope} onScopeToggle={handleScopeToggle} active={view === 'logs'} onOpenAnalytics={() => setView('analytics')} />
                     </Suspense>
                   </div>
                 )}
@@ -2011,7 +2056,7 @@ export default function App() {
                   <div className="rs-view" style={{ flex: 1, overflow: 'auto' }}>
                     <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>}>
                       {view === 'forms'     && <FormsView runnables={runnables} hosts={hosts} selectedHost={selectedHost} activeScope={activeScope} activeProfile={activeProfile} onRunRunnable={handleRunRunnable} pendingForm={pendingForm} onPendingFormClear={() => setPendingForm(null)} runbooks={runbooks} onOpenRunbook={handleOpenRunbook} savedRuns={savedRuns} onOpenSavedRun={handleOpenSavedRun} onEditRunbook={id => setRunbookEditReq({ id, nonce: Date.now() })} onEditSavedRun={id => setSavedRunEditReq({ id, nonce: Date.now() })} />}
-                      {view === 'analytics' && <AnalyticsView selectedHost={selectedHost} activeScope={activeScope} active />}
+                      {view === 'analytics' && <AnalyticsView activeScope={activeScope} active />}
                       {view === 'schedules' && <SchedulesView hosts={hosts} runnables={runnables} selectedHost={selectedHost} activeProfile={activeProfile} onOpenHistory={q => { setHistorySearch(q); setView('history') }} onOpenWebhooks={() => setView('webhooks')} />}
                       {view === 'webhooks'  && <WebhooksView hosts={hosts} runnables={runnables} status={webhooks.status} />}
                       {view === 'marketplace' && <MarketplaceView hosts={hosts} activeProfile={activeProfile} onOpenSettings={() => setMarketplaceSettingsOpen(true)} />}
@@ -2082,6 +2127,7 @@ export default function App() {
         {/* Status bar: fleet + app state along the bottom of the window. */}
         <div
           data-testid="status-bar"
+          className="rs-statusbar"
           style={{
             height: 26, flexShrink: 0,
             borderTop: `1px solid ${borderCol}`, background: headerBg,

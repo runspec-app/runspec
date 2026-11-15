@@ -9,6 +9,61 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.449.0] — 2026-11-15
+
+### Changed
+
+- **History covers the whole profile on every tab.** **Charts** and **Log
+  files** now show every host in the active profile (local plus its connected
+  hosts), as **Runs** already did, with a **Host** filter to narrow to one.
+  Before, they showed only the host selected in the left panel.
+  - **Log files:** each host is asked on its own and appears as soon as it
+    answers, so one slow host never holds up the rest. Cleanup and share actions
+    stay with their own host.
+  - **Runs and Charts share one date range.** They used to open on 7 and 30
+    days, so their totals seemed to disagree. Charts still read at most 30 days.
+- **The tab bar fits the window.** Tabs that don't fit move into **More**, and
+  More and Search commands stay on screen. At narrow widths Search commands
+  shrinks to its icon. Before, at 1024px with the hosts panel open, both were
+  cut off and couldn't be clicked.
+- **Session chips.**
+  - The selected chip scrolls into view, so a new chat's "New · 14:05" chip
+    shows when you open it.
+  - "+N more" sits outside the scrolling row, so it never scrolls away.
+  - Chips keep their order: a chat that starts waiting no longer jumps to the
+    front; it scrolls into view instead.
+  - On a narrow Console the chips take a row of their own, instead of
+    shrinking to one clipped chip.
+  - The close × is a 24px target (it was 16px).
+- **Words.**
+  - The Console's **History** button is **Past chats**. "History" is the run
+    history tab.
+  - The working list in the Console's status summary is headed **Working**,
+    since it lists trigger runs as well as chats.
+  - Knowledge says "asks first" where it showed the raw `confirm`.
+  - A form field's example placeholder reads "e.g. …", and a `$VAR` default
+    reads "default: $VAR", so neither passes for a filled-in value.
+  - Automation's section counts say "2 running" / "1 waiting", not a spinner
+    and a bare number.
+- **History → Runs:** Status, Time and Duration follow the runnable's name, so
+  Time no longer sits off the right edge at 1440px.
+- **Labelled actions:** Sync on a schedule row, Remove and Keep on Env files
+  rows, and Remove on a deny rule (quiet until hovered).
+
+### Fixed
+
+- **Contrast.**
+  - An approval card's arguments use the secondary text colour in light theme
+    (they were 3.9:1).
+  - Text that used the faint colour (3.6:1) uses the muted one: "… N more
+    lines", the hosts panel notes, Specs section labels and "default", and the
+    sidebar's down-host count. Faint stays for carets and icons.
+  - An unselected nav tab's text is darker while hovered (it was 4.4:1).
+- **Click targets:** the status bar's clickable items fill its height, and the
+  sidebar's Collapse all groups button is 24px.
+- **Env files:** the "Add a variable" placeholder no longer runs off the
+  field. What the suggestions are is on hover.
+
 ## [0.448.1] — 2026-11-15
 
 ### Changed

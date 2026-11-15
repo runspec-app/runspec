@@ -116,7 +116,7 @@ export function PathInput({ host, value, placeholder, dirsOnly, error, onChange,
               form controls. */}
           <Input
             aria-label={ariaLabel}
-            placeholder={placeholder ?? (dirsOnly ? '/path/to/dir' : '/path/to/file')}
+            placeholder={placeholder ?? (dirsOnly ? 'e.g. /path/to/dir' : 'e.g. /path/to/file')}
             status={error ? 'error' : undefined}
             style={inputStyle}
           />

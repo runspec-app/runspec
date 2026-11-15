@@ -85,3 +85,29 @@ export function hostMatches(h: { name: string; group?: string }, query: string):
   if (!q) return true
   return h.name.toLowerCase().includes(q) || (h.group ?? '').toLowerCase().includes(q)
 }
+
+/**
+ * Fit the tab bar to the width it has: tabs from the end of the last group move
+ * to the front of More until the rest fit, so More and Search commands never
+ * leave the screen. `ordered` (the Ctrl+1…9 order) is unchanged.
+ *
+ * `widths` are the measured tab widths by key; `sep` is the rule between
+ * groups; `more` is the More button's width (reserved whenever More shows).
+ */
+export function fitNavLayout<T extends { key: string }>(
+  layout: NavLayout<T>, widths: Record<string, number>, available: number, more: number, sep: number,
+): NavLayout<T> {
+  const flat = layout.groups.flatMap((g, gi) => g.map((t, i) => ({ t, gi, cost: (widths[t.key] ?? 0) + (gi > 0 && i === 0 ? sep : 0) })))
+  const total = flat.reduce((s, x) => s + x.cost, 0)
+  if (total + (layout.overflow.length > 0 ? more : 0) <= available) return layout
+  let used = more
+  let keep = 0
+  while (keep < flat.length && used + flat[keep].cost <= available) { used += flat[keep].cost; keep++ }
+  const groups: T[][] = []
+  for (const { t, gi } of flat.slice(0, keep)) (groups[gi] ??= []).push(t)
+  return {
+    groups: groups.filter(Boolean),
+    overflow: [...flat.slice(keep).map(x => x.t), ...layout.overflow],
+    ordered: layout.ordered,
+  }
+}

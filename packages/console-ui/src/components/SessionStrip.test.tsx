@@ -53,9 +53,9 @@ describe('SessionStrip', () => {
     expect(chip('c1').textContent).toContain('restart nginx')
     expect(chip('t1').dataset.status).toBe('running')
     expect(chip('s1').dataset.status).toBe('waiting')
-    // Waiting is said in words, and that chip comes first.
+    // Waiting is said in words; the chip keeps its place in the row.
     expect(chip('s1').textContent).toContain('waiting for you')
-    expect(screen.getAllByTestId('session-chip')[0].dataset.sessionId).toBe('s1')
+    expect(screen.getAllByTestId('session-chip')[0].dataset.sessionId).not.toBe('s1')
     expect(screen.getByLabelText('unread')).toBeTruthy()
     // A running session has no close ×.
     expect(screen.queryAllByLabelText(/^Close /)).toHaveLength(1)

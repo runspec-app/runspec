@@ -72,3 +72,18 @@ describe('tab sections', () => {
     expect(new Set(all).size).toBe(all.length)
   })
 })
+
+describe('fitNavLayout()', () => {
+  it('moves tabs from the end into More until the rest fit', async () => {
+    const { fitNavLayout } = await import('./navGroups')
+    const layout = layoutNavTabs(tabs('console', 'forms', 'history', 'files', 'automation', 'knowledge', 'marketplace', 'dev'))
+    const w = Object.fromEntries(keys(layout.ordered).map(k => [k, 100]))
+    // Everything fits: unchanged.
+    expect(fitNavLayout(layout, w, 2000, 80, 13)).toBe(layout)
+    // Room for four tabs plus More.
+    const fit = fitNavLayout(layout, w, 480, 80, 13)
+    expect(fit.groups.map(keys)).toEqual([['console', 'forms', 'history', 'files']])
+    expect(keys(fit.overflow)).toEqual(['automation', 'knowledge', 'marketplace', 'dev'])
+    expect(fit.ordered).toBe(layout.ordered)
+  })
+})

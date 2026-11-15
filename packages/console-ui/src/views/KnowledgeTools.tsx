@@ -21,6 +21,7 @@ import {
   MONO_FONT, RADIUS, surfaces, textColor, textFaint, textMuted, textSecondary, useAccent, useIsDark, withAlpha,
 } from '../ThemeContext'
 import { AskFirst } from '../components/risk'
+import { autonomyTagProps } from './formsShared'
 
 const { Text } = Typography
 
@@ -349,7 +350,7 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus, onRun
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 8, fontSize: 12, color: textMuted(isDark) }}>
                   <span title="From the runnable's runspec.toml">From runspec.toml</span>
                   <span>on {tool.hosts.length} host{tool.hosts.length === 1 ? '' : 's'}{tool.hosts.length <= 3 ? `: ${tool.hosts.join(', ')}` : ''}</span>
-                  {tool.autonomy && <span>{tool.autonomy}</span>}
+                  {tool.autonomy && <span title={`autonomy: ${tool.autonomy}`}>{autonomyTagProps(tool.autonomy).label}</span>}
                   {tool.verbs.length > 0 && <span>verbs: <span style={{ fontFamily: MONO_FONT }}>{tool.verbs.slice(0, 8).join(' ')}{tool.verbs.length > 8 ? ' …' : ''}</span></span>}
                   {tool.args.length > 0 && <span>args: <span style={{ fontFamily: MONO_FONT }}>{tool.args.slice(0, 8).join(' ')}{tool.args.length > 8 ? ' …' : ''}</span></span>}
                 </div>

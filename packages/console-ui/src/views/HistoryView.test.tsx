@@ -11,6 +11,7 @@ import userEvent from '@testing-library/user-event'
 
 import { HistoryView, accountNote, agoLabel, clampPage, hiddenSummary, integrityBadge, parseHistorySearch, syncNote } from './HistoryView'
 import type { HistoryRecord, RunningRun } from '../bridge'
+import { setHistoryRange } from './historyRange'
 
 const { historyTargets, getHistorySlim, getRunDetail, logsView, getRunningRuns, historySyncStatus, historyHidden } = vi.hoisted(() => ({
   historyHidden: vi.fn(),
@@ -62,6 +63,7 @@ const PROPS = {
 const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve() }
 
 beforeEach(() => {
+  setHistoryRange(7)
   historyTargets.mockReset().mockResolvedValue(['local'])
   getHistorySlim.mockReset().mockResolvedValue([rec()])
   getRunDetail.mockReset().mockResolvedValue({ logLines: [] })

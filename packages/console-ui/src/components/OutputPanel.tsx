@@ -86,7 +86,9 @@ function useCardTheme(): CardTheme {
     toolBg: sf.overlay,
     toolBorder: sf.border,
     link: accent,
-    sub: isDark ? '#9ab' : '#5a6b7b',
+    // Argument text on an approval card: what you're approving reads at
+    // secondary strength (#5a6b7b was 3.9:1 on the light code block).
+    sub: textSecondary(isDark),
   }
 }
 
@@ -1981,7 +1983,7 @@ export function ExtraLines({ lines }: { lines?: OutputLine[] }) {
         </span>
       ))}
       {more > 0 && (
-        <span style={{ color: c.faint }}>{`… ${more} more line${more === 1 ? '' : 's'} (Raw shows everything)`}</span>
+        <span style={{ color: c.dim }}>{`… ${more} more line${more === 1 ? '' : 's'} (Raw shows everything)`}</span>
       )}
     </pre>
   )

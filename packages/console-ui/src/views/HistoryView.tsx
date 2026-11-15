@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useHistoryRange } from './historyRange'
 import { Table, Tag, Typography, Tooltip, message, Input, Drawer, Spin, Alert, Segmented, Switch, Button } from 'antd'
 import { BarChartOutlined, RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { RUN_BY_FILTERS, isScheduled, runBy } from '../runBy'
@@ -458,7 +459,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   const [fullLogRecord, setFullLogRecord] = useState<HistoryRecord | null>(null)
   // Read window in days (0 = all) — bounds the backend read so a first visit is
   // quick. Changing it refetches (see the effect's deps).
-  const [sinceDays, setSinceDays] = useState(7)
+  // Shared with Charts (historyRange), so both show the same window.
+  const [sinceDays, setSinceDays] = useHistoryRange()
   // The page and page size, held here: a fixed `pageSize` in the pagination
   // prop pinned the size changer to 50 whatever you picked. The size is
   // remembered; the page goes back to 1 whenever what's listed changes.
@@ -655,6 +657,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   useLayoutEffect(() => { scopeToggleRef.current = onScopeToggle })
 
   const columns: ColumnType<HistoryRecord>[] = useMemo(() => [
+    // When and how it went sit next to what ran: at 1440 the old order pushed
+    // Time off the right edge behind Operator and Run as.
     {
       title: 'Runnable',
       key: 'runnable',
@@ -690,6 +694,47 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       filterSearch: true,
       onFilter: (value, record) => record.runnable === value,
       filteredValue: colFilters['runnable'] ?? null,
+    },
+    {
+      title: 'Status',
+      dataIndex: 'exitCode',
+      key: 'exitCode',
+      // A `runspec exec` skip (lock held / already running) has exit code 0 but
+      // never ran — its own tag, and excluded from both ok and error.
+      render: (c: number, record: HistoryRecord) => (
+        <span style={{ display: 'inline-flex', gap: 4 }}>
+          {record.status === 'skipped'
+            ? <StatusTag tone="neutral" tip={`Didn't start — the previous run was still going${record.label ? ` (${record.label})` : ''}`}>skipped</StatusTag>
+            : record.status === 'not_started'
+              ? <StatusTag tone="failed" tip={`The runnable never started${record.reason ? `: ${record.reason}` : ''}. Recorded by this console, since the host has no record of it.`}>didn't start</StatusTag>
+              : <StatusTag tone={c === 0 ? 'ok' : 'failed'}>{c === 0 ? 'ok' : `exit ${c}`}</StatusTag>}
+          {record.pending && (
+            <StatusTag tone="info" tip="Another account's run, still in the venv's logs inbox — the owner's next run (or Sweep inbox under Logs → Runs index) indexes it">inbox</StatusTag>
+          )}
+        </span>
+      ),
+      filters: [
+        { text: 'ok', value: 0 },
+        { text: 'error', value: 1 },
+        { text: 'skipped', value: -1 },
+      ],
+      onFilter: (value, record) => historyStatusMatches(record, value as number),
+      filteredValue: colFilters['exitCode'] ?? null,
+    },
+    {
+      title: 'Time',
+      dataIndex: 'ts',
+      key: 'ts',
+      render: (ts: string) => <When t={ts} />,
+      sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
+      defaultSortOrder: 'descend',
+    },
+    {
+      title: 'Duration',
+      dataIndex: 'durationMs',
+      key: 'durationMs',
+      render: (ms: number) => `${(ms / 1000).toFixed(2)}s`,
+      sorter: (a, b) => a.durationMs - b.durationMs,
     },
     {
       // Dedicated column so "run by agent vs operator" is always visible — the
@@ -800,47 +845,6 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       filters: runAsUsers.map(u => ({ text: u, value: u })),
       onFilter: (value, record) => record.runAs === value,
       filteredValue: colFilters['runAs'] ?? null,
-    },
-    {
-      title: 'Status',
-      dataIndex: 'exitCode',
-      key: 'exitCode',
-      // A `runspec exec` skip (lock held / already running) has exit code 0 but
-      // never ran — its own tag, and excluded from both ok and error.
-      render: (c: number, record: HistoryRecord) => (
-        <span style={{ display: 'inline-flex', gap: 4 }}>
-          {record.status === 'skipped'
-            ? <StatusTag tone="neutral" tip={`Didn't start — the previous run was still going${record.label ? ` (${record.label})` : ''}`}>skipped</StatusTag>
-            : record.status === 'not_started'
-              ? <StatusTag tone="failed" tip={`The runnable never started${record.reason ? `: ${record.reason}` : ''}. Recorded by this console, since the host has no record of it.`}>didn't start</StatusTag>
-              : <StatusTag tone={c === 0 ? 'ok' : 'failed'}>{c === 0 ? 'ok' : `exit ${c}`}</StatusTag>}
-          {record.pending && (
-            <StatusTag tone="info" tip="Another account's run, still in the venv's logs inbox — the owner's next run (or Sweep inbox under Logs → Runs index) indexes it">inbox</StatusTag>
-          )}
-        </span>
-      ),
-      filters: [
-        { text: 'ok', value: 0 },
-        { text: 'error', value: 1 },
-        { text: 'skipped', value: -1 },
-      ],
-      onFilter: (value, record) => historyStatusMatches(record, value as number),
-      filteredValue: colFilters['exitCode'] ?? null,
-    },
-    {
-      title: 'Duration',
-      dataIndex: 'durationMs',
-      key: 'durationMs',
-      render: (ms: number) => `${(ms / 1000).toFixed(2)}s`,
-      sorter: (a, b) => a.durationMs - b.durationMs,
-    },
-    {
-      title: 'Time',
-      dataIndex: 'ts',
-      key: 'ts',
-      render: (ts: string) => <When t={ts} />,
-      sorter: (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
-      defaultSortOrder: 'descend',
     },
   ], [runnableNames, groups, runbooks, labels, hosts, operators, runAsUsers, colFilters, activeScope, accent])
 

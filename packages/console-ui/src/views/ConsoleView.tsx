@@ -222,7 +222,7 @@ export function ActivityControl({ inFlight, working = [], waiting, waitingTotal,
       )}
       {working.length > 0 && (
         <div>
-          <Text strong style={{ fontSize: 12 }}>Chats working</Text>
+          <Text strong style={{ fontSize: 12 }}>Working</Text>
           {working.map(w => (
             <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
               <LoadingOutlined aria-hidden spin style={{ color: 'var(--rs-text-secondary)', fontSize: 12 }} />
@@ -781,9 +781,9 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent, waitingTotal, w
   const hasBlocks = useCallback((id: string) => blocks.some(b => b.sessionId === id), [blocks])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
+    <div className="rs-console-col" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: 8 }}>
       {riskHolder}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <ActivityControl
           inFlight={inFlight}
           working={sessions.filter(x => statusOf(x) === 'running').map(x => ({ id: x.id, label: x.label || x.kind }))}
@@ -814,7 +814,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent, waitingTotal, w
           primary={ai
             ? { key: 'new', label: 'New', ariaLabel: 'New chat', icon: <PlusOutlined />, onClick: handleNewChat, tip: 'New chat: this one keeps running (Alt+N)' }
             : visible.length > 0 ? { key: 'clear', label: 'Clear', icon: <PlusOutlined />, onClick: handleClear, tip: 'Clear the run output' } : undefined}
-          secondary={ai ? [{ key: 'history', label: 'History', icon: <HistoryOutlined />, onClick: openConversations, tip: 'Browse and reopen past conversations' }] : []}
+          secondary={ai ? [{ key: 'history', label: 'Past chats', icon: <HistoryOutlined />, onClick: openConversations, tip: 'Browse and reopen past conversations' }] : []}
           more={visible.length > 0 ? ([
             { key: 'collapse', label: 'Collapse all cards', icon: <CompressOutlined />, onClick: () => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: true } })) },
             { key: 'expand', label: 'Expand all cards', icon: <ExpandOutlined />, onClick: () => window.dispatchEvent(new CustomEvent('runspec:collapse_all', { detail: { collapsed: false } })) },

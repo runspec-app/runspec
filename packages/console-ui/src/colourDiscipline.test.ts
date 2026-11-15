@@ -39,7 +39,7 @@ const BASELINE: Record<string, number> = {
   'components/LogStream.tsx': 8,
   'components/Markdown.tsx': 4,
   'components/OtherHostsSection.tsx': 4,
-  'components/OutputPanel.tsx': 14,  // incl. a #000 alpha mask (a gradient fade, not a colour)
+  'components/OutputPanel.tsx': 12,  // incl. a #000 alpha mask (a gradient fade, not a colour)
   'components/SettingsDrawer.tsx': 9,
   'components/runShared.tsx': 7,
   'views/DevView.tsx': 9,

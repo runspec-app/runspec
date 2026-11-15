@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useEffect, useRef } from 'react'
 /**
  * SessionStrip — the chip row in the Console toolbar, one chip per live
  * session (interactive chats + trigger / schedule fires). A chip shows its
@@ -92,11 +93,26 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
   const isDark = useIsDark()
   const accent = useAccent()
   const sf = surfaces(isDark)
+  const rowRef = useRef<HTMLDivElement>(null)
+  // Chips keep their order (waiting ones don't jump to the front); instead the
+  // selected chip, and a chip that starts waiting, scroll into view.
+  const waitingKey = sessions.filter(s => statusOf(s) === 'waiting').map(s => s.id).join(',')
+  const seenWaiting = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const row = rowRef.current
+    if (!row || !selectedId) return
+    chipEl(row, selectedId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [selectedId, sessions.length])
+  useEffect(() => {
+    const row = rowRef.current
+    const ids = waitingKey ? waitingKey.split(',') : []
+    const fresh = ids.filter(id => !seenWaiting.current.has(id))
+    seenWaiting.current = new Set(ids)
+    if (!row || fresh.length === 0) return
+    chipEl(row, fresh[fresh.length - 1])?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [waitingKey])
   if (sessions.length === 0) return null
-  const parts = partitionSessions(sessions, statusOf, selectedId)
-  // A chip waiting for you comes first, so it's never the one scrolled away.
-  const inline = [...parts.inline.filter(s => statusOf(s) === 'waiting'), ...parts.inline.filter(s => statusOf(s) !== 'waiting')]
-  const overflow = parts.overflow
+  const { inline, overflow } = partitionSessions(sessions, statusOf, selectedId)
   const finishedOverflow = overflow.filter(s => {
     const st = statusOf(s)
     return st === 'idle' || st === 'done'
@@ -149,18 +165,22 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
     }
   }
 
+  // The chips scroll; "+N more" sits outside the scroller so it never scrolls
+  // away. On a narrow Console the strip takes a row of its own (index.css).
   return (
+    <div className="rs-session-strip" style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '1 1 240px', minWidth: 0, marginRight: 'auto' }}>
+    {riskHolder}
     <div
+      ref={rowRef}
       role="tablist"
       aria-label="Sessions"
       style={{
         display: 'flex', alignItems: 'center', gap: 6,
-        flex: 1, minWidth: 0, marginRight: 'auto',
+        flex: '0 1 auto', minWidth: 0,
         overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'thin',
         padding: '2px 0',
       }}
     >
-      {riskHolder}
       {inline.map(s => {
         const status = statusOf(s)
         const selected = s.id === selectedId
@@ -230,7 +250,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
                     })
                     if (a.ok) onClose(s.id)
                   }}
-                  style={{ padding: '0 2px', height: 16, minWidth: 16, lineHeight: 1, color: textMuted(isDark) }}
+                  style={CLOSE_STYLE(textMuted(isDark))}
                 />
               ) : (
                 <Button
@@ -238,13 +258,14 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
                   aria-label={`Close ${label}`}
                   icon={<CloseOutlined style={{ fontSize: 10 }} />}
                   onClick={e => { e.stopPropagation(); onClose(s.id) }}
-                  style={{ padding: '0 2px', height: 16, minWidth: 16, lineHeight: 1, color: textMuted(isDark) }}
+                  style={CLOSE_STYLE(textMuted(isDark))}
                 />
               )
             )}
           </div>
         )
       })}
+    </div>
       {overflow.length > 0 && (
         <Dropdown menu={{ items: overflowItems, onClick: onOverflowClick }} trigger={['click']} placement="bottomRight">
           <Button
@@ -262,3 +283,11 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
     </div>
   )
 }
+
+const chipEl = (row: HTMLElement, id: string) =>
+  Array.from(row.querySelectorAll<HTMLElement>('[data-session-id]')).find(el => el.dataset.sessionId === id)
+
+// The close × fills the chip's height: a 24px target (it was 16px).
+const CLOSE_STYLE = (color: string): React.CSSProperties => ({
+  padding: 0, height: 22, width: 24, minWidth: 24, marginRight: -6, lineHeight: 1, color,
+})
