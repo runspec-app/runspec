@@ -716,3 +716,41 @@ def test_target_handshake_failure_releases_the_tunnel():
 def test_unrouted_key_is_unchanged():
     pool = make_pool(make_client=lambda *a: FakeClient(), route=lambda t, i, c: None)
     assert pool._key("u@h", None, {}) == ("u@h", "", "", "", "", False)
+
+
+class _ExecChannel:
+    def __init__(self):
+        self.closed = False
+        self.command = ""
+
+    def exec_command(self, command):
+        self.command = command
+
+    def close(self):
+        self.closed = True
+
+
+class _ExecTransport(FakeTransport):
+    def open_session(self):
+        self.sessions_opened += 1
+        return _ExecChannel()
+
+
+def test_open_exec_stream_is_not_idle_reaped():
+    """A webhook follow stream holds one exec channel for hours with no other
+    command on the host; reaping the transport cut it (exit -1) every idle_ttl."""
+    now = {"t": 0.0}
+    client = FakeClient()
+    client.transport = _ExecTransport()
+    pool = make_pool(
+        make_client=lambda *a: client,
+        settings_overrides={"idle_ttl": 10},
+        clock=lambda: now["t"],
+    )
+    chan, release = pool.open_exec("u@h", "runspec-scheduler hooks follow")
+    now["t"] = 60.0
+    assert pool.reap() == 0 and client.closed is False and chan.closed is False
+    release()
+    assert chan.closed is True
+    now["t"] = 120.0
+    assert pool.reap() == 1 and client.closed is True

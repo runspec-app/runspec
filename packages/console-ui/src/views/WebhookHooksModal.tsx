@@ -18,7 +18,7 @@ import { bridge } from '../bridge'
 import type {
   WebhookHook, WebhookHooksList, WebhookSaveResult, WebhookSettings, WebhookSmtp, WebhookTarget, WebhookTestResult,
 } from '../bridge'
-import { useIsDark, textColor, textMuted, textSecondary, MONO_FONT, RADIUS } from '../ThemeContext'
+import { useIsDark, textColor, textMuted, textSecondary, textWarning, MONO_FONT, RADIUS } from '../ThemeContext'
 import { StatusTag, RowActions, EmptyState } from '../components/kit'
 import { deliveryStatus, runLine } from '../webhooks'
 
@@ -310,17 +310,16 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function SettingsTab({ target, list, onChanged, takenPorts = [], turnOn = false }: {
-  target: WebhookTarget; list: WebhookHooksList; onChanged: () => void; takenPorts?: number[]; turnOn?: boolean
+function SettingsTab({ target, list, onChanged, takenPorts = [] }: {
+  target: WebhookTarget; list: WebhookHooksList; onChanged: () => void; takenPorts?: number[]
 }) {
   const isDark = useIsDark()
   const before: SettingsForm = useMemo(() => ({ ...(list.settings ?? {}), smtp: { ...(list.smtp ?? {}) } }), [list])
   const suggested = suggestPort(takenPorts)
-  const start = useCallback((b: SettingsForm): SettingsForm => (turnOn && !b.enabled ? { ...b, enabled: true, port: b.port || suggested } : b), [turnOn, suggested])
-  const [form, setForm] = useState<SettingsForm>(() => start(before))
+  const [form, setForm] = useState<SettingsForm>(before)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  useEffect(() => setForm(start(before)), [before, start])
+  useEffect(() => setForm(before), [before])
   const set = (patch: Partial<WebhookSettings>) => setForm(f => ({ ...f, ...patch }))
   const setSmtp = (patch: Partial<WebhookSmtp>) => setForm(f => ({ ...f, smtp: { ...f.smtp, ...patch } }))
   const hooks = changed(before as Record<string, unknown>, form as Record<string, unknown>, HOOK_KEYS)
@@ -341,8 +340,19 @@ function SettingsTab({ target, list, onChanged, takenPorts = [], turnOn = false 
   const h = (t: string) => <h3 style={{ fontSize: 13, fontWeight: 600, margin: '4px 0 0', color: textColor(isDark) }}>{t}</h3>
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {list.settings?.problem && <Alert type="warning" showIcon message={list.settings.problem} />}
-      <Switch checked={!!form.enabled} onChange={on => set(on && !form.port ? { enabled: on, port: suggested } : { enabled: on })} checkedChildren="Taking webhooks" unCheckedChildren="Off" style={{ alignSelf: 'flex-start' }} />
+      {/* What the host says now: hidden while there are unsaved changes, so
+          an edited form and the saved state never contradict each other. */}
+      {list.settings?.problem && !dirty && <Alert type="warning" showIcon message={list.settings.problem} />}
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 10, alignSelf: 'flex-start', cursor: 'pointer' }}>
+        <Switch checked={!!form.enabled} aria-label="Take webhooks"
+          onChange={on => set(on && !form.port ? { enabled: on, port: suggested } : { enabled: on })} />
+        <span style={{ fontSize: 14, fontWeight: 500, color: textColor(isDark) }}>
+          {form.enabled ? 'Taking webhooks' : 'Not taking webhooks'}
+        </span>
+        {form.enabled !== !!before.enabled && (
+          <span data-testid="webhook-unsaved" style={{ fontSize: 12, color: textWarning(isDark) }}>not saved yet</span>
+        )}
+      </label>
       {h('Listener')}
       <div style={grid}>
         <Field label="Port" hint={portHint(takenPorts, clash)}>
@@ -378,17 +388,16 @@ function SettingsTab({ target, list, onChanged, takenPorts = [], turnOn = false 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <Button type="primary" disabled={!dirty} loading={saving} onClick={() => { void save() }}>Save</Button>
         {dirty && <Button onClick={() => setForm(before)}>Undo changes</Button>}
+        {dirty && <span style={{ fontSize: 12, color: textSecondary(isDark) }}>Unsaved: Save sends them to {target.host} / {target.venv}.</span>}
       </div>
     </div>
   )
 }
 
-export function WebhookHooksModal({ target, onClose, startTab = 'hooks', takenPorts = [], turnOn = false }: {
+export function WebhookHooksModal({ target, onClose, startTab = 'hooks', takenPorts = [] }: {
   target: WebhookTarget; onClose: () => void; startTab?: 'hooks' | 'settings'
   /** Ports other venvs on this host listen on (or are set to), so a new one is picked clear of them. */
   takenPorts?: number[]
-  /** Opened from Turn on: start the listener form switched on, with a free port filled in. */
-  turnOn?: boolean
 }) {
   const [list, setList] = useState<WebhookHooksList | null>(null)
   const [tab, setTab] = useState<string>(startTab)
@@ -412,7 +421,7 @@ export function WebhookHooksModal({ target, onClose, startTab = 'hooks', takenPo
       ) : (
         <Tabs activeKey={tab} onChange={setTab} items={[
           { key: 'hooks', label: `Hooks (${list.hooks?.length ?? 0})`, children: <HooksTab target={target} list={list} onChanged={load} /> },
-          { key: 'settings', label: 'Listener & mail', children: <SettingsTab target={target} list={list} onChanged={load} takenPorts={takenPorts} turnOn={turnOn} /> },
+          { key: 'settings', label: 'Listener & mail', children: <SettingsTab target={target} list={list} onChanged={load} takenPorts={takenPorts} /> },
         ]} />
       )}
     </Modal>

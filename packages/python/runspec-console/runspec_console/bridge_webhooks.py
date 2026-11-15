@@ -430,6 +430,33 @@ class WebhooksMixin:
             raise wh.WebhookError("host and venv are needed")
         return host, venv
 
+    def _webhook_reread(
+        self, host: str, venv: str, settings: dict[str, Any] | None = None
+    ) -> None:
+        """After a change made here, read the venv's settings + hooks again so a
+        followed venv shows it now (the follow stream sends them only on
+        connect). ``settings`` from the change's own answer is used if the
+        re-read fails. Best-effort: a venv nobody follows is left alone."""
+        vs = self._wh()["venvs"].get(f"{host}/{venv}")
+        if vs is None:
+            return
+        hooks: list[dict[str, Any]] | None = None
+        try:
+            res = self._webhook_call(host, venv, ["hooks", "list"])
+        except Exception:  # noqa: BLE001 — the change itself already worked
+            logger.exception("webhooks: re-reading %s/%s failed", host, venv)
+            res = {"ok": False}
+        got = res.get("json") or {}
+        if res.get("ok") and got.get("ok", True):
+            if isinstance(got.get("settings"), dict):
+                settings = got["settings"]
+            if isinstance(got.get("hooks"), list):
+                hooks = got["hooks"]
+        if settings is None and hooks is None:
+            return
+        vs.reconfigure(settings, hooks)
+        self._on_webhook_change(vs)
+
     # ── JS API ────────────────────────────────────────────────────────────────
 
     def webhooks_status(self) -> dict[str, Any]:
@@ -618,6 +645,8 @@ class WebhooksMixin:
             "error": res.get("error") or got.get("error") or "",
             **{k: got.get(k) for k in ("hook", "url", "replaced") if k in got},
         }
+        if ok:
+            self._webhook_reread(host, venv)
         if ok and made:
             out["secrets"] = made
             out["note"] = (
@@ -637,6 +666,8 @@ class WebhooksMixin:
         self._webhook_audit(
             "webhook.hook_removed", payload, id=payload.get("name"), ok=ok
         )
+        if ok:
+            self._webhook_reread(host, venv)
         return {"ok": ok, "error": res.get("error") or got.get("error") or ""}
 
     def webhook_hook_test(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -690,6 +721,9 @@ class WebhooksMixin:
             hooks=sorted((payload.get("hooks") or {}).keys()),
             smtp=sorted((payload.get("smtp") or {}).keys()),
         )
+        if ok:
+            saved = got.get("settings")
+            self._webhook_reread(host, venv, saved if isinstance(saved, dict) else None)
         return {
             "ok": ok,
             "error": res.get("error") or got.get("error") or "",
