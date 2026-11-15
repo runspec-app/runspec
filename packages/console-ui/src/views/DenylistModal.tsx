@@ -13,6 +13,7 @@ import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined, InfoCir
 import { bridge, type DenylistHostStatus, type DenylistPayload, type DenylistPending, type DenylistRule, type Host } from '../bridge'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
 import { targetList, useRiskConfirm } from '../components/risk'
+import { globMatch } from '../denylistPending'
 import { StatusTag } from '../components/kit'
 
 const { Text } = Typography
@@ -30,25 +31,7 @@ function FieldLabel({ children, hint }: { children: ReactNode; hint: ReactNode }
   )
 }
 
-/** Shell-style glob match (`*`, `?`, `[…]`) — the same semantics as the
- *  core's `fnmatch` for the patterns a rule holds, case-sensitive like POSIX. */
-export function globMatch(pattern: string, value: string): boolean {
-  let re = ''
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i]
-    if (ch === '*') re += '.*'
-    else if (ch === '?') re += '.'
-    else if (ch === '[') {
-      const end = pattern.indexOf(']', i + 1)
-      if (end === -1) { re += '\\['; continue }
-      let body = pattern.slice(i + 1, end)
-      if (body.startsWith('!')) body = '^' + body.slice(1)
-      re += `[${body.replace(/\\/g, '\\\\')}]`
-      i = end
-    } else re += ch.replace(/[.+^${}()|\\]/g, '\\$&')
-  }
-  return new RegExp(`^${re}$`).test(value)
-}
+export { globMatch }
 
 /** Host globs that match none of the target machines' real hostnames — a rule
  *  carrying one can never fire on those targets. Empty when no hostname is

@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.447.0] — 2026-11-15
+
+### Changed
+
+- **Restarting a scheduler warns when the denylist would keep it down.** The
+  denylist refuses the scheduler's own process too (only the core `runspec`
+  command is exempt). A daemon that's already running keeps running, while
+  every fire and webhook run it starts is refused. But a daemon restarted
+  under Disable all stops and can't start again until you re-enable.
+  - A scheduler's **Restart** / **Start** and **Restart all** now read the
+    denylist of those venvs first. If it's enforcing Disable all, or a rule
+    that matches `runspec-scheduler`, the question says which daemons will
+    stay down. You can still go ahead.
+  - The ask moved from the daemon row into the Schedules view so it can carry
+    the warning.
+
 ## [0.446.1] — 2026-11-15
 
 ### Fixed

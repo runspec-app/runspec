@@ -135,6 +135,11 @@ fleet over the SSH connections it already holds — one call per venv on each ho
   block for each (kept in `runspec_denylist_pending.json` in the console's
   folder, so it survives a restart) and applies it as soon as the host
   reconnects. The window lists pending hosts at the top, each with **Cancel**.
+  The denylist refuses `runspec-scheduler` itself too (only `runspec` is
+  exempt). A scheduler daemon that's already running keeps running and still
+  receives webhooks, but every fire and webhook run it starts is refused. A
+  daemon restarted while Disable all is on can't start again until you
+  re-enable; the console's **Restart** and **Restart all** warn about that.
   Then a
   host picker (empty ⇒ every connected host), an
   *add specific rule* form (runnable / user / host globs + reason), and an

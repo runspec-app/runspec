@@ -226,4 +226,13 @@ describe('Restart all schedulers', () => {
     await waitFor(() => expect(api.host_scheduler_restart).toHaveBeenCalledTimes(2))
     expect(api.host_scheduler_restart).toHaveBeenCalledWith({ host: 'web-1', venv: 'jobs2' })
   })
+
+  it('warns when the denylist would keep a restarted daemon down', async () => {
+    api.denylist_status = vi.fn(() => Promise.resolve([{ host: 'web-1', venv: 'jobs', ok: true, mode: 'enforce', disabled: true }]))
+    api.host_scheduler_restart = vi.fn(() => Promise.resolve({ ok: true, daemon: { state: 'running' }, warnings: [] }))
+    await renderView()
+    fireEvent.click(await screen.findByRole('button', { name: /Restart/ }))
+    expect((await screen.findByTestId('restart-denylist-warning')).textContent).toMatch(/blocking the scheduler on this venv/)
+    expect(api.host_scheduler_restart).not.toHaveBeenCalled()
+  })
 })

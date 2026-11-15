@@ -32,7 +32,8 @@ import type { WebhooksStatus } from '../bridge'
 import { RUN_TONE, ScheduleDetail, relTime } from './sharedSchedules'
 import { EmptyState, IconAction, StatusTag, type StatusTone } from '../components/kit'
 import { describeCron } from '../cronText'
-import { AskFirst } from '../components/risk'
+import { AskFirst, targetList, useRiskConfirm } from '../components/risk'
+import { schedulerBlocked } from '../denylistPending'
 
 const { Text } = Typography
 
@@ -211,9 +212,6 @@ function DaemonStrip({ d, editable, busy, onRestart, onSettings }: {
   const keeper = d.keepers.length ? d.keepers.map(k => KEEPER_LABEL[k] ?? k).join(', ') : ''
   const running = st === 'running'
   const verb = running ? 'Restart' : 'Start'
-  const confirm = running
-    ? `Restart the scheduler on ${d.host} / ${d.venv}? Fires already running carry on; the new daemon picks up from the next tick.`
-    : `Start the scheduler on ${d.host} / ${d.venv}${keeper ? ` through ${keeper}` : ''}?`
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '6px 10px',
@@ -234,11 +232,9 @@ function DaemonStrip({ d, editable, busy, onRestart, onSettings }: {
       {editable && (
         <Space size={6} style={{ marginLeft: 'auto' }}>
           <Button size="small" icon={<SettingOutlined />} onClick={() => onSettings(d)}>Settings</Button>
-          <AskFirst ask={{ level: 'local', title: confirm, action: `${verb} the scheduler on ${d.host} / ${d.venv}`, okText: verb, danger: false }}
-            onConfirm={() => onRestart(d)}>
-            <Button size="small" icon={running ? <ReloadOutlined /> : <PlayCircleOutlined />} loading={busy}
-              type={!running || dm?.restart_needed ? 'primary' : 'default'}>{verb}</Button>
-          </AskFirst>
+          {/* The view asks (it checks the denylist first, see restartDaemon). */}
+          <Button size="small" icon={running ? <ReloadOutlined /> : <PlayCircleOutlined />} loading={busy}
+            type={!running || dm?.restart_needed ? 'primary' : 'default'} onClick={() => onRestart(d)}>{verb}</Button>
         </Space>
       )}
     </div>
@@ -467,7 +463,41 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
   const foldedHidden = daemons.length - visibleDaemons.length
   const [settingsVenv, setSettingsVenv] = useState<SchedulerVenv | null>(null)
   const openDaemonSettings = (d: DaemonVenv) => setSettingsVenv(collected.venvs.find(v => v.key === d.key) ?? null)
+  // Disable all also refuses the scheduler's own process: a daemon restarted
+  // while it's on stops and can't start again until the block is lifted. Read
+  // the denylist for these venvs and say so in the ask (a read that fails
+  // just leaves the warning out).
+  const [askRisk, riskHolder] = useRiskConfirm()
+  const blockedAmong = async (ds: DaemonVenv[]): Promise<string[]> => {
+    try { return schedulerBlocked(await bridge.denylist_status([...new Set(ds.map(d => d.host))]), ds) } catch { return [] }
+  }
+  const denyWarning = (blocked: string[], total: number) => blocked.length === 0 ? null : (
+    <div data-testid="restart-denylist-warning" style={{ marginTop: 6, fontWeight: 600 }}>
+      The denylist is blocking the scheduler on {blocked.length === total && total === 1 ? 'this venv' : `${blocked.length}: ${targetList(blocked, 6)}`}
+      {' '}(Disable all, or a rule that matches runspec-scheduler). {blocked.length === 1 ? 'It' : 'They'} will stop and won't
+      start again until you re-enable it there.
+    </div>
+  )
+  const askRestart = async (d: DaemonVenv): Promise<boolean> => {
+    const running = d.daemon?.state === 'running'
+    const keeper = d.keepers.length ? d.keepers.map(k => KEEPER_LABEL[k] ?? k).join(', ') : ''
+    const blocked = await blockedAmong([d])
+    const a = await askRisk({
+      level: 'local',
+      title: running ? `Restart the scheduler on ${d.host} / ${d.venv}?` : `Start the scheduler on ${d.host} / ${d.venv}${keeper ? ` through ${keeper}` : ''}?`,
+      action: `${running ? 'Restart' : 'Start'} the scheduler on ${d.host} / ${d.venv}`,
+      consequence: (
+        <>
+          {running ? 'Fires already running carry on; the new daemon picks up from the next tick.' : 'It starts firing from its next tick.'}
+          {denyWarning(blocked, 1)}
+        </>
+      ),
+      okText: running ? 'Restart' : 'Start', danger: false,
+    })
+    return a.ok
+  }
   const restartDaemon = async (d: DaemonVenv) => {
+    if (!(await askRestart(d))) return
     const verb = d.daemon?.state === 'running' ? 'Restarted' : 'Started'
     setBusy(`daemon::${d.key}`)
     try {
@@ -486,6 +516,21 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
   // SSH round trip; in parallel a slow host would stall the summary anyway).
   // One ask covers them all; the result names any that failed.
   const restartAll = async () => {
+    const blocked = await blockedAmong(daemons)
+    const a = await askRisk({
+      level: 'fleet',
+      title: `Restart all ${daemons.length} schedulers?`,
+      action: 'Restart the runspec-scheduler daemon in each venv',
+      targets: daemons.map(d => `${d.host} / ${d.venv}`),
+      consequence: (
+        <>
+          Fires already running carry on; each daemon picks up from its next tick. One that is stopped is started.
+          {denyWarning(blocked, daemons.length)}
+        </>
+      ),
+      okText: `Restart ${daemons.length}`, danger: false,
+    })
+    if (!a.ok) return
     setBusy('daemon::*')
     const failed: string[] = []
     let done = 0
@@ -742,6 +787,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
 
   return (
     <div>
+      {riskHolder}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         <Input.Search
           allowClear
@@ -863,22 +909,10 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           </button>
           {editable && daemons.length > 1 && (
             <div>
-              <AskFirst
-                ask={{
-                  level: 'fleet',
-                  title: `Restart all ${daemons.length} schedulers?`,
-                  action: 'Restart the runspec-scheduler daemon in each venv',
-                  targets: daemons.map(d => `${d.host} / ${d.venv}`),
-                  consequence: 'Fires already running carry on; each daemon picks up from its next tick. One that is stopped is started.',
-                  okText: `Restart ${daemons.length}`, danger: false,
-                }}
-                onConfirm={restartAll}
-              >
-                <Button size="small" icon={<ReloadOutlined />} loading={busy === 'daemon::*'} disabled={!!busy && busy !== 'daemon::*'}
-                  data-testid="restart-all-schedulers">
-                  Restart all
-                </Button>
-              </AskFirst>
+              <Button size="small" icon={<ReloadOutlined />} loading={busy === 'daemon::*'} disabled={!!busy && busy !== 'daemon::*'}
+                data-testid="restart-all-schedulers" onClick={() => { void restartAll() }}>
+                Restart all
+              </Button>
             </div>
           )}
           {visibleDaemons.map(d => (
