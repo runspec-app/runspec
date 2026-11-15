@@ -155,8 +155,13 @@ function elapsed(startedAt: string): string {
 }
 
 /** "2 running · 1 waiting". Pure, for tests. */
-export function activitySummary(running: number, waiting: number): string {
-  return [running ? `${running} running` : '', waiting ? `${waiting} waiting` : ''].filter(Boolean).join(' · ')
+export function activitySummary(running: number, waiting: number, chats = 0): string {
+  // With chats working too, say which is which: the Console tab badge counts
+  // only the runs on hosts, so the two numbers must not look like one count.
+  const runs = chats > 0
+    ? [running ? `${running} on hosts` : '', `${chats} chat${chats === 1 ? '' : 's'} working`]
+    : [running ? `${running} running` : '']
+  return [...runs, waiting ? `${waiting} waiting` : ''].filter(Boolean).join(' · ')
 }
 
 /** Everything in flight, in one place: the runs on the fleet (with Stop) and
@@ -177,6 +182,18 @@ export function ActivityControl({ inFlight, working = [], waiting, waitingTotal,
   const [askRisk, riskHolder] = useRiskConfirm()
   const isDark = useIsDark()
   const [open, setOpen] = useState(false)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  // Escape closes the list and hands focus back to the button.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setOpen(false)
+      btnRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
   const [, setTick] = useState(0)
   useEffect(() => {
     if (!open || inFlight.length === 0) return
@@ -189,7 +206,7 @@ export function ActivityControl({ inFlight, working = [], waiting, waitingTotal,
   const running = inFlight.length + working.length
   const waitingN = waitingTotal ?? waiting.length + webhookWaiting
   if (running === 0 && waitingN === 0) return riskHolder
-  const label = activitySummary(running, waitingN)
+  const label = activitySummary(inFlight.length, waitingN, working.length)
 
   const stop = async (r: InFlightRecord) => {
     const isTool = r.kind === 'builtin_tool'
@@ -264,7 +281,7 @@ export function ActivityControl({ inFlight, working = [], waiting, waitingTotal,
     <>
       {riskHolder}
       <Popover open={open} onOpenChange={setOpen} trigger="click" placement="bottomLeft" content={list}>
-        <Button size="small" data-testid="activity-control" aria-label={`Activity: ${label}`}
+        <Button ref={btnRef} size="small" data-testid="activity-control" aria-label={`Activity: ${label}`}
           icon={inFlight.length ? <LoadingOutlined aria-hidden spin /> : <BellOutlined aria-hidden />}
           style={{ flexShrink: 0, height: 24, fontSize: 12, color: waiting.length ? 'var(--rs-waiting)' : undefined, fontWeight: waiting.length ? 600 : undefined }}>
           {label}

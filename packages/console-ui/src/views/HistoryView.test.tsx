@@ -180,7 +180,7 @@ describe('HistoryView', () => {
     expect(await screen.findByText('backup')).toBeTruthy()
     expect(await screen.findByText('deploy')).toBeTruthy()
     // …and the hosts line appears (only shown for >1 host), quiet when all answered.
-    expect(await screen.findByText('2 hosts · all loaded')).toBeTruthy()
+    expect(await screen.findByText('local + 1 connected · all loaded')).toBeTruthy()
   })
 
   it('a failing host does not block the others (isolated per-host reads)', async () => {

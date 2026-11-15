@@ -1226,7 +1226,8 @@ export function FormsView({
         <Input
           prefix={<SearchOutlined />}
           aria-label="Search runnables"
-          placeholder="Search name, description, subcommand… (host:web group:prod)"
+          placeholder="Search… (host:web group:prod)"
+          title="Search name, description or subcommand; host:web and group:prod narrow by place"
           value={search}
           onChange={e => setSearch(e.target.value)}
           allowClear

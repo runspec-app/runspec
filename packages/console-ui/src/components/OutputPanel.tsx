@@ -14,7 +14,7 @@ import {
   InfoCircleOutlined,
 } from '@ant-design/icons'
 import { pressable, StatusTag, type StatusTone } from './kit'
-import { approvalConsequence, useConsoleInfo } from '../consoleInfo'
+import { approvalConsequence, fallbackTarget, useConsoleInfo } from '../consoleInfo'
 import { APPROVAL_BG, APPROVAL_BORDER, ApprovalActions, QueueMark, useGatePosition } from './approval'
 import { AskFirst } from './risk'
 import { Clock } from '../when'
@@ -100,6 +100,10 @@ function fmtElapsed(startedAt: string): string {
 }
 
 /** Compact duration for a tool call (ms → "120ms" / "1.2s" / "1m 5s"). */
+/** When each approval gate was answered, by call id (or tool name on an older
+ *  backend), so the tool's finished row can split wait from run time. */
+export const gateResolvedAt = new Map<string, number>()
+
 function fmtDurationMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   const s = ms / 1000
@@ -627,7 +631,8 @@ export interface ToolCallEntry {
   output?: string
   running: boolean
   startedAt?: number   // epoch ms when the tool call began (for per-tool duration)
-  durationMs?: number  // set when the tool call finishes
+  durationMs?: number  // set when the tool call finishes (after any approval wait)
+  waitedMs?: number    // how long it waited at the approval gate, when it did
   progress?: string    // latest live progress line (built-in tools: repo clone/grep, denylist fan-out)
   outputChars?: number // full output size (the displayed output is clipped to 2000)
   // Set when the result was cut at the output cap before the model saw it — the
@@ -673,7 +678,13 @@ export function finishToolSegment(segments: BlockSegment[], detail: ToolEndDetai
   if (idx < 0) return segments
   const seg = segments[idx]
   if (seg.kind !== 'tool') return segments
-  const durationMs = seg.entry.startedAt ? now - seg.entry.startedAt : undefined
+  // A gated call's time splits into the wait for your answer and the run
+  // itself, so "49.5s" doesn't read as a slow tool (gateResolvedAt).
+  const resolvedAt = gateResolvedAt.get(call_id || tool_name)
+  gateResolvedAt.delete(call_id || tool_name)
+  const gated = resolvedAt !== undefined && seg.entry.startedAt !== undefined && resolvedAt >= seg.entry.startedAt && resolvedAt <= now
+  const durationMs = seg.entry.startedAt ? now - (gated ? resolvedAt! : seg.entry.startedAt) : undefined
+  const waitedMs = gated ? resolvedAt! - seg.entry.startedAt! : undefined
   // Keep the confirm-gate badge on the live card (the backend sends the
   // decision on tool_end) so an approved/denied action stays marked as gated
   // instead of reverting to look like an autonomous run. "" = the gate never
@@ -681,7 +692,7 @@ export function finishToolSegment(segments: BlockSegment[], detail: ToolEndDetai
   const done: BlockSegment = {
     ...seg,
     entry: {
-      ...seg.entry, output, running: false, durationMs, outputChars: output_chars, truncated: truncated ?? null,
+      ...seg.entry, output, running: false, durationMs, ...(waitedMs !== undefined ? { waitedMs } : {}), outputChars: output_chars, truncated: truncated ?? null,
       ...(operator_decision ? { operatorDecision: operator_decision } : {}),
       ...(decline_reason ? { declineReason: decline_reason } : {}),
     },
@@ -1179,8 +1190,10 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
     // for the same id.
     const onResolved = (e: Event) => {
       const { id, request_id } = (e as CustomEvent).detail as { id: string; request_id: string }
+      const at = Date.now()
       setPendingConfirms(prev => {
         if (!prev[id] || prev[id].request_id !== request_id) return prev
+        gateResolvedAt.set(prev[id].call_id || prev[id].tool_name, at)
         const next = { ...prev }; delete next[id]; return next
       })
     }
@@ -1211,9 +1224,11 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
       ? bridge.resolve_tool_confirmation(requestId, approved, editedInput, declineReason)
       : bridge.resolve_tool_confirmation(requestId, approved, editedInput)
     call.catch(err => console.error('[runspec] resolve_tool_confirmation failed', err))
+    const at = Date.now()
     setPendingConfirms(prev => {
       const hit = Object.entries(prev).find(([, v]) => v.request_id === requestId)
       if (!hit) return prev
+      gateResolvedAt.set(hit[1].call_id || hit[1].tool_name, at)
       const next = { ...prev }; delete next[hit[0]]; return next
     })
   }, [])
@@ -1571,9 +1586,11 @@ function ToolCallBlock({
           </Text>
         )}
         {!entry.running && !denied && entry.durationMs !== undefined && (
-          <Tooltip title="Time this tool call took">
-            <Text style={{ color: c.dim, fontSize: 12, marginLeft: 'auto', flexShrink: 0, fontFamily: MONO_FONT }}>
-              {fmtDurationMs(entry.durationMs)}
+          <Tooltip title={entry.waitedMs !== undefined ? 'Time it waited for your answer, then the time it ran' : 'Time this tool call took'}>
+            <Text data-testid="tool-duration" style={{ color: c.dim, fontSize: 12, marginLeft: 'auto', flexShrink: 0, fontFamily: MONO_FONT }}>
+              {entry.waitedMs !== undefined
+                ? `waited ${fmtDurationMs(entry.waitedMs)} · ran ${fmtDurationMs(entry.durationMs)}`
+                : fmtDurationMs(entry.durationMs)}
             </Text>
           </Tooltip>
         )}
@@ -1619,7 +1636,13 @@ function ToolCallBlock({
           <div style={{ fontSize: 13, color: textSecondary(c.isDark), marginBottom: 10 }}>
             The assistant wants to {v}{' '}
             <Text code style={{ fontSize: 12 }}>{(resolved?.name ?? entry.name).replace(/^[^_]+__/, '')}</Text>
-            {targetHost && <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{targetHost}</Text>{targetHost === 'local' ? ' (this computer)' : ''}</>}
+            {/* Always say where: the call's own host, else where it will run. */}
+            {(() => {
+              const t = targetHost ? { host: targetHost, note: targetHost === 'local' ? ' (this computer)' : '' } : fallbackTarget(shownName, info)
+              return t.host
+                ? <> on <Text code data-testid="confirm-host" style={{ fontSize: 12, fontWeight: 600 }}>{t.host}</Text>{t.note}</>
+                : <> <Text data-testid="confirm-host" style={{ fontWeight: 600, color: textColor(c.isDark) }}>({t.note})</Text></>
+            })()}
             {consequence && consequence.fanout > 0 && (
               <Text data-testid="confirm-fanout" style={{ fontWeight: 600, color: textColor(c.isDark) }}>
                 {' '}({consequence.fanout} host{consequence.fanout === 1 ? '' : 's'})
@@ -2309,7 +2332,10 @@ const BlockCard = memo(function BlockCard({
               onClick={e => e.stopPropagation()}
               onChange={e => onToggleContext(block.id, e.target.checked)}
               style={{ flexShrink: 0 }}
-            />
+            >
+              {/* Named, so it doesn't read as select-for-bulk-action. */}
+              <span style={{ fontSize: 11, color: c.dim, paddingInlineStart: 0 }}>context</span>
+            </Checkbox>
           </Tooltip>
         )}
 

@@ -51,6 +51,7 @@ describe('AnalyticsView', () => {
     expect(getAnalytics).toHaveBeenCalledWith(['local', 'web-01'], 30, undefined)
     expect(screen.getByText('30d')).toBeTruthy()
     expect(screen.queryByText('90d')).toBeNull()
+    expect(screen.getByTestId('chart-range-note').textContent).toMatch(/last 30 days; Runs is set to 90d/)
   })
 
   it('starts on one host when opened for it', async () => {

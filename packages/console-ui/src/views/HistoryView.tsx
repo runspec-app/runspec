@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { readHostsLabel } from '../hostCount'
 import { useHistoryRange } from './historyRange'
 import { Table, Tag, Typography, Tooltip, message, Input, Drawer, Spin, Alert, Segmented, Switch, Button } from 'antd'
 import { BarChartOutlined, RedoOutlined, CopyOutlined, RobotOutlined, UserOutlined, SearchOutlined, EditOutlined, ClockCircleOutlined, ProfileOutlined, PlayCircleOutlined } from '@ant-design/icons'
@@ -937,7 +938,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           <div data-testid="history-hosts" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
             <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{allTip}</span>}>
               <Text type="secondary" style={{ fontSize: 12, cursor: 'default' }}>
-                {targets.length} hosts{issues.length === 0 ? ' · all loaded' : ''}
+                {readHostsLabel(targets.length)}{issues.length === 0 ? ' · all loaded' : ''}
               </Text>
             </Tooltip>
             {issues.map(c => (

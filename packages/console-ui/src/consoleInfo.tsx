@@ -10,6 +10,8 @@ export interface ConsoleInfo {
   describe: (name: string) => string | undefined
   /** How many hosts a group name stands for; 0 when it isn't a group. */
   groupSize: (name: string) => number
+  /** The hosts a runnable was discovered on; empty when it isn't a runnable. */
+  hostsOf?: (name: string) => string[]
 }
 
 export const ConsoleInfoContext = createContext<ConsoleInfo>({ describe: () => undefined, groupSize: () => 0 })
@@ -25,6 +27,17 @@ export interface Consequence {
   fanout: number
   /** Markers worth reading before Approve. */
   markers: { tone: 'failed' | 'attention'; text: string; tip: string }[]
+}
+
+/** Where an approval says the call runs, when the call names no host: a
+ *  runnable found on one host runs there; one on several hosts, or a tool this
+ *  console doesn't know, says no host was named (never a guess). Never empty,
+ *  so a card always speaks to its target. */
+export function fallbackTarget(name: string, info: ConsoleInfo): { host: string; note: string } {
+  const hosts = info.hostsOf?.(name) ?? []
+  if (hosts.length === 1) return { host: hosts[0], note: hosts[0] === 'local' ? ' (this computer)' : '' }
+  if (hosts.length > 1) return { host: '', note: `no host named; it's on ${hosts.length} hosts` }
+  return { host: '', note: 'no host named' }
 }
 
 /** What an approval should say about consequence: the runnable's purpose, a

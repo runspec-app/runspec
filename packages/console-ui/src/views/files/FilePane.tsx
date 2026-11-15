@@ -286,7 +286,8 @@ export function FilePane({
           value={selectValue}
           onChange={pick}
           placeholder="Pick a machine"
-          style={{ minWidth: 200 }}
+          // Shrinks with a narrow pane (a fixed 200px ran off-screen at 900px).
+          style={{ flex: '1 1 160px', minWidth: 0, maxWidth: 280 }}
           options={hostOptions}
           showSearch
           optionFilterProp="label"
@@ -304,7 +305,7 @@ export function FilePane({
               value={asUser}
               onChange={v => pane.setAsUser(v, cwd)}
               aria-label={`${side} pane browse as`}
-              style={{ minWidth: 150 }}
+              style={{ flex: '1 1 130px', minWidth: 0, maxWidth: 240 }}
               options={[
                 { label: `as ${accounts.login || 'SSH login'}`, value: '' },
                 ...accounts.accounts.map(a => ({ label: `as ${a} (venv owner)`, value: a })),
@@ -326,11 +327,11 @@ export function FilePane({
       )}
 
       <div style={{ display: 'flex', gap: 4, padding: '0 10px 6px', alignItems: 'center' }}>
-        <Tooltip title="Up"><Button size="small" icon={<ArrowUpOutlined />} aria-label="Up" disabled={!listing?.parent} onClick={() => listing?.parent != null && pane.load(listing.parent)} /></Tooltip>
+        <Tooltip title="Up"><Button size="small" icon={<ArrowUpOutlined />} aria-label="Up" style={{ flexShrink: 0 }} disabled={!listing?.parent} onClick={() => listing?.parent != null && pane.load(listing.parent)} /></Tooltip>
         <Tooltip title={target?.kind === 'local' ? 'Chat workspace (or home)' : 'Home'}>
-          <Button size="small" icon={<HomeOutlined />} aria-label="Home" disabled={!target || (target.kind === 'adhoc' && !listing)} onClick={() => pane.load(target?.kind === 'local' ? workspacePath : '')} />
+          <Button size="small" icon={<HomeOutlined />} aria-label="Home" style={{ flexShrink: 0 }} disabled={!target || (target.kind === 'adhoc' && !listing)} onClick={() => pane.load(target?.kind === 'local' ? workspacePath : '')} />
         </Tooltip>
-        <Tooltip title="Refresh"><Button size="small" icon={<ReloadOutlined />} aria-label="Refresh" disabled={!listing && !error} onClick={() => pane.refresh(selected)} /></Tooltip>
+        <Tooltip title="Refresh"><Button size="small" icon={<ReloadOutlined />} aria-label="Refresh" style={{ flexShrink: 0 }} disabled={!listing && !error} onClick={() => pane.refresh(selected)} /></Tooltip>
         <Input
           size="small"
           value={pathText}

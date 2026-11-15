@@ -191,7 +191,7 @@ function PackageCard({ entry, states, filtered, running, onInstall, onUninstall,
         {(entry.keywords || []).slice(0, 6).map(k => <Tag key={k} style={{ fontSize: 11, margin: 0 }}>{k}</Tag>)}
       </div>
       {(links.documentation || links.homepage || links.source || links.changelog) && (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
+        <div className="rs-link-row" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
           {links.documentation && <Link href={links.documentation} target="_blank" rel="noreferrer"><BookOutlined /> Docs</Link>}
           {links.homepage && <Link href={links.homepage} target="_blank" rel="noreferrer"><HomeOutlined /> Home</Link>}
           {links.source && <Link href={links.source} target="_blank" rel="noreferrer"><CodeOutlined /> Source</Link>}
@@ -1109,7 +1109,7 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
             {r.name} · {r.count} · {r.error ? (r.stale ? 'stale' : 'unreachable') : `read ${ago(r.fetched_at)}`}
           </StatusTag>
         ))}
-        {installed && <span>venvs probed {ago(installed.probed_at)} · {installed.targets.filter(t => t.ok).length}/{installed.targets.length} reachable</span>}
+        {installed && <span>venvs probed {ago(installed.probed_at)} · {installed.targets.filter(t => t.ok).length}/{installed.targets.length} venvs reachable</span>}
         {matchedVenvs && (
           <Tooltip title={matchedVenvs.length ? matchedVenvs.map(t => `${t.host}/${t.venv}`).join(', ') : 'No probed venv is on a matching host. Hosts outside the active profile, or not connected, are not probed.'}>
             <Tag color={matchedVenvs.length ? 'blue' : 'red'} closable onClose={() => setSearch(parsed.text)} style={{ fontSize: 11, margin: 0 }}>

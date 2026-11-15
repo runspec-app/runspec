@@ -9,6 +9,62 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.450.0] — 2026-11-15
+
+### Changed
+
+- **An approval card always says where the call runs.** When the call names
+  no host, the card says so: the one host a runnable lives on, or "no host
+  named" (never a guess). Before, it could read "wants to run flush-dns." with
+  no target at all.
+- **Counts name what they count.**
+  - History → Runs, Charts, Log files and Automation say "local + 2
+    connected" instead of a bare "3 hosts".
+  - The footer says "remote hosts connected", and the Marketplace says
+    "venvs reachable".
+  - The Console's activity button names runs and chats apart ("2 on hosts · 2
+    chats working"), so it agrees with the Console tab's badge, which counts
+    runs on hosts.
+- **More shows a dot** when a tab folded into it has a badge (Marketplace
+  updates at 1024px), and its accessible name says what.
+- **Session chips.**
+  - Below about 880px of Console width the chips take a row of their own
+    (at 1024px the row used to fit one chip).
+  - After a resize the selected chip scrolls back into view.
+  - Chips scrolled out of view join the "+N more" menu, so its count is
+    everything you can't see.
+- **Escape closes the activity list** and returns focus to its button.
+- **Charts say when they cap the range:** with Runs on 90d or All, Charts show
+  "Charts cover the last 30 days; Runs is set to 90d."
+- **Console turns:** the include-in-context checkbox is labelled "context", so
+  it doesn't read as select-for-bulk-action.
+- **A gated tool's time splits** into the wait for your answer and the run:
+  "waited 48s · ran 1.5s", not "49.5s".
+- **Smaller things.**
+  - Log files no longer repeats a Charts button beside the Charts section.
+  - The Denylist host column keeps a long name on one line (full name on
+    hover).
+  - The Forms search placeholder fits; the full hint is on hover.
+  - The Settings gear's tooltip keeps "Settings" and adds any warning after it.
+
+### Fixed
+
+- **Files at 900 and 800px:** a pane's machine and browse-as pickers shrink
+  with the pane instead of running off-screen, and Up / Home / Refresh keep
+  their 24px.
+- **Env files at 1024px:** the window fits the screen and Remove / Keep fit
+  their column (it was cut to "R").
+- **Settings → SSH on a narrow window:** the SSH key panel comes first when the
+  columns stack, so the pinned Save never floats over it.
+- **24px targets:**
+  - The status bar's config, version and update tags are buttons you can reach
+    with the keyboard, as tall as the bar.
+  - The session chip's close × (it was 24×22).
+  - Clickable tags (History's runnable pills, Marketplace's update count).
+  - The webhook "Last delivery" toggle (14px tall).
+  - Marketplace's Docs / Source / Changelog links.
+  - The copy icon on keys and commands (13×15).
+
 ## [0.449.0] — 2026-11-15
 
 ### Changed

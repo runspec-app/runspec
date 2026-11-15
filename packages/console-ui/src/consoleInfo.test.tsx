@@ -25,3 +25,13 @@ describe('approvalConsequence', () => {
     expect(approvalConsequence({ name: 'list-installed', info }).markers).toEqual([])
   })
 })
+
+describe('fallbackTarget()', () => {
+  it('always names where a call with no host runs', async () => {
+    const { fallbackTarget } = await import('./consoleInfo')
+    const info = { describe: () => undefined, groupSize: () => 0, hostsOf: (n: string) => n === 'one' ? ['web-01'] : n === 'many' ? ['a', 'b'] : [] }
+    expect(fallbackTarget('one', info)).toEqual({ host: 'web-01', note: '' })
+    expect(fallbackTarget('many', info).note).toMatch(/on 2 hosts/)
+    expect(fallbackTarget('unknown_tool', info)).toEqual({ host: '', note: 'no host named' })
+  })
+})

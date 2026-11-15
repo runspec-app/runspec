@@ -176,6 +176,11 @@ const VIEW_BLURB: Record<string, string> = {
   dev: 'Internals for debugging the console.',
 }
 
+/** Enter or Space activates a role="button" element, as a real button does. */
+const keyActivate = (fn: () => void) => (e: React.KeyboardEvent) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn() }
+}
+
 // Tab badges: a count of things running is not an error, so it is never the
 // brand red (Ant's default). Surface-coloured text on a status fill reads in
 // both themes; the title says what the number counts.
@@ -557,7 +562,13 @@ export default function App() {
     for (const r of runnables) if (r.description && !desc.has(r.name)) desc.set(r.name, r.description)
     const groups = new Map<string, number>()
     for (const h of hosts) if (h.group) groups.set(h.group, (groups.get(h.group) ?? 0) + 1)
-    return { describe: (n: string) => desc.get(n), groupSize: (g: string) => groups.get(g) ?? 0 }
+    const where = new Map<string, Set<string>>()
+    for (const r of runnables) { if (!where.has(r.name)) where.set(r.name, new Set()); where.get(r.name)!.add(r.host) }
+    return {
+      describe: (n: string) => desc.get(n),
+      groupSize: (g: string) => groups.get(g) ?? 0,
+      hostsOf: (n: string) => [...(where.get(n) ?? [])],
+    }
   }, [runnables, hosts])
 
   // An AI-only tab can't stay selected once the flag resolves to off.
@@ -1810,7 +1821,7 @@ export default function App() {
                   <Tooltip title={tip} placement="topLeft">
                     <Button
                       type="text"
-                      icon={sweeping ? <LoadingOutlined /> : <StopOutlined />}
+                      icon={sweeping ? <LoadingOutlined aria-hidden /> : <StopOutlined aria-hidden />}
                       disabled={disabled}
                       onClick={() => setDenylistOpen(true)}
                       aria-label="Denylist"
@@ -1827,7 +1838,7 @@ export default function App() {
                   <Tooltip title={sweeping ? 'Waiting for the fleet to finish connecting…' : 'Edit the .runspec_env file of local and connected venvs'} placement="topLeft">
                     <Button
                       type="text"
-                      icon={sweeping ? <LoadingOutlined /> : <CodeOutlined />}
+                      icon={sweeping ? <LoadingOutlined aria-hidden /> : <CodeOutlined aria-hidden />}
                       disabled={sweeping}
                       onClick={() => setEnvFilesOpen(true)}
                       aria-label="Env files"
@@ -1848,8 +1859,8 @@ export default function App() {
               </Tooltip>
               <Tooltip title={
                 mcpInvalidTools.length > 0
-                  ? `${mcpInvalidTools.length} runnable(s) not published to the MCP server — invalid tool schema. Open Settings → MCP Server.`
-                  : sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `SSH key ${sshKeyAgeDays}d old — rotation recommended` : `Settings (${shortcutHint('settings')})`
+                  ? `Settings (${shortcutHint('settings')}). ${mcpInvalidTools.length} runnable(s) not published to the MCP server: invalid tool schema, see MCP Server.`
+                  : sshKeyAgeDays !== null && sshKeyAgeDays >= 75 ? `Settings (${shortcutHint('settings')}). SSH key ${sshKeyAgeDays}d old: rotation recommended` : `Settings (${shortcutHint('settings')})`
               }>
                 <Badge
                   dot={mcpInvalidTools.length > 0 || (sshKeyAgeDays !== null && sshKeyAgeDays >= 75)}
@@ -1914,6 +1925,8 @@ export default function App() {
                 // More: the occasional tabs. While one of them is open the
                 // button takes its name and the active underline.
                 const active = navLayout.overflow.find(t => t.key === currentTab)
+                // A tab folded into More keeps its badge visible as a dot on More.
+                const flagged = navLayout.overflow.filter(t => t.status && t.key !== currentTab)
                 return (
                   <Dropdown
                     trigger={['click']}
@@ -1932,7 +1945,7 @@ export default function App() {
                   >
                     <button
                       className="rs-nav-tab"
-                      aria-label={active ? `${active.label} (more tabs)` : 'More tabs'}
+                      aria-label={(active ? `${active.label} (more tabs)` : 'More tabs') + (flagged.length ? `, ${flagged.map(t => `${t.label}: ${t.status}`).join(', ')}` : '')}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 6,
                         padding: '0 12px', fontSize: 14, whiteSpace: 'nowrap',
@@ -1943,6 +1956,7 @@ export default function App() {
                     >
                       {active ? <>{active.icon}{active.label}</> : 'More'}
                       <DownOutlined style={{ fontSize: 10 }} />
+                      {flagged.length > 0 && <span data-testid="more-dot" aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--rs-accent)', marginLeft: -2, alignSelf: 'flex-start', marginTop: 12 }} />}
                     </button>
                   </Dropdown>
                 )
@@ -2142,7 +2156,7 @@ export default function App() {
                   <Tooltip title={`${up} of ${remote.length} hosts in the ${activeProfile ? `“${activeProfile}” profile` : 'fleet'} are connected`} placement="topLeft">
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: up === remote.length ? 'var(--rs-ok)' : (up === 0 ? textFaint(isDark) : 'var(--rs-warn)') }} />
-                      <span style={{ fontVariantNumeric: 'tabular-nums', color: textColor(isDark) }}>{up}/{remote.length}</span> hosts connected
+                      <span style={{ fontVariantNumeric: 'tabular-nums', color: textColor(isDark) }}>{up}/{remote.length}</span> remote hosts connected
                     </span>
                   </Tooltip>
                 )
@@ -2399,40 +2413,40 @@ export default function App() {
               })()}
 
               {configUpdate?.ok && configUpdate.available && (
-                <div style={{ display: 'flex' }}>
-                  <Tooltip title={configUpdate.kind === 'branch'
-                    ? `New commits on ${configUpdate.current} — review the changes in Settings → Config Sync`
-                    : `Newer config ${configUpdate.latest} available (you're on ${configUpdate.current}) — review the changes in Settings → Config Sync`}>
-                    <Tag
-                      color="gold"
-                      data-testid="config-update-badge"
-                      onClick={() => openSettings('configSync')}
-                      style={{ cursor: 'pointer', margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}
-                    >
+                <Tooltip title={configUpdate.kind === 'branch'
+                  ? `New commits on ${configUpdate.current} — review the changes in Settings → Config Sync`
+                  : `Newer config ${configUpdate.latest} available (you're on ${configUpdate.current}) — review the changes in Settings → Config Sync`}>
+                  {/* A real control: reachable by keyboard and as tall as the bar. */}
+                  <span role="button" tabIndex={0} data-testid="config-update-badge" className="rs-statusbar-item"
+                    onClick={() => openSettings('configSync')} onKeyDown={keyActivate(() => openSettings('configSync'))}>
+                    <Tag color="gold" style={{ margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}>
                       config ↑ {configUpdate.kind === 'branch' ? 'new commits' : configUpdate.latest}
                     </Tag>
-                  </Tooltip>
-                </div>
+                  </span>
+                </Tooltip>
               )}
 
               {/* Version + update state */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Tooltip title={version ? `${brandTheme.brand_name || 'runspec-console'} v${version} — open documentation & release notes` : ''}>
                   <span
+                    role="button" tabIndex={0} className="rs-statusbar-item"
                     onClick={() => bridge.open_docs().catch(console.error)}
-                    style={{ fontFamily: MONO_FONT, cursor: 'pointer' }}
+                    onKeyDown={keyActivate(() => bridge.open_docs().catch(console.error))}
+                    style={{ fontFamily: MONO_FONT }}
                   >
                     {version ? `v${version}` : ''}
                   </span>
                 </Tooltip>
                 {updateInfo?.updateAvailable ? (
                   <Tooltip title={`Update available: v${updateInfo.latest} — open documentation`}>
-                    <Tag
+                    <span role="button" tabIndex={0} className="rs-statusbar-item"
                       onClick={() => bridge.open_docs().catch(console.error)}
-                      style={{ cursor: 'pointer', margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}
-                    >
-                      ↑ {updateInfo.latest}
-                    </Tag>
+                      onKeyDown={keyActivate(() => bridge.open_docs().catch(console.error))}>
+                      <Tag style={{ margin: 0, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}>
+                        ↑ {updateInfo.latest}
+                      </Tag>
+                    </span>
                   </Tooltip>
                 ) : updateInfo?.latest ? (
                   <Tooltip title="You're on the latest version">
