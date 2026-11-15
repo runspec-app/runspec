@@ -947,26 +947,39 @@ class KnowledgeIndex:
     @classmethod
     def open(cls, path: Path, signature: str, facts_fn: Any) -> "KnowledgeIndex":
         path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(path), check_same_thread=False)
+        # Each caller gets its own connection; a rebuild on one waits up to
+        # this long for another's read to finish instead of failing.
+        conn = sqlite3.connect(str(path), check_same_thread=False, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+        conn.commit()
         row = conn.execute("SELECT v FROM meta WHERE k='signature'").fetchone()
         fts_row = conn.execute("SELECT v FROM meta WHERE k='fts'").fetchone()
         if row is None or row["v"] != signature:
-            fts = cls._rebuild(conn, facts_fn())
-            conn.execute(
-                "INSERT OR REPLACE INTO meta VALUES ('signature', ?), ('fts', ?)",
-                (signature, "1" if fts else "0"),
-            )
-            conn.commit()
+            try:
+                fts = cls._rebuild(conn, facts_fn())
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta VALUES ('signature', ?), ('fts', ?)",
+                    (signature, "1" if fts else "0"),
+                )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
         else:
             fts = bool(fts_row and fts_row["v"] == "1")
         return cls(conn, fts)
 
     @staticmethod
     def _rebuild(conn: sqlite3.Connection, facts: list[dict[str, Any]]) -> bool:
+        # One transaction from DROP to the caller's commit: another connection
+        # reading meanwhile (the Knowledge tab while auto-capture rebuilds)
+        # sees the whole old index or the whole new one. Run statement by
+        # statement, the DROPs committed on their own and a reader in between
+        # hit "no such table: about".
         conn.executescript(
             """
+            BEGIN IMMEDIATE;
             DROP TABLE IF EXISTS facts;
             DROP TABLE IF EXISTS about;
             DROP TABLE IF EXISTS facts_fts;
