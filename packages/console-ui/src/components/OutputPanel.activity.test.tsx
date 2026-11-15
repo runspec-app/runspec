@@ -165,3 +165,15 @@ describe('model usage on a chat card', () => {
     expect((await screen.findByTestId('card-usage')).textContent).toContain('90% of the prompt served from cache')
   })
 })
+
+describe('a finished call says where it ran and who approved it', () => {
+  it('shows the host and "approved by you"', () => {
+    const approved: BlockSegment = {
+      kind: 'tool',
+      entry: { name: 'run_runnable', input: { id: 'flush-dns', host: 'web-01' }, running: false, operatorDecision: 'approved', durationMs: 900 },
+    }
+    render(<OutputPanel blocks={[chatBlock({ done: true, segments: [approved] })]} />)
+    expect(screen.getByTestId('tool-decision').textContent).toBe('approved by you')
+    expect(screen.getByTestId('tool-host').textContent).toBe('on web-01')
+  })
+})

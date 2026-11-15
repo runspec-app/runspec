@@ -6,7 +6,7 @@ import type { ColumnType } from 'antd/es/table'
 import { bridge, type AnalyticsData, type AnalyticsBucket, type AnalyticsException } from '../bridge'
 import { ThemeContext, chartPalette, statusText, useIsDark } from '../ThemeContext'
 import {
-  filterBuckets, computeKpis, runsOverTime, successRateOverTime, listText,
+  filterBuckets, computeKpis, runsOverTime, successRateOverTime, listText, shortDay,
   durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown,
 } from './analytics'
 import { EmptyState, StatusTag } from '../components/kit'
@@ -212,7 +212,10 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
       {/* KPI cards */}
       <Row gutter={[16, 16]}>
         <Col xs={12} sm={6}><Card size="small" style={cardStyle}><Statistic title="Total runs" value={kpis.total} /></Card></Col>
-        <Col xs={12} sm={6}><Card size="small" style={cardStyle}><Statistic title="Success rate" value={kpis.rate} precision={1} suffix="%" valueStyle={{ color: kpis.rate >= 95 ? SUCCESS : kpis.rate >= 80 ? WARNING : FAILURE }} /></Card></Col>
+        <Col xs={12} sm={6}><Card size="small" style={cardStyle}><Statistic
+          title={<Tooltip title="The share of runs in this range that finished with exit code 0. Green from 95%, amber from 80%, red below."><span>Success rate</span></Tooltip>}
+          value={kpis.rate} formatter={v => `${Number(v).toFixed(1)}%`}
+          valueStyle={{ color: kpis.rate >= 95 ? SUCCESS : kpis.rate >= 80 ? WARNING : FAILURE }} /></Card></Col>
         <Col xs={12} sm={6}>
           <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/agent filters' : ''}>
             <Card size="small" style={cardStyle}><Statistic title="Duration p50" value={(data.durationMs.p50 / 1000).toFixed(2)} suffix="s" /></Card>
@@ -234,8 +237,8 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
                 <Area
                   data={runsSeries} xField="date" yField="value" colorField="status"
                   stack height={chartHeight} theme={plotTheme} legend={{ color: { position: 'top' } }}
-                  scale={{ color: { domain: ['success', 'failure'], range: [SUCCESS, FAILURE] } }}
-                  style={{ fillOpacity: 0.6 }} axis={{ x: { labelAutoHide: true } }}
+                  scale={{ color: { domain: ['success', 'failure'], range: [PALETTE[0], FAILURE] } }}
+                  style={{ fillOpacity: 0.6 }} axis={{ x: { labelAutoHide: true, labelAutoRotate: false, labelFormatter: shortDay } }}
                 />
               </div>
             )}
@@ -249,7 +252,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
                   data={rateSeries.filter(d => d.rate !== null)} xField="date" yField="rate"
                   height={chartHeight} theme={plotTheme} shapeField="smooth"
                   scale={{ y: { domain: [0, 100] } }} style={{ stroke: ACCENT }}
-                  axis={{ x: { labelAutoHide: true }, y: { labelFormatter: (v: number) => `${v}%` } }}
+                  axis={{ x: { labelAutoHide: true, labelAutoRotate: false, labelFormatter: shortDay }, y: { labelFormatter: (v: number) => `${v}%` } }}
                 />
               </div>
             )}
@@ -280,7 +283,7 @@ export function AnalyticsView({ selectedHost, activeScope, active }: AnalyticsVi
                   data={durationSeries} xField="date" yField="value" colorField="metric"
                   height={chartHeight} theme={plotTheme} shapeField="smooth"
                   scale={{ color: { domain: ['p50', 'p95'], range: [ACCENT, WARNING] } }}
-                  legend={{ color: { position: 'top' } }} axis={{ x: { labelAutoHide: true } }}
+                  legend={{ color: { position: 'top' } }} axis={{ x: { labelAutoHide: true, labelAutoRotate: false, labelFormatter: shortDay } }}
                 />
               </div>
             )}

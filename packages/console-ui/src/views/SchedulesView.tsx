@@ -3,7 +3,7 @@ import { Table, Button, Modal, Form, Select, Input, InputNumber, Space, Segmente
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type SharedSchedulesVenv, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
 import { useIsDark, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
-import { askRemembered, consentKey, useRiskConfirm } from '../components/risk'
+import { AskFirst, askRemembered, consentKey, useRiskConfirm } from '../components/risk'
 import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
 import { EventLog } from '../components/EventLog'
@@ -12,7 +12,7 @@ import { ModelSelect } from '../components/ModelSelect'
 import { initialFormValues, validateArgs } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
 import { AllSchedulesView, WhenCell } from './AllSchedulesView'
-import { EmptyState, IconAction, RowActions, StatusTag } from '../components/kit'
+import { EmptyState, IconAction, StatusTag } from '../components/kit'
 import { ScheduleScopeCards } from './ScheduleScopeCards'
 import { useWebhooks } from '../webhooks'
 import { collectRows, scopeCounts, type ScheduleScope } from './allSchedules'
@@ -1207,11 +1207,12 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
               screen reader can tell the rows' buttons apart. */}
           <IconAction label={`Run ${s.name || scheduleSummary(s)} now`} tip="Run now" icon={<PlayCircleOutlined />} onClick={() => handleRunNow(s)} />
           <IconAction label={`Edit ${s.name || scheduleSummary(s)}`} tip="Edit" icon={<EditOutlined />} onClick={() => openEdit(s)} />
-          <RowActions more={[{
-            key: 'delete', label: 'Delete', icon: <DeleteOutlined />, danger: true,
-            confirm: { title: 'Delete this schedule?', what: scheduleSummary(s), consequence: 'It stops firing; past runs stay in History.' },
-            onClick: () => handleDelete(s.id),
-          }]} />
+          {/* Delete straight on the row (a "..." menu holding only Delete cost a
+              click), quiet until hovered, and it still asks. */}
+          <AskFirst ask={{ level: 'local', title: 'Delete this schedule?', action: scheduleSummary(s), consequence: 'It stops firing; past runs stay in History.', okText: 'Delete' }}
+            onConfirm={() => handleDelete(s.id)}>
+            <Button type="text" size="small" danger className="rs-quiet-danger" icon={<DeleteOutlined />} aria-label={`Delete ${s.name || scheduleSummary(s)}`} />
+          </AskFirst>
         </Space>
       ),
     },

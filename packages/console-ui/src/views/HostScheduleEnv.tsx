@@ -45,10 +45,10 @@ export function openEnvFiles(host: string, runspecPath: string) {
 }
 
 const ICON: Record<NeedState, ReactNode> = {
-  file: <CheckCircleOutlined style={{ color: 'var(--rs-success, #52c41a)' }} />,
-  schedule: <CheckCircleOutlined style={{ color: 'var(--rs-success, #52c41a)' }} />,
-  shared: <WarningOutlined style={{ color: 'var(--rs-warning, #faad14)' }} />,
-  missing: <WarningOutlined style={{ color: 'var(--rs-warning, #faad14)' }} />,
+  file: <CheckCircleOutlined style={{ color: 'var(--rs-ok)' }} />,
+  schedule: <CheckCircleOutlined style={{ color: 'var(--rs-ok)' }} />,
+  shared: <WarningOutlined style={{ color: 'var(--rs-warn)' }} />,
+  missing: <WarningOutlined style={{ color: 'var(--rs-warn)' }} />,
   optional: <MinusCircleOutlined style={{ opacity: 0.55 }} />,
 }
 

@@ -242,7 +242,7 @@ export function FilesView({ hosts, selectedHost, active }: {
                     <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!!t.error} onClick={() => setRunningSaved(t)}>Run…</Button>
                     <Tooltip title="Open its source and destination folders in the panes"><Button size="small" icon={<FolderOpenOutlined />} aria-label={`Open ${t.id} in panes`} onClick={() => openInPanes(t)} /></Tooltip>
                     <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} aria-label={`Edit ${t.id}`} onClick={() => setEditing({ draft: t, replaceId: t.id })} /></Tooltip>
-                    <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${t.id}`}
+                    <Tooltip title="Delete"><Button size="small" danger className="rs-quiet-danger" icon={<DeleteOutlined />} aria-label={`Delete ${t.title || t.id}`}
               onClick={async () => {
                 const r = await askRisk({ level: 'local', title: 'Delete this saved transfer?', action: t.title ? `${t.title} (${t.id})` : t.id, okText: 'Delete' })
                 if (r.ok) deleteSaved(t.id)

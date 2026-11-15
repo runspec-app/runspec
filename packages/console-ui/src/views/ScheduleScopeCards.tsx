@@ -87,10 +87,12 @@ export function ScheduleScopeCards({ value, onChange, counts, hostsPending, noDa
               <span style={{ fontSize: 18, color: selected ? accent : textSecondary(isDark), lineHeight: 1 }}>{c.icon}</span>
               <span style={{ fontSize: 14, fontWeight: 600 }}>{c.title}</span>
               {problems > 0 && !(hostsPending && c.scope !== 'console') && (
+                // Outlined in both themes: a tinted fill took the light text to
+                // 4.2:1. The title says what counts as a problem.
                 <span
                   aria-label={`${problems} problem${problems === 1 ? '' : 's'}`}
-                  title={`${problems} problem${problems === 1 ? '' : 's'}`}
-                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: isDark ? 'transparent' : withAlpha(statusText(isDark).warn, 0.14), border: isDark ? `1px solid ${statusText(isDark).warn}` : undefined, color: statusText(isDark).warn }}
+                  title={`${problems} problem${problems === 1 ? '' : 's'}: schedules whose last run failed, that aren't installed or are out of sync, and hosts that couldn't be read. Pick this card to list them.`}
+                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: 'transparent', border: `1px solid ${statusText(isDark).warn}`, color: statusText(isDark).warn }}
                 >
                   <WarningFilled style={{ fontSize: 11 }} />{problems}
                 </span>

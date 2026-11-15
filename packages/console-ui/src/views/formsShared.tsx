@@ -101,12 +101,25 @@ export function argSpansRow(arg: ArgDef): boolean {
 // Tag colour + short label for an autonomy level. Pure — exported for tests.
 // Undefined/blank is treated as the safe default ("confirm"), so a runnable or
 // subcommand always shows a level rather than nothing.
+// The same words as the Forms cards ("asks first", "manual"), so a level reads
+// the same on the card and in its dialog.
 export function autonomyTagProps(level?: string): { color: string; label: string } {
   switch ((level || 'confirm').toLowerCase()) {
-    case 'autonomous': return { color: 'green', label: 'auto' }
-    case 'supervised': return { color: 'gold', label: 'supervised' }
+    case 'autonomous': return { color: 'green', label: 'runs at once' }
+    case 'supervised': return { color: 'gold', label: 'asks first' }
     case 'manual': return { color: 'red', label: 'manual' }
-    default: return { color: 'default', label: 'confirm' }
+    default: return { color: 'default', label: 'asks first' }
+  }
+}
+
+/** What an autonomy level means where a person runs it: from Forms your Run
+ *  is the go-ahead, so "asks first" is about the assistant. Pure. */
+export function autonomyTip(level?: string): string {
+  switch ((level || 'confirm').toLowerCase()) {
+    case 'autonomous': return 'Runs without asking, for you or the assistant.'
+    case 'manual': return 'Only a person can start it; the assistant never runs it.'
+    case 'supervised': return 'The assistant asks for a go-ahead before it runs (supervised). Run here is your go-ahead.'
+    default: return 'The assistant asks for a go-ahead before it runs. Run here is your go-ahead; on several hosts it asks once more.'
   }
 }
 

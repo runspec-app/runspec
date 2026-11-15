@@ -363,7 +363,7 @@ export function BrowseModal({ host, startPath, dirsOnly, runnable, runAs, group,
             }}
           />
           {hidden > 0 && (
-            <Tag color="blue" style={{ fontSize: 11, marginTop: 6 }}>
+            <Tag style={{ fontSize: 11, marginTop: 6 }}>
               {`showing first ${RENDER_CAP} of ${visible.length} — refine the filter`}
             </Tag>
           )}

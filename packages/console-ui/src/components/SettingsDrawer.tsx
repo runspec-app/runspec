@@ -2512,7 +2512,15 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
             <Form.Item
               name="jump"
               label="Jump host (ProxyJump)"
-              help="Reach this host through a jump host using the system ssh client, so ~/.ssh/config legacy algorithms apply (e.g. HostKeyAlgorithms +ssh-rsa for CentOS 6). Another host in this list (by name), or an SSH host/alias such as user@bastion:2222. Uses the same key, user and known hosts as this host; failures show in the Dev tab. Needs an OpenSSH client on this machine (and plink.exe for PuTTY terminals). Leave blank for the normal (paramiko) transport."
+              // One line, the rest on request (it was an 80-word paragraph).
+              help={
+                <span>
+                  Another host in this list, or an SSH host such as user@bastion:2222. Leave blank to connect directly.{' '}
+                  <Tooltip title="It connects with your system ssh client, so ~/.ssh/config settings apply (for example HostKeyAlgorithms +ssh-rsa for an old CentOS host). It uses the same key, user and known hosts as this host, and failures show in the Dev tab. It needs an OpenSSH client on this machine, and plink.exe for PuTTY terminals.">
+                    <span style={{ textDecoration: 'underline dotted', cursor: 'help' }}>How it connects</span>
+                  </Tooltip>
+                </span>
+              }
             >
               <Input placeholder="bastion  (or user@bastion)" style={{ fontFamily: MONO_FONT }} />
             </Form.Item>
@@ -2673,21 +2681,24 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                 <StatusTag tone={tone} tip={<pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', maxWidth: 340 }}>{detail}</pre>}>{label}</StatusTag>
               )
             })()}
-            <Tooltip title="Test connection">
-              <Button aria-label={`Test connection to ${h.name}`} type="text" size="small" icon={testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />} onClick={() => handleTest(h.name)} disabled={isEditing || testingHost !== null} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-            </Tooltip>
-            <Tooltip title="Copy SSH public key (authorize this machine)">
-              <Button aria-label={`Copy SSH key to ${h.name}`} type="text" size="small" icon={<KeyOutlined />} onClick={() => setCopyKeyHost(h.name)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-            </Tooltip>
-            <Tooltip title="Provision a runspec venv on this host">
-              <Button type="text" size="small" icon={<CloudServerOutlined />} onClick={() => setProvisionHosts([h.name])} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} aria-label={`Provision a venv on ${h.name}`} />
-            </Tooltip>
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(h)} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} aria-label={`Edit ${h.name}`} />
-            <Button type="text" size="small" icon={<DeleteOutlined />} disabled={isEditing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger aria-label={`Remove ${h.name}`}
-              onClick={async () => {
-                const a = await askRisk({ level: 'local', title: `Remove ${h.name}?`, action: h.name, okText: 'Remove' })
-                if (a.ok) remove(h.name)
-              }} />
+            {/* Two labelled actions on the row; the rest under More (it was
+                five look-alike icons on every host). */}
+            <RowActions
+              testId={`host-actions-${h.name}`}
+              secondary={[
+                { key: 'edit', label: 'Edit', icon: <EditOutlined />, onClick: () => startEdit(h), disabled: isEditing, ariaLabel: `Edit ${h.name}` },
+                { key: 'test', label: 'Test', icon: testingHost === h.name ? <LoadingOutlined /> : <ApiOutlined />, onClick: () => handleTest(h.name), disabled: isEditing || testingHost !== null, tip: `Test the connection to ${h.name}`, ariaLabel: `Test connection to ${h.name}` },
+              ]}
+              more={[
+                { key: 'key', label: 'Copy SSH key…', icon: <KeyOutlined />, onClick: () => setCopyKeyHost(h.name), disabled: isEditing },
+                { key: 'provision', label: 'Provision a venv…', icon: <CloudServerOutlined />, onClick: () => setProvisionHosts([h.name]), disabled: isEditing },
+                {
+                  key: 'remove', label: 'Remove host', icon: <DeleteOutlined />, danger: true, disabled: isEditing,
+                  confirm: { title: `Remove ${h.name}?`, what: h.name, consequence: 'It leaves the hosts list; nothing on the host changes.', okText: 'Remove' },
+                  onClick: () => remove(h.name),
+                },
+              ]}
+            />
           </div>
         )
 

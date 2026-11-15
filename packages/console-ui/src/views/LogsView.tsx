@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
-  Table, Typography, Button, Tooltip, message, Modal, Drawer,
+  Table, Typography, Button, Tooltip, message, Modal, Drawer, Select,
   Input, InputNumber, Space, Form, Spin, Alert,
 } from 'antd'
 import {
@@ -57,6 +57,9 @@ interface MaintTarget {
   host: string
   group: string
   runnable?: string   // undefined = whole venv
+  /** The venv's runnables, for the picker (one place to clean up one runnable
+   *  or all of them; the rows no longer carry their own trash icon). */
+  runnables?: string[]
 }
 
 interface MaintModalProps {
@@ -79,6 +82,7 @@ export function cleanupPlan(f: { compressAfter: string; deleteAfter: string; kee
 
 export function CleanupNowModal({ target, onClose, onApplied, onOpenPolicy }: MaintModalProps) {
   const [compressAfter, setCompressAfter] = useState('')
+  const [pickRunnable, setPickRunnable] = useState('')
   const [deleteAfter, setDeleteAfter] = useState('')
   const [keepFiles, setKeepFiles] = useState<number | null>(null)
   const [keepSize, setKeepSize] = useState('')
@@ -95,6 +99,7 @@ export function CleanupNowModal({ target, onClose, onApplied, onOpenPolicy }: Ma
 
   useEffect(() => {
     setCompressAfter(''); setDeleteAfter(''); setKeepFiles(null); setKeepSize('')
+    setPickRunnable(target?.runnable ?? '')
     setPreview(null); setError(null); setBusy(false); setRunAs('')
     if (!target || target.group === '~/logs') return
     let cancelled = false
@@ -109,7 +114,8 @@ export function CleanupNowModal({ target, onClose, onApplied, onOpenPolicy }: Ma
   const [askRisk, riskHolder] = useRiskConfirm()
 
   if (!target) return null
-  const { host, group, runnable } = target
+  const { host, group } = target
+  const runnable = pickRunnable || undefined
   const isHome = group === '~/logs'
   const scopeLabel = runnable ? `${group}/${runnable}` : `${group} (all runnables)`
   const plan = cleanupPlan({ compressAfter, deleteAfter, keepFiles, keepSize })
@@ -197,6 +203,10 @@ export function CleanupNowModal({ target, onClose, onApplied, onOpenPolicy }: Ma
         )}
       </Text>
       <Form layout="vertical" style={{ marginTop: 16 }}>
+        {(target.runnables?.length ?? 0) > 0 && row('Runnable', 'Which runs to clean up: every runnable in the venv, or one.', (
+          <Select aria-label="Runnable" value={pickRunnable} onChange={setPickRunnable} style={{ maxWidth: 280 }}
+            options={[{ value: '', label: 'All runnables' }, ...(target.runnables ?? []).map(n => ({ value: n, label: n }))]} />
+        ))}
         {row('Compress after', 'Run files older than this go into a gzip archive, one per day. e.g. 7d', (
           <Input aria-label="Compress after" value={compressAfter} onChange={e => setCompressAfter(e.target.value)} placeholder="7d" style={{ maxWidth: 160, fontFamily: MONO_FONT }} />
         ))}
@@ -479,8 +489,7 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
         <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
           <IconAction label={`View ${r.runnable} log`} tip="View the merged log" icon={<EyeOutlined />}
             onClick={() => setViewTarget({ host, group: v.group, runnable: r.runnable })} />
-          <IconAction label={`Clean up ${r.runnable} logs now`} tip="Clean up now: compress or delete this runnable's old runs" icon={<DeleteOutlined />}
-            onClick={() => setMaintTarget({ host, group: v.group, runnable: r.runnable })} />
+
         </div>
       ),
     },
@@ -529,7 +538,7 @@ export function LogsView({ selectedHost, activeScope, active, onOpenAnalytics }:
                 onShare={() => setShareTarget({ host, venv: v.group })}
                 onIndex={() => setIndexTarget({ host, group: v.group })}
                 onCleanup={() => setCleanupTarget({ host, group: v.group })}
-                onCleanNow={() => setMaintTarget({ host, group: v.group })}
+                onCleanNow={() => setMaintTarget({ host, group: v.group, runnables: (v.runnables ?? []).map(r => r.runnable) })}
               />}
             </div>
             {v.ok && (

@@ -380,7 +380,7 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
         if (r.removed) return <Button size="small" type="text" icon={<UndoOutlined />} aria-label={`Keep ${r.key}`} onClick={() => update(i, { removed: false })} />
         return (
           <Button
-            size="small" type="text" danger icon={<DeleteOutlined />} aria-label={`Remove ${r.key}`}
+            size="small" type="text" danger className="rs-quiet-danger" icon={<DeleteOutlined />} aria-label={`Remove ${r.key}`}
             onClick={() => (r.isNew ? setRows(prev => prev.filter((_, j) => j !== i)) : update(i, { removed: true }))}
           />
         )
@@ -1030,7 +1030,7 @@ function AcrossVenvs({ file, targets, loadingTargets, onDirty }: { file: EnvFile
             </div>
             <SetEverywhere keyName={r.key} secret={r.secret} count={shownRefs.filter(writable).length} onSet={v => setEverywhere(r.key, v)} />
             <Tooltip title="Remove from every venv shown">
-              <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label={`Remove ${r.key} everywhere`}
+              <Button size="small" type="text" danger className="rs-quiet-danger" icon={<DeleteOutlined />} aria-label={`Remove ${r.key} everywhere`}
                 disabled={!shownRefs.some(ref => writable(ref) && gridCell(views[ref], r.key, undefined).present)}
                 onClick={() => removeEverywhere(r.key)} />
             </Tooltip>

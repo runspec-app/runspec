@@ -30,15 +30,16 @@ const EXEMPT = new Set([
 // Remaining offenders, by file: Tag/Badge presets, hex and rgb() literals.
 // Burn these down.
 const BASELINE: Record<string, number> = {
-  'App.tsx': 12,
+  'components/ErrorBoundary.tsx': 7,  // var() fallbacks: it renders when the theme may be gone
+  'App.tsx': 9,
   'components/CommandInput.tsx': 13,  // syntax-highlight palette
   'components/ConfigSyncPreview.tsx': 9,
-  'components/CredentialGuide.tsx': 4,
-  'components/HelpdeskPanel.tsx': 4,
+  'components/CredentialGuide.tsx': 3,
+  'components/HelpdeskPanel.tsx': 3,
   'components/LogStream.tsx': 8,
   'components/Markdown.tsx': 4,
   'components/OtherHostsSection.tsx': 4,
-  'components/OutputPanel.tsx': 13,
+  'components/OutputPanel.tsx': 14,  // incl. a #000 alpha mask (a gradient fade, not a colour)
   'components/SettingsDrawer.tsx': 9,
   'components/runShared.tsx': 7,
   'views/DevView.tsx': 9,
@@ -50,16 +51,19 @@ const BASELINE: Record<string, number> = {
   'views/KnowledgeCheck.tsx': 1,
   'views/KnowledgeEdits.tsx': 2,
   'views/KnowledgeTools.tsx': 4,
-  'views/KnowledgeView.tsx': 3,
+  'views/KnowledgeView.tsx': 2,
   'views/MarketplaceView.tsx': 1,
-  'views/PathInput.tsx': 4,
+  'views/PathInput.tsx': 3,
   'views/RunnableAction.tsx': 2,
   'views/RunnablesView.tsx': 4,
   'views/files/FilePane.tsx': 1,
 }
 
 const TAG_PRESET = /<(?:Tag|Badge)\b[^>]*\bcolor=/g
-const HEX = /['"`]#[0-9a-fA-F]{3,8}['"`]/g
+// Any hex colour in code, not only a string that is nothing but one: it also
+// hides in '1px solid #2a2a2a', color-mix(…) and var(--x, #hex) fallbacks.
+// Comment lines don't count.
+const HEX = /#[0-9a-fA-F]{3,8}(?![0-9a-zA-Z_-])/g
 // A literal rgb()/rgba() colour in a string (not a var() fallback).
 const RGB = /['"`]rgba?\(\s*\d/g
 
@@ -71,8 +75,13 @@ function files(dir: string): string[] {
   })
 }
 
+function codeOnly(text: string): string {
+  return text.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
+}
+
 export function offences(text: string): number {
-  return (text.match(TAG_PRESET)?.length ?? 0) + (text.match(HEX)?.length ?? 0) + (text.match(RGB)?.length ?? 0)
+  const code = codeOnly(text)
+  return (code.match(TAG_PRESET)?.length ?? 0) + (code.match(HEX)?.length ?? 0) + (code.match(RGB)?.length ?? 0)
 }
 
 describe('colour discipline', () => {
@@ -85,6 +94,8 @@ describe('colour discipline', () => {
   it('counts Tag presets and hex literals', () => {
     expect(offences(`<Tag color="red">x</Tag> <Tag>y</Tag> style={{ color: '#52c41a' }} "#fff"`)).toBe(3)
     expect(offences(`<Badge color="orange" /> background: 'rgba(82,196,26,0.16)' 'var(--x, rgba(0,0,0,.1))'`)).toBe(2)
+    // Hex inside a longer string, and in a var() fallback; not in comments or ids.
+    expect(offences(`border: '1px solid #2a2a2a', c: 'var(--x, #52c41a)'\n// was #fff\nhref="#send-bar"`)).toBe(2)
   })
 
   it('no file adds a raw colour (use StatusTag, StatusIcon or a theme token)', () => {

@@ -155,6 +155,22 @@ describe('LogsView', () => {
   })
 })
 
+describe('Clean up now', () => {
+  it('cleans up one runnable or all of them from one window (no per-row trash)', async () => {
+    logsPrune.mockResolvedValue({ ok: true, count: 0, freed_bytes: 0 })
+    render(<LogsView {...PROPS} />)
+    await screen.findByText('ops-tools')
+    expect(screen.queryByRole('button', { name: /Clean up backup logs now/ })).toBeNull()
+    await openVenvAction('ops-tools', 'Clean up now…')
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: 'Runnable' }))
+    fireEvent.click(await screen.findByTitle('backup'))
+    fireEvent.change(screen.getByLabelText('Delete after'), { target: { value: '90d' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await waitFor(() => expect(logsPrune).toHaveBeenCalled())
+    expect(logsPrune.mock.calls[0][2]).toBe('backup')
+  })
+})
+
 describe('cleanupPlan', () => {
   it('compresses and/or deletes from the same words as the policy', () => {
     const blank = { compressAfter: '', deleteAfter: '', keepFiles: null, keepSize: '' }

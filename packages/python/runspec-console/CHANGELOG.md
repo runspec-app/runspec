@@ -9,6 +9,65 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.448.0] — 2026-11-15
+
+### Changed
+
+- **The console opens on a chat.** With only automation runs on the board and
+  no chat open, it starts a chat, so the first thing the chat box shows isn't
+  "read-only". A card that arrives later never moves you off your chat. With AI
+  off nothing changes.
+- **One place for each kind of log cleanup.** A venv's **Log cleanup…** is
+  the daily policy and **Clean up now…** is a one-off pass, which now has a
+  runnable picker (all runnables or one). The trash icon on each runnable row
+  is gone.
+- **Provision venv in sections:** Where, Python, Owner, What to install. Shared
+  schedules and log cleanup fold under **More options**, whose title shows
+  what's set. **Add host**'s jump-host help is one line, with the details
+  under **How it connects**.
+- **Fewer icon-only actions.**
+  - A Files pane's New folder, Rename and Delete are labelled, beside the
+    filter. Up, Home and Refresh stay as icons.
+  - A Settings host row has **Edit** and **Test**; Copy SSH key, Provision a
+    venv and Remove host are under More.
+- **Charts.** Day labels read "14 Nov" and aren't rotated. Runs over time draws
+  succeeded in blue and failed in red, which colour-blind readers can tell
+  apart (red and green they can't). The success rate explains itself on hover,
+  and "83.8 %" lost its space.
+- **Tool rows say where and who.** A finished call shows the host it ran on
+  ("on web-01") and the decision in words ("approved by you", "denied by you",
+  "edited and approved by you").
+- **The same words for approval levels.** A run dialog says "asks first",
+  "runs at once" or "manual", like the Forms cards, not "confirm". Its tooltip
+  says that from Forms your **Run** is the go-ahead.
+- **Quieter at rest.** Delete and Reject buttons repeated on rows and cards
+  (Files saved transfers, Env files, Knowledge inbox, a Files pane) are grey
+  until hovered or focused; their confirmations are still red. A schedule's
+  Delete sits on its row instead of in a one-item "…" menu.
+- **Smaller things.**
+  - The approval card says it's waiting once.
+  - The Console badge says "runs on hosts", as the Activity list does.
+  - The Schedules cards' problem count is outlined, so it reads at 4.5:1 on
+    light, and explains on hover what counts as a problem.
+  - Settings help text wraps at about 80 characters.
+  - The event log and Knowledge's "no page yet" no longer draw a box inside a
+    box.
+  - Send to terminals' confirmation has a 16px gutter.
+  - The sidebar host count is the secondary text; it was 4.4:1 on light.
+  - Info notices and a few tags use the theme, not Ant's default blue.
+  - The approval tint is a theme token (`--rs-waiting-tint`).
+
+### Fixed
+
+- **Two status colours were never applied.** `--rs-success` and `--rs-warning`
+  don't exist, so a schedule's credential check and the Files rename warning
+  always fell back to fixed colours (the green at 2:1). They use `--rs-ok` and
+  `--rs-warn`.
+- **The colour test catches more.** It counted only strings that were nothing
+  but a hex colour; it now counts hex in any code line, including
+  `'1px solid #2a2a2a'`, `color-mix(…)` and `var(--x, #hex)` fallbacks, but not
+  comments.
+
 ## [0.447.0] — 2026-11-15
 
 ### Changed

@@ -180,6 +180,9 @@ export interface RowAction {
   tip?: ReactNode
   disabled?: boolean
   danger?: boolean
+  /** The button's name for screen readers when the label alone is ambiguous
+   *  in a list ("Edit web-01", not "Edit"). */
+  ariaLabel?: string
   // Ask before running it, through the shared confirmation dialog (risk.tsx,
   // local level). `what` names the object the action touches ("/log-rotate
   // on prod-1 · Sundays 03:00"): the dialog shows it, so it never just repeats
@@ -218,12 +221,12 @@ export function RowActions({ primary, secondary = [], more = [], style, testId =
       {riskHolder}
       {primary && wrap(primary,
         <Button key={primary.key} size="small" icon={primary.icon} disabled={primary.disabled} danger={primary.danger}
-          onClick={() => { void runAction(primary) }}>
+          aria-label={primary.ariaLabel} onClick={() => { void runAction(primary) }}>
           {primary.label}
         </Button>)}
       {secondary.map(a => wrap(a,
         <Button key={a.key} size="small" type="text" icon={a.icon} disabled={a.disabled} danger={a.danger}
-          onClick={() => { void runAction(a) }} style={{ color: a.danger || a.disabled ? undefined : 'var(--rs-text-secondary)' }}>
+          aria-label={a.ariaLabel} onClick={() => { void runAction(a) }} style={{ color: a.danger || a.disabled ? undefined : 'var(--rs-text-secondary)' }}>
           {a.label}
         </Button>))}
       {more.length > 0 && (

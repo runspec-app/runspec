@@ -59,10 +59,11 @@ export function EventLog({
         label: (
           <span><BellOutlined /> {label}<span style={{ color: dim, fontSize: 13 }}> · {hint}</span></span>
         ),
+        // The list has no border of its own: the collapse panel is the box.
         children: events.length === 0 ? (
           <div style={{ color: dim, fontSize: 13 }}>No events yet.</div>
         ) : (
-          <div style={{ maxHeight: 360, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: RADIUS.sm }}>
+          <div style={{ maxHeight: 360, overflowY: 'auto' }}>
             {events.map((ev, i) => {
               const disp = disposition(ev, dim, statusText(isDark).ok)
               return (

@@ -203,20 +203,20 @@ describe('argSpansRow', () => {
 
 describe('autonomyTagProps', () => {
   it('maps each level to a colour + short label', () => {
-    expect(autonomyTagProps('autonomous')).toEqual({ color: 'green', label: 'auto' })
-    expect(autonomyTagProps('supervised')).toEqual({ color: 'gold', label: 'supervised' })
+    expect(autonomyTagProps('autonomous')).toEqual({ color: 'green', label: 'runs at once' })
+    expect(autonomyTagProps('supervised')).toEqual({ color: 'gold', label: 'asks first' })
     expect(autonomyTagProps('manual')).toEqual({ color: 'red', label: 'manual' })
-    expect(autonomyTagProps('confirm')).toEqual({ color: 'default', label: 'confirm' })
+    expect(autonomyTagProps('confirm')).toEqual({ color: 'default', label: 'asks first' })
   })
 
   it('is case-insensitive', () => {
-    expect(autonomyTagProps('AUTONOMOUS').label).toBe('auto')
+    expect(autonomyTagProps('AUTONOMOUS').label).toBe('runs at once')
   })
 
   it('defaults undefined / blank / unknown to confirm', () => {
-    expect(autonomyTagProps(undefined)).toEqual({ color: 'default', label: 'confirm' })
-    expect(autonomyTagProps('')).toEqual({ color: 'default', label: 'confirm' })
-    expect(autonomyTagProps('weird')).toEqual({ color: 'default', label: 'confirm' })
+    expect(autonomyTagProps(undefined)).toEqual({ color: 'default', label: 'asks first' })
+    expect(autonomyTagProps('')).toEqual({ color: 'default', label: 'asks first' })
+    expect(autonomyTagProps('weird')).toEqual({ color: 'default', label: 'asks first' })
   })
 })
 
