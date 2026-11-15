@@ -27,7 +27,7 @@
  */
 import type { MouseEvent, ReactElement, ReactNode } from 'react'
 import { cloneElement, useEffect, useRef, useState } from 'react'
-import { Button, Checkbox, Input, Modal, Typography, theme } from 'antd'
+import { Button, Checkbox, Input, Modal, Typography, message, theme } from 'antd'
 import { ExclamationCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import { MONO_FONT, RADIUS, statusText, textMuted, useIsDark } from '../ThemeContext'
 
@@ -172,10 +172,21 @@ function RiskDialog({ ask, cover, onDone }: { ask: RiskAsk; cover: boolean; onDo
 /** The ladder's confirmation, as a hook: `ask(...)` resolves when the person
  *  answers; render the holder once in the component. */
 export function useRiskConfirm(opts: { cover?: boolean } = {}): [(ask: RiskAsk) => Promise<RiskAnswer>, ReactNode] {
-  const [pending, setPending] = useState<{ ask: RiskAsk; resolve: (a: RiskAnswer) => void } | null>(null)
-  const ask = (a: RiskAsk) => new Promise<RiskAnswer>(resolve => setPending({ ask: a, resolve }))
+  const [pending, setPending] = useState<{ ask: RiskAsk; resolve: (a: RiskAnswer) => void; opener: HTMLElement | null } | null>(null)
+  // Remember what had focus (the button, or a field in the window underneath)
+  // and give focus back when the ask closes. Otherwise it fell to <body>, and
+  // Esc no longer closed the window the ask was opened from.
+  const ask = (a: RiskAsk) => new Promise<RiskAnswer>(resolve => {
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+    setPending({ ask: a, resolve, opener })
+  })
   const holder = pending
-    ? <RiskDialog ask={pending.ask} cover={!!opts.cover} onDone={a => { pending.resolve(a); setPending(null) }} />
+    ? <RiskDialog ask={pending.ask} cover={!!opts.cover} onDone={a => {
+        const opener = pending.opener
+        pending.resolve(a)
+        setPending(null)
+        if (opener) setTimeout(() => { if (opener.isConnected) opener.focus() }, 0)
+      }} />
     : null
   return [ask, holder]
 }
@@ -244,7 +255,18 @@ function writeConsents(all: Consent[]) {
   try { localStorage.setItem(CONSENT_STORE, JSON.stringify(all.slice(-200))) } catch { /* storage unavailable: it will just ask again */ }
 }
 
-export function hasConsent(key: string): boolean { return listConsents().some(c => c.key === key) }
+/** A remembered answer holds for this long, then the confirmation asks again
+ *  (and offers "don't ask again" afresh). */
+export const CONSENT_DAYS = 30
+const CONSENT_MS = CONSENT_DAYS * 24 * 60 * 60 * 1000
+
+/** Still in force? Answers saved before expiry existed (no time) count as
+ *  expired, so they ask once more. Pure, for tests. */
+export function consentLive(c: Consent, now = Date.now()): boolean {
+  return c.at > 0 && now - c.at < CONSENT_MS
+}
+
+export function hasConsent(key: string): boolean { return listConsents().some(c => c.key === key && consentLive(c)) }
 
 export function rememberConsent(key: string, label = key): void {
   writeConsents([...listConsents().filter(c => c.key !== key), { key, label, at: Date.now() }])
@@ -277,7 +299,15 @@ export async function askRemembered(
   ask: (a: RiskAsk) => Promise<RiskAnswer>, key: string, a: RiskAsk,
 ): Promise<boolean> {
   const rememberable = a.level !== 'destructive'
-  if (rememberable && hasConsent(key)) return true
+  if (rememberable && hasConsent(key)) {
+    // Skipping a confirmation is said, not silent: the operator sees that a
+    // remembered answer acted for them, and where to take it back.
+    message.open({
+      key: `consent-${key}`, type: 'info', duration: 5,
+      content: `${consentLabel(a)}: done without asking, because you chose "don't ask again" (Settings → Confirmations).`,
+    })
+    return true
+  }
   const r = await ask(rememberable ? { ...a, rememberLabel: a.rememberLabel ?? "Don't ask again for this" } : a)
   if (r.ok && r.remember && rememberable) rememberConsent(key, consentLabel(a))
   return r.ok
@@ -287,8 +317,9 @@ export async function askRemembered(
  *  one button to make everything ask again. */
 export function RememberedAnswers() {
   const isDark = useIsDark()
-  const [list, setList] = useState(() => listConsents())
-  const refresh = () => setList(listConsents())
+  const [list, setList] = useState(() => listConsents().filter(c => consentLive(c)))
+  const refresh = () => setList(listConsents().filter(c => consentLive(c)))
+  const until = (c: Consent) => new Date(c.at + CONSENT_MS).toLocaleDateString()
   if (!list.length) {
     return <div style={{ fontSize: 13, color: textMuted(isDark) }}>Every confirmation asks. Tick "don't ask again" on one to skip it next time.</div>
   }
@@ -297,6 +328,7 @@ export function RememberedAnswers() {
       {list.slice().reverse().map(c => (
         <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.label}>{c.label}</span>
+          <span style={{ fontSize: 12, color: textMuted(isDark), flexShrink: 0 }}>until {until(c)}</span>
           <Button size="small" aria-label={`Forget: ${c.label}`} onClick={() => { forgetConsent(c.key); refresh() }}>Forget</Button>
         </div>
       ))}

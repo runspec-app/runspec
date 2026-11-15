@@ -2282,6 +2282,9 @@ export interface DenylistRule {
 
 // One row per venv on a host, from denylist_status(). When `ok` is false the
 // host/venv couldn't be read (see `error`); otherwise the denylist fields apply.
+/** A "Disable all" the kill switch owes a host that was disconnected. */
+export interface DenylistPending { host: string; reason: string; since: number }
+
 export interface DenylistHostStatus {
   host: string
   venv: string
@@ -2793,6 +2796,10 @@ export interface BridgeApi {
   manage_denylist: (payload: DenylistPayload) => Promise<string>
   // Read-only structured denylist state per host/venv (Settings → Denylist table).
   denylist_status: (targets?: string[]) => Promise<DenylistHostStatus[]>
+  /** Kill-switch blocks waiting for a disconnected host (machine-local). */
+  denylist_pending: () => Promise<DenylistPending[]>
+  denylist_pending_add: (hosts: string[], reason?: string) => Promise<DenylistPending[]>
+  denylist_pending_remove: (host?: string) => Promise<DenylistPending[]>
   get_runnables: (host: string) => Promise<Runnable[]>
   // Fleet-discovery readiness for the "discovering N/M hosts…" indicator. `ready`
   // flips true after the first full refresh cycle; live updates arrive on the

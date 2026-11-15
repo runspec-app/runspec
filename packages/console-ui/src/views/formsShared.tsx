@@ -255,7 +255,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
   const inputStyle = {
     fontFamily: MONO_FONT,
     fontSize: 13,
-    borderColor: error ? '#ff4d4f' : undefined,
+    borderColor: error ? 'var(--rs-danger)' : undefined,
   }
 
   if (arg.type === 'flag') {
@@ -377,6 +377,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         dirsOnly={arg.ui === 'directory'}
         error={!!error}
         onChange={onChange}
+        ariaLabel={arg.name}
       />
     )
   }

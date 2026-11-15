@@ -142,3 +142,26 @@ describe('OutputPanel activity pill placement', () => {
     expect(screen.getByTestId('activity-label').textContent).toBe('Running')
   })
 })
+
+describe('a denied call', () => {
+  it('shows a stop mark and no duration, not a green check', () => {
+    const denied: BlockSegment = {
+      kind: 'tool',
+      entry: { name: 'flush-dns', input: {}, running: false, operatorDecision: 'denied', durationMs: 7100 },
+    }
+    render(<OutputPanel blocks={[chatBlock({ done: true, segments: [denied] })]} />)
+    expect(screen.getByLabelText('denied, did not run')).toBeTruthy()
+    expect(screen.queryByLabelText('done')).toBeNull()
+    expect(screen.queryByText('7.1s')).toBeNull()
+  })
+})
+
+describe('model usage on a chat card', () => {
+  it('sits behind a Usage button, not in the header', async () => {
+    const { fireEvent: fe } = await import('@testing-library/react')
+    render(<OutputPanel blocks={[chatBlock({ done: true, durationMs: 1000, tokenUsage: { input: 100, output: 20, cacheRead: 900, cacheCreation: 0 } as InvocationBlock['tokenUsage'] })]} />)
+    expect(screen.queryByText(/% cached/)).toBeNull()
+    fe.click(screen.getByRole('button', { name: 'Model usage for this turn' }))
+    expect((await screen.findByTestId('card-usage')).textContent).toContain('90% of the prompt served from cache')
+  })
+})

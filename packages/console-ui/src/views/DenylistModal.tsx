@@ -10,9 +10,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Modal, Alert, Button, Divider, Input, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined, InfoCircleOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons'
-import { bridge, type DenylistHostStatus, type DenylistPayload, type DenylistRule, type Host } from '../bridge'
+import { bridge, type DenylistHostStatus, type DenylistPayload, type DenylistPending, type DenylistRule, type Host } from '../bridge'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
-import { useRiskConfirm } from '../components/risk'
+import { targetList, useRiskConfirm } from '../components/risk'
 import { StatusTag } from '../components/kit'
 
 const { Text } = Typography
@@ -65,6 +65,9 @@ export interface DenylistModalProps {
    *  profile (plus local). Every query and mutation is limited to these, so a
    *  disconnected host never waits out an SSH timeout here. */
   hosts: Host[]
+  /** Hosts in the profile that aren't connected: the kill switch can't reach
+   *  them, so its ask names them (as Rotate key does). */
+  unreachable?: string[]
 }
 
 function ruleText(rule: DenylistRule): string {
@@ -72,7 +75,7 @@ function ruleText(rule: DenylistRule): string {
     (rule.reason ? ` — ${rule.reason}` : '')
 }
 
-export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
+export function DenylistModal({ open, onClose, hosts, unreachable = [] }: DenylistModalProps) {
   const [targets, setTargets] = useState<string[]>([])
   const [runnableGlobs, setRunnableGlobs] = useState<string[]>([])
   const [userGlobs, setUserGlobs] = useState<string[]>([])
@@ -167,13 +170,39 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
     }
   }
 
+  // Disable all across the whole scope (no hosts picked) also covers the
+  // disconnected hosts: queued here and applied by the console on reconnect.
+  const queueFor = targets.length === 0 ? unreachable : []
+  const [pending, setPending] = useState<DenylistPending[]>([])
+  useEffect(() => {
+    if (!open) return
+    Promise.resolve(bridge.denylist_pending()).then(p => setPending(Array.isArray(p) ? p : [])).catch(() => {})
+  }, [open])
+
   const disableAll = async () => {
     const a = await askRisk({
       level: 'fleet', title: `Block every runnable on ${scope}?`,
       action: `Disable all runnables${reason ? ` (reason: ${reason})` : ''}`, targets: effectiveTargets,
-      consequence: 'Agent and manual runs are refused until you re-enable them here.', okText: 'Disable all',
+      consequence: (
+        <>
+          Agent and manual runs are refused until you re-enable them here.
+          {queueFor.length > 0 && (
+            <div data-testid="denylist-unreachable" style={{ marginTop: 6, fontWeight: 600 }}>
+              Not reached now: {queueFor.length} disconnected host{queueFor.length === 1 ? '' : 's'} ({targetList(queueFor, 6)}).
+              Their runnables still run until they reconnect; this console blocks each one as soon as it does
+              (listed below as pending).
+            </div>
+          )}
+        </>
+      ),
+      okText: 'Disable all',
     })
-    if (a.ok) await run({ action: 'all', reason }, 'all')
+    if (!a.ok) return
+    await run({ action: 'all', reason }, 'all')
+    // The hosts it couldn't reach get the same block when they reconnect.
+    if (queueFor.length) {
+      try { setPending(await bridge.denylist_pending_add(queueFor, reason)) } catch { /* shown on next open */ }
+    }
   }
 
   const hostOptions = hosts.map(h => ({
@@ -460,6 +489,27 @@ export function DenylistModal({ open, onClose, hosts }: DenylistModalProps) {
       </Space>
 
       {riskHolder}
+      {pending.length > 0 && (
+        <Alert
+          type="warning" showIcon style={{ marginBottom: 12 }}
+          data-testid="denylist-pending"
+          message={`Pending: ${pending.length} disconnected host${pending.length === 1 ? '' : 's'} will be blocked when ${pending.length === 1 ? 'it reconnects' : 'they reconnect'}`}
+          description={
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {pending.map(p => (
+                <div key={p.host} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ fontFamily: MONO_FONT, fontSize: 13 }}>{p.host}</Text>
+                  {p.reason && <Text type="secondary" style={{ fontSize: 12 }}>{p.reason}</Text>}
+                  <Button size="small" style={{ marginLeft: 'auto' }} aria-label={`Cancel the pending block on ${p.host}`}
+                    onClick={async () => setPending(await bridge.denylist_pending_remove(p.host))}>
+                    Cancel
+                  </Button>
+                </div>
+              ))}
+            </div>
+          }
+        />
+      )}
       <div ref={resultRef} />
       {result && (
         <pre style={{ fontSize: 13, background: 'var(--rs-surface-sunken)', border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: 10, whiteSpace: 'pre-wrap', maxHeight: 240, overflow: 'auto' }}>

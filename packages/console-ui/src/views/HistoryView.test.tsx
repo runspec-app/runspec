@@ -88,13 +88,14 @@ describe('History paging', () => {
       ts: new Date(Date.UTC(2026, 5, 3, 12, 0, 60 - i)).toISOString(),
     })))
     render(<HistoryView {...PROPS} />)
-    await screen.findByText('1–50 of 60')
+    // The pager is above and below the table: two of each.
+    expect(await screen.findAllByText('1–50 of 60')).toHaveLength(2)
     fireEvent.click(document.querySelector('.ant-pagination-item-2') as HTMLElement)
-    expect(await screen.findByText('51–60 of 60')).toBeTruthy()
+    expect((await screen.findAllByText('51–60 of 60')).length).toBeGreaterThan(0)
     // 20 per page: the size sticks (it used to snap back to 50) and is remembered.
     fireEvent.mouseDown(document.querySelector('.ant-pagination-options .ant-select-selector') as HTMLElement)
-    fireEvent.click(await screen.findByText('20 / page'))
-    expect(await screen.findByText('1–20 of 60')).toBeTruthy()
+    fireEvent.click((await screen.findAllByText('20 / page'))[0])
+    expect((await screen.findAllByText('1–20 of 60')).length).toBeGreaterThan(0)
     expect(localStorage.getItem('runspec.history.pageSize')).toBe('20')
   })
 })

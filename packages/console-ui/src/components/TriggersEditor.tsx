@@ -692,7 +692,7 @@ export function TriggersEditor({
       {(fields, { add, remove: rm }) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
           {fields.map(f => (
-            <div key={f.key} style={{ border: '1px solid #2a2a2a', borderRadius: RADIUS.sm, padding: 8 }}>
+            <div key={f.key} style={{ border: '1px solid var(--rs-border)', borderRadius: RADIUS.sm, padding: 8 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
                 <Form.Item name={[f.name, 'run']} noStyle rules={[{ required: true, whitespace: true, message: 'Required' }]}>
                   <RunPicker hosts={hosts} runnables={runnables} />
@@ -909,7 +909,7 @@ export function TriggersEditor({
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {triggers.map((t, i) => (
-            <div key={`${String(t.name)} ${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid #2a2a2a' }}>
+            <div key={`${String(t.name)} ${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: RADIUS.sm, border: '1px solid var(--rs-border)' }}>
               <ThunderboltOutlined style={{ color: 'var(--rs-text-muted)', flexShrink: 0 }} />
               <Text style={{ fontFamily: MONO_FONT, fontSize: 13, flexShrink: 0 }}>{String(t.name)}</Text>
               <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

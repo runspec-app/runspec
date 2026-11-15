@@ -970,6 +970,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           pageSizeOptions: PAGE_SIZES,
           showSizeChanger: true,
           showTotal: (total, [from, to]) => `${from}–${to} of ${total}`,
+          // Above the table as well as below: at 1400×900 the bottom pager
+          // sat under the chat box, reachable only by scrolling an area that
+          // didn't look scrollable.
+          position: ['topRight', 'bottomRight'],
         }}
         onChange={(pg, filters, _sorter, extra) => {
           if (extra.action === 'filter') setColFilters(filters)

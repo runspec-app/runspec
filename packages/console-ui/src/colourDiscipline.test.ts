@@ -38,7 +38,7 @@ const BASELINE: Record<string, number> = {
   'components/LogStream.tsx': 8,
   'components/Markdown.tsx': 4,
   'components/OtherHostsSection.tsx': 4,
-  'components/OutputPanel.tsx': 17,
+  'components/OutputPanel.tsx': 13,
   'components/SettingsDrawer.tsx': 9,
   'components/runShared.tsx': 7,
   'views/DevView.tsx': 9,
@@ -56,7 +56,6 @@ const BASELINE: Record<string, number> = {
   'views/RunnableAction.tsx': 2,
   'views/RunnablesView.tsx': 4,
   'views/files/FilePane.tsx': 1,
-  'views/formsShared.tsx': 1,
 }
 
 const TAG_PRESET = /<(?:Tag|Badge)\b[^>]*\bcolor=/g

@@ -11,9 +11,10 @@ import userEvent from '@testing-library/user-event'
 import { DenylistModal, globMatch, unmatchedHostGlobs } from './DenylistModal'
 import type { Host } from '../bridge'
 
-const { manageDenylist, denylistStatus } = vi.hoisted(() => ({
+const { manageDenylist, denylistStatus, pendingAdd } = vi.hoisted(() => ({
   manageDenylist: vi.fn(),
   denylistStatus: vi.fn(),
+  pendingAdd: vi.fn(() => Promise.resolve([{ host: 'bastion', reason: '', since: 1 }])),
 }))
 
 const CONNECTED: Host[] = [
@@ -30,6 +31,8 @@ vi.mock('../bridge', () => ({
       get: (_t, prop) => {
         if (prop === 'manage_denylist') return manageDenylist
         if (prop === 'denylist_status') return denylistStatus
+        if (prop === 'denylist_pending_add') return pendingAdd
+        if (prop === 'denylist_pending') return () => Promise.resolve([])
         return vi.fn()
       },
     },
@@ -204,6 +207,18 @@ describe('DenylistModal per-rule actions and host globs', () => {
     await act(async () => { await user.click(await screen.findByTestId('risk-ok')) })
     await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
     expect(manageDenylist.mock.calls[0][0]).toEqual({ action: 'enable', targets: ['prod-2'], venv: 'app' })
+  })
+
+  it("Disable all names the disconnected hosts it can't reach", async () => {
+    render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} unreachable={['bastion', 'uat-db-01']} />)
+    const user = userEvent.setup()
+    await screen.findByText('little-girl')
+    await act(async () => { await user.click(screen.getByRole('button', { name: /Disable all runnables/ })) })
+    expect((await screen.findByTestId('denylist-unreachable')).textContent).toContain('2 disconnected hosts (bastion, uat-db-01)')
+    // Confirming queues the block for them, and the window lists it as pending.
+    await act(async () => { await user.click(screen.getByTestId('risk-ok')) })
+    await waitFor(() => expect(pendingAdd).toHaveBeenCalledWith(['bastion', 'uat-db-01'], ''))
+    expect((await screen.findByTestId('denylist-pending')).textContent).toContain('bastion')
   })
 
   it('cancelling "turn off" puts the mode control back to what the hosts are doing', async () => {

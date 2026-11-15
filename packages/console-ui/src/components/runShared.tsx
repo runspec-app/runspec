@@ -98,6 +98,16 @@ export function savedRunMembers(
   return []
 }
 
+/** A saved run as it will run: runnable, command, then every argument (the
+ *  fixed ones, then the ones just filled in). Pure, for tests. */
+export function savedRunLine(s: Pick<SavedRun, 'runnable' | 'command' | 'args'>, values: Record<string, unknown>): string {
+  const all = { ...(s.args ?? {}), ...values }
+  const args = Object.entries(all)
+    .filter(([, v]) => v !== undefined && v !== '' && v !== null)
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+  return [s.runnable, ...(s.command ?? []), ...args].join(' ')
+}
+
 /** Where a saved run goes, as the confirmation lists it: its host, its group,
  *  its picked hosts, its failover candidates or its profile. Pure. */
 export function savedRunTargets(s: Pick<SavedRun, 'host' | 'group' | 'hosts' | 'selected_hosts' | 'profile'>): string[] {

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useEffect } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
-import { askRemembered, confirmWord, consentCount, consentKey, consentLabel, forgetConsent, forgetConsents, hasConsent, listConsents, RememberedAnswers, targetList, useRiskConfirm, type RiskAnswer, type RiskAsk } from './risk'
-import { savedRunMembers, savedRunTargets } from './runShared'
+import { askRemembered, confirmWord, consentCount, consentKey, consentLabel, consentLive, forgetConsent, forgetConsents, hasConsent, listConsents, RememberedAnswers, targetList, useRiskConfirm, type RiskAnswer, type RiskAsk } from './risk'
+import { savedRunLine, savedRunMembers, savedRunTargets } from './runShared'
 
 function Harness({ ask, onAnswer }: { ask: RiskAsk; onAnswer: (a: RiskAnswer) => void }) {
   const [confirm, holder] = useRiskConfirm()
@@ -87,6 +87,12 @@ describe('remembered consent', () => {
     expect(hasConsent(key)).toBe(false)
   })
 
+  it('writes a saved run as it will run, arguments included', () => {
+    expect(savedRunLine({ runnable: 'service-restart', command: [], args: { service: 'nginx' } }, { reason: 'CHG-1', note: '' }))
+      .toBe('service-restart service=nginx reason=CHG-1')
+    expect(savedRunLine({ runnable: 'cron', command: ['list'], args: {} }, {})).toBe('cron list')
+  })
+
   it('resolves the hosts a saved run reaches', () => {
     const base = { host: '', group: '', hosts: [], selected_hosts: [], profile: '' }
     const fleet = [{ name: 'web-1', group: 'web', profiles: ['prod'] }, { name: 'web-2', group: 'web' }, { name: 'db-1', group: 'db', profiles: ['prod'] }]
@@ -123,14 +129,43 @@ describe('remembered answers in Settings', () => {
     expect(consentCount()).toBe(0)
   })
 
-  it('reads answers stored by earlier versions as bare keys', () => {
+  it('reads answers stored by earlier versions, which ask once more (no date)', () => {
     localStorage.setItem('runspec.consent', JSON.stringify(['run:x:a']))
-    expect(hasConsent('run:x:a')).toBe(true)
     expect(listConsents()[0].label).toBe('run:x:a')
+    expect(hasConsent('run:x:a')).toBe(false)
+  })
+
+  it('an answer lasts 30 days', () => {
+    const day = 24 * 60 * 60 * 1000
+    const now = Date.now()
+    expect(consentLive({ key: 'k', label: 'k', at: now - 29 * day }, now)).toBe(true)
+    expect(consentLive({ key: 'k', label: 'k', at: now - 31 * day }, now)).toBe(false)
+    localStorage.setItem('runspec.consent', JSON.stringify([{ key: 'old', label: 'old', at: now - 31 * day }]))
+    expect(hasConsent('old')).toBe(false)
   })
 
   it('names an answer by its question and targets', () => {
     expect(consentLabel({ level: 'fleet', title: 'Run backup?', action: '', targets: ['prod-1'], okText: '' })).toBe('Run backup on prod-1')
     expect(consentLabel({ level: 'local', title: 'Run disk-check?', action: '', okText: '' })).toBe('Run disk-check')
+  })
+})
+
+describe('focus after an ask', () => {
+  it('goes back to what had it when the ask closes', async () => {
+    function Opener() {
+      const [confirm, holder] = useRiskConfirm()
+      return (
+        <>
+          <button onClick={() => { void confirm({ level: 'local', title: 'Sure?', action: 'x', okText: 'Go' }) }}>open</button>
+          {holder}
+        </>
+      )
+    }
+    render(<Opener />)
+    const btn = screen.getByRole('button', { name: 'open' })
+    btn.focus()
+    fireEvent.click(btn)
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(document.activeElement).toBe(btn))
   })
 })

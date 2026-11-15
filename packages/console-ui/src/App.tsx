@@ -90,10 +90,11 @@ const SavedRunEditor = React.lazy(() => import('./components/SettingsDrawer').th
 const MarketplaceSettings = React.lazy(() => import('./components/SettingsDrawer').then(m => ({ default: m.MarketplaceTab })))
 import { CommandInput } from './components/CommandInput'
 import { DisclaimerGate } from './components/DisclaimerGate'
-import { RUNNING_STATUSES, savedRunMembers, savedRunTargets } from './components/runShared'
+import { RUNNING_STATUSES, savedRunLine, savedRunMembers, savedRunTargets } from './components/runShared'
 import { needsFanoutConfirm } from './views/formsSearch'
 import { askRemembered, consentKey, useRiskConfirm } from './components/risk'
 import { useAntA11yLabels } from './a11yLabels'
+import { denyAppliedEverywhere } from './denylistPending'
 import { useInFlight } from './bridge/useInFlight'
 import { bridge, type HistoryRecord, type EnvFileRef, type Host, type HostProfile, type OtherHost, type Runnable, type Runbook, type SavedRun, type RoomInfo, type BrandTheme, type Disclaimer, type SyncUpdateCheck } from './bridge'
 import { ThemeContext, AccentContext, DEFAULT_ACCENT, BRAND_PRIMARY, UI_FONT, MONO_FONT, RADIUS, surfaces, withAlpha, readableAccent, textMuted, textSecondary, textFaint, textColor, textWarning, dangerColors, inkColors, statusText, controlAccent, isRedBrand } from './ThemeContext'
@@ -843,7 +844,7 @@ export default function App() {
       const go = await askRemembered(askRisk, consentKey(`saved-run:${savedRun.id}`, targets), {
         level: targets.length === 1 && targets[0] === 'local' ? 'local' : 'fleet',
         title: `Run "${savedRun.title || savedRun.id}"?`,
-        action: [savedRun.runnable, ...(savedRun.command ?? [])].join(' '),
+        action: savedRunLine(savedRun, {}),
         targets,
         consequence: 'It has nothing to fill in, so it starts as soon as you confirm.',
         okText: 'Run', danger: false,
@@ -870,7 +871,9 @@ export default function App() {
         const a = await askRisk({
           level: 'fleet',
           title: `Run "${s.title || s.id}" on ${members.length || 'every'} host${members.length === 1 ? '' : 's'}?`,
-          action: [s.runnable, ...(s.command ?? [])].join(' '),
+          // The arguments are part of what's approved: the fixed ones and
+          // what was just filled in.
+          action: savedRunLine(s, values),
           targets: members.length ? members : savedRunTargets(s),
           consequence: s.group ? `Every host in group ${s.group} runs it.` : s.profile ? `Every host in profile ${s.profile} runs it.` : 'Each of these hosts runs it.',
           okText: `Run on ${members.length || 'all'}`, danger: false,
@@ -1186,6 +1189,30 @@ export default function App() {
   // Everything waiting for a person, counted once: the footer and the
   // Console's Activity control show this same number.
   const waitingTotal = (aiEnabled ? triggerAwaiting + pendingConfirms.size : 0) + webhookWaiting
+  // The kill switch's promise to disconnected hosts: when one reconnects, block
+  // it the way "Disable all" did, then drop it from the pending list. A failed
+  // attempt stays pending and is tried again on the next reconnect.
+  const connectedKey = hosts.filter(h => h.connected).map(h => h.name).sort().join(',')
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      let pending: { host: string; reason: string }[] = []
+      try { pending = await bridge.denylist_pending() } catch { return }
+      const up = new Set(connectedKey.split(',').filter(Boolean))
+      for (const p of pending) {
+        if (!live || !up.has(p.host)) continue
+        try {
+          const res = await bridge.manage_denylist({ action: 'all', targets: [p.host], reason: p.reason })
+          if (denyAppliedEverywhere(res)) {
+            await bridge.denylist_pending_remove(p.host)
+            message.warning(`Denylist: ${p.host} reconnected and every runnable on it is now blocked (pending Disable all).`, 6)
+          }
+        } catch { /* stays pending */ }
+      }
+    })()
+    return () => { live = false }
+  }, [connectedKey])
+
   // A tab switch shows or hides approval cards: let each recount its place.
   useEffect(() => { window.dispatchEvent(new Event('runspec:gates_changed')) }, [view])
   const confirmByKey = (action: 'approve' | 'deny') => {
@@ -2434,6 +2461,7 @@ export default function App() {
               open={denylistOpen}
               onClose={() => setDenylistOpen(false)}
               hosts={hosts.filter(h => h.name !== 'local' && h.connected)}
+              unreachable={hosts.filter(h => h.name !== 'local' && !h.connected).map(h => h.name)}
             />
           )}
         </Suspense>

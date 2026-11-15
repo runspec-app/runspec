@@ -203,3 +203,27 @@ describe('Run now on this console', () => {
     await waitFor(() => expect(api.run_schedule_now).toHaveBeenCalledTimes(2))
   })
 })
+
+describe('Restart all schedulers', () => {
+  it('asks once, listing every daemon, then restarts each', async () => {
+    const daemonVenv = (venv: string) => ({
+      host: 'web-1', group: venv, available: true, ok: true, owner: 'svc',
+      status: {
+        ok: true, venv, config: 'c', backend: 'daemon', errors: [], stale: [],
+        daemon: { state: 'running', pid: 1, uptime_s: 60, heartbeat_age_s: 2 },
+        schedules: [sched({ id: `poll-${venv}`, runnable: 'check-queue', line: 'daemon', when: { every: '5m' } })],
+      },
+    })
+    api.shared_schedules_all = vi.fn(() => Promise.resolve([...VENVS, daemonVenv('jobs2')] as SharedSchedulesVenv[]))
+    api.host_scheduler_restart = vi.fn(() => Promise.resolve({ ok: true, daemon: { state: 'running', pid: 9 }, warnings: [] }))
+    await renderView()
+    const btn = await screen.findByTestId('restart-all-schedulers')
+    fireEvent.click(btn)
+    expect((await screen.findByTestId('risk-action')).textContent).toContain('runspec-scheduler')
+    expect(screen.getByText(/web-1 \/ jobs, web-1 \/ jobs2/)).toBeTruthy()
+    expect(api.host_scheduler_restart).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('risk-ok'))
+    await waitFor(() => expect(api.host_scheduler_restart).toHaveBeenCalledTimes(2))
+    expect(api.host_scheduler_restart).toHaveBeenCalledWith({ host: 'web-1', venv: 'jobs2' })
+  })
+})
