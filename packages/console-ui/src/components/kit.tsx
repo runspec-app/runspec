@@ -96,7 +96,8 @@ export function StatusTag({ tone, children, tip, icon, mono, style, testId, onCl
       onKeyDown={onClick ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(e) } } : undefined}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
-        fontSize: 12, lineHeight: '18px', padding: '0 6px', borderRadius: 4,
+        // A clickable tag is a 24px target (22px line + its 1px borders).
+        fontSize: 12, lineHeight: onClick ? '22px' : '18px', padding: '0 6px', borderRadius: 4,
         color: c.color, background: c.bg, border: `1px solid ${c.border}`,
         fontWeight: tone === 'waiting' || tone === 'failed' ? 600 : 500,
         fontFamily: mono ? MONO_FONT : 'inherit',

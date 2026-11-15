@@ -160,12 +160,18 @@ body {
 
 /* Status bar: its clickable items fill the bar's height (a 24px+ target; the
    text alone was 15-17px tall). */
-.rs-statusbar [role="button"] { align-self: stretch; display: inline-flex; align-items: center; }
+.rs-statusbar [role="button"] { align-self: stretch; display: inline-flex; align-items: center; cursor: pointer; }
+.rs-statusbar-item { border-radius: 4px; }
+
+/* 24px targets for small links and Ant's copy icon (it was 13x15). */
+.rs-link-row a { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; }
+.ant-typography-copy { min-width: 24px; min-height: 24px; display: inline-flex !important; align-items: center; justify-content: center; vertical-align: middle; }
+.rs-statusbar-item:focus-visible { outline: 2px solid var(--rs-focus, var(--rs-accent)); outline-offset: -2px; }
 
 /* Console toolbar: when the column is narrow the session chips take a row of
    their own under the actions, instead of shrinking to one clipped chip. */
 .rs-console-col { container-type: inline-size; }
-@container (max-width: 640px) {
+@container (max-width: 880px) {
   .rs-session-strip { order: 10; flex-basis: 100% !important; }
 }
 
@@ -327,6 +333,12 @@ html[data-theme='light'] .ant-tag.ant-tag-lime { color: #3d5c0a; }
   align-items: start;
 }
 .rs-settings-cols > * { min-width: 0; }
+/* Two 520px columns need 1080px; below that they stack, and a
+   lastFirstWhenStacked tab shows its last column first. */
+.rs-settings-cols-wrap { container-type: inline-size; }
+@container (max-width: 1079px) {
+  .rs-last-first > :last-child { order: -1; }
+}
 
 /* Clickable card: rests at the small shadow, lifts to the medium one on hover.
    Colour/border changes stay inline (they depend on the accent); the lift is

@@ -173,7 +173,7 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
       open={open}
       onCancel={() => guard(onClose)}
       footer={null}
-      width={mode === 'many' ? 'min(1600px, 96vw)' : 1000}
+      width={mode === 'many' ? 'min(1600px, 96vw)' : 'min(1000px, 96vw)'}
       title={<span><CodeOutlined style={{ marginRight: 8 }} />Env files — <Text code>{ENV_FILE_NAMES[file]}</Text></span>}
       destroyOnHidden
     >
@@ -328,7 +328,7 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
     {
       title: 'Variable',
       key: 'key',
-      width: 280,
+      width: 220,
       render: (_: unknown, r: DraftRow) => (
         <span style={{ fontFamily: MONO_FONT, fontSize: 12, textDecoration: r.removed ? 'line-through' : undefined }}>
           {r.secret && <LockOutlined style={{ marginRight: 4 }} />}{r.key}
@@ -368,13 +368,14 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
     {
       title: 'Read by',
       key: 'readers',
-      width: 260,
+      width: 220,
       render: (_: unknown, r: DraftRow) => <ReaderTags readers={r.readers} />,
     },
     {
       title: '',
       key: 'act',
-      width: 44,
+      // Fits the labelled Remove / Keep (44px clipped it).
+      width: 96,
       render: (_: unknown, r: DraftRow) => {
         const i = rows.indexOf(r)
         if (r.removed) return <Button size="small" type="text" icon={<UndoOutlined aria-hidden />} aria-label={`Keep ${r.key}`} onClick={() => update(i, { removed: false })}>Keep</Button>

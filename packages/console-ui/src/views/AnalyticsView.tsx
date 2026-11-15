@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from 'react'
 import { useHistoryRange, chartDays } from './historyRange'
+import { readHostsLabel } from '../hostCount'
 import { Row, Col, Card, Statistic, Select, Segmented, Table, Tag, Tooltip, Alert, Empty, Spin, Typography } from 'antd'
 import { ReloadOutlined, WarningOutlined } from '@ant-design/icons'
 import { Area, Line, Column, Pie } from '@ant-design/plots'
@@ -170,8 +171,13 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
             onChange={(v) => setRange(v as number)}
           />
         </Tooltip>
+        {range !== sinceDays && (
+          <Text type="secondary" data-testid="chart-range-note" style={{ fontSize: 12 }}>
+            Charts cover the last 30 days; Runs is set to {range === 0 ? 'All' : `${range}d`}.
+          </Text>
+        )}
         <Select
-          allowClear aria-label="Filter by host" placeholder={`All hosts (${targets.length})`}
+          allowClear aria-label="Filter by host" placeholder={`All: ${readHostsLabel(targets.length)}`}
           style={{ minWidth: 150 }} value={hostFilter} onChange={setHostFilter}
           options={targets.map(h => ({ label: h, value: h }))}
           showSearch

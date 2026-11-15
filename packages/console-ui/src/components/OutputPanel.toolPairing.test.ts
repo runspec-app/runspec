@@ -12,7 +12,7 @@ vi.mock('../bridge', () => ({
   bridge: new Proxy({}, { get: () => vi.fn() }),
 }))
 
-import { confirmOwnsSegment, finishToolSegment } from './OutputPanel'
+import { confirmOwnsSegment, finishToolSegment, gateResolvedAt } from './OutputPanel'
 import type { BlockSegment } from './OutputPanel'
 
 const running = (name: string, callId?: string, startedAt = 1000): BlockSegment => ({
@@ -79,5 +79,20 @@ describe('confirmOwnsSegment', () => {
   it('never claims a finished card or a missing confirm', () => {
     expect(confirmOwnsSegment({ ...pc, call_id: 'b' }, entry({ callId: 'b', running: false }))).toBe(false)
     expect(confirmOwnsSegment(null, entry({}))).toBe(false)
+  })
+})
+
+describe('finishToolSegment timing', () => {
+  it('splits a gated call into the wait for an answer and the run', () => {
+    gateResolvedAt.set('tg', 49000)
+    const [seg] = finishToolSegment([running('restart', 'tg', 1000)], { call_id: 'tg', tool_name: 'restart', output: 'ok' } as never, 50500)
+    expect(entryOf(seg).waitedMs).toBe(48000)
+    expect(entryOf(seg).durationMs).toBe(1500)
+    expect(gateResolvedAt.has('tg')).toBe(false)
+  })
+  it('keeps one duration when nothing was gated', () => {
+    const [seg] = finishToolSegment([running('ls', 'tn', 1000)], { call_id: 'tn', tool_name: 'ls', output: '' } as never, 3000)
+    expect(entryOf(seg).waitedMs).toBeUndefined()
+    expect(entryOf(seg).durationMs).toBe(2000)
   })
 })

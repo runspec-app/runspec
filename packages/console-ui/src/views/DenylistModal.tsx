@@ -247,10 +247,11 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
     {
       title: 'Host',
       key: 'host',
-      width: 170,
+      width: 200,
       render: (_: unknown, r: DenylistHostStatus) => (
-        <div>
-          <div>{r.host}</div>
+        <div style={{ minWidth: 0 }}>
+          {/* One line: a long name ellipses (full on hover), never breaks at a hyphen. */}
+          <div title={r.host} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.host}</div>
           {r.hostname && r.hostname !== r.host && (
             <Tooltip title="The machine's own hostname — what a rule's host globs match">
               <Text type="secondary" style={{ fontSize: 12, fontFamily: MONO_FONT }}>{r.hostname}</Text>

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { readHostsLabel } from '../hostCount'
 import {
   Table, Typography, Button, Tooltip, message, Modal, Drawer, Select,
   Input, InputNumber, Space, Form, Spin, Alert,
@@ -547,14 +548,18 @@ export function LogsView({ activeScope, active, onOpenAnalytics }: LogsViewProps
     <div>
       <PageToolbar
         actions={<>
-          <Tooltip title="Run analytics for these hosts: charts, success rate, durations and top runnables">
-            <Button size="small" icon={<BarChartOutlined />} onClick={() => (onOpenAnalytics ? onOpenAnalytics() : setAnalyticsOpen(true))}>Charts</Button>
-          </Tooltip>
+          {/* Inside History the Charts section is one click away, so the
+              button only shows where Log files stands alone (drawer). */}
+          {!onOpenAnalytics && (
+            <Tooltip title="Run analytics for these hosts: charts, success rate, durations and top runnables">
+              <Button size="small" icon={<BarChartOutlined />} onClick={() => setAnalyticsOpen(true)}>Charts</Button>
+            </Tooltip>
+          )}
           <IconAction label="Refresh" tip="Read the logs again" icon={<ReloadOutlined spin={loading} />} onClick={refreshAll} />
         </>}
       >
         <Select
-          allowClear aria-label="Filter by host" placeholder={`All hosts (${targets.length})`}
+          allowClear aria-label="Filter by host" placeholder={`All: ${readHostsLabel(targets.length)}`}
           style={{ minWidth: 180 }} value={hostFilter} onChange={setHostFilter}
           options={targets.map(h => ({ label: h, value: h }))}
           showSearch

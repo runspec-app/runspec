@@ -1120,7 +1120,7 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
   return (
     <Form form={form} layout="vertical" size="small" style={{ marginTop: 4 }}>
       {riskHolder}
-      <SettingsColumns>
+      <SettingsColumns lastFirstWhenStacked>
         <div>
           <Form.Item name="ssh_user" label="Default username">
             <Input placeholder="your-username" />

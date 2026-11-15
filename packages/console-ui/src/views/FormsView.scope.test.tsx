@@ -35,7 +35,7 @@ function renderForms() {
   return onRun
 }
 
-const search = (q: string) => fireEvent.change(screen.getByPlaceholderText(/Search name/), { target: { value: q } })
+const search = (q: string) => fireEvent.change(screen.getByPlaceholderText(/^Search…/), { target: { value: q } })
 
 describe('Forms → search across the profile', () => {
   it('offers the other hosts when the selected one has no match', () => {

@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 /**
  * SessionStrip — the chip row in the Console toolbar, one chip per live
  * session (interactive chats + trigger / schedule fires). A chip shows its
@@ -103,6 +103,38 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
     if (!row || !selectedId) return
     chipEl(row, selectedId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [selectedId, sessions.length])
+  // Chips scrolled out of the row join the "+N more" menu, so its count is
+  // everything you can't see.
+  const [scrolledOff, setScrolledOff] = useState<string[]>([])
+  const measure = () => {
+    const row = rowRef.current
+    if (!row) return
+    const box = row.getBoundingClientRect()
+    const off = Array.from(row.querySelectorAll<HTMLElement>('[data-session-id]'))
+      .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && (r.left < box.left - 1 || r.right > box.right + 1) })
+      .map(el => el.dataset.sessionId!)
+    setScrolledOff(prev => (prev.join(',') === off.join(',') ? prev : off))
+  }
+  const measureRef = useRef(measure)
+  measureRef.current = measure
+  useLayoutEffect(() => { measure() })
+  // A resize can leave the selected chip outside the row: bring it back.
+  const hasRow = sessions.length > 0
+  useEffect(() => {
+    const row = rowRef.current
+    if (!row) return
+    const onScroll = () => measureRef.current()
+    row.addEventListener('scroll', onScroll, { passive: true })
+    let ro: ResizeObserver | undefined
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        row.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        measureRef.current()
+      })
+      ro.observe(row)
+    }
+    return () => { row.removeEventListener('scroll', onScroll); ro?.disconnect() }
+  }, [hasRow])
   useEffect(() => {
     const row = rowRef.current
     const ids = waitingKey ? waitingKey.split(',') : []
@@ -112,7 +144,10 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
     chipEl(row, fresh[fresh.length - 1])?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [waitingKey])
   if (sessions.length === 0) return null
-  const { inline, overflow } = partitionSessions(sessions, statusOf, selectedId)
+  const parts = partitionSessions(sessions, statusOf, selectedId)
+  const inline = parts.inline
+  // The menu: chips scrolled out of view, then the folded-away runs.
+  const overflow = [...inline.filter(s => scrolledOff.includes(s.id)), ...parts.overflow]
   const finishedOverflow = overflow.filter(s => {
     const st = statusOf(s)
     return st === 'idle' || st === 'done'
@@ -208,7 +243,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
             title={`${label} — ${STATUS_TIP[status]}`}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
-              height: 24, padding: '0 8px', cursor: 'pointer', userSelect: 'none',
+              height: 26, padding: '0 8px', cursor: 'pointer', userSelect: 'none',
               borderRadius: RADIUS.sm,
               border: `1px solid ${selected ? accent : sf.border}`,
               background: selected ? withAlpha(accent, 0.15) : 'transparent',
@@ -289,5 +324,5 @@ const chipEl = (row: HTMLElement, id: string) =>
 
 // The close × fills the chip's height: a 24px target (it was 16px).
 const CLOSE_STYLE = (color: string): React.CSSProperties => ({
-  padding: 0, height: 22, width: 24, minWidth: 24, marginRight: -6, lineHeight: 1, color,
+  padding: 0, height: 24, width: 24, minWidth: 24, marginRight: -6, lineHeight: 1, color,
 })

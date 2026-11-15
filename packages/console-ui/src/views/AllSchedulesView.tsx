@@ -11,6 +11,7 @@
  * Rows, states, counts and filtering live in allSchedules.ts (pure, tested).
  */
 import { useEffect, useMemo, useState } from 'react'
+import { readHostsLabel } from '../hostCount'
 import { Table, Tag, Typography, Button, Tooltip, Alert, Dropdown, Empty, Input, Modal, Popover, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
 import {
   ReloadOutlined, HistoryOutlined, InfoCircleOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
@@ -845,7 +846,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
               </Tooltip>
             )}
             <span style={{ fontSize: 12, color: muted }}>
-              {hostCount} host{hostCount === 1 ? '' : 's'}{updatedAt ? ` · read ${fmtWhen(Math.min(updatedAt, Date.now()))}` : ''}
+              {readHostsLabel(hostCount)}{updatedAt ? ` · read ${fmtWhen(Math.min(updatedAt, Date.now()))}` : ''}
             </span>
             <Button size="small" icon={<ReloadOutlined />} onClick={onRefresh} loading={loading}>Refresh</Button>
             {editable && scopeVenvs.length > 0 && (

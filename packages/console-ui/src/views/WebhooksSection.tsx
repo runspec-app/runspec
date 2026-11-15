@@ -206,7 +206,7 @@ function WebhookStrip({ v, editable, onHooks }: { v: WebhookVenv; editable: bool
       {last ? (
         <>
           <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 0, border: 'none', background: 'none', cursor: 'pointer', color: textSecondary(isDark), fontSize: 12, textAlign: 'left' }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', minHeight: 24, border: 'none', background: 'none', cursor: 'pointer', color: textSecondary(isDark), fontSize: 12, textAlign: 'left' }}>
             {open ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
             <span>Last delivery {relTime(last.received)}: {last.hook}, {deliveryStatus(last).label}</span>
             {!open && v.recent.length > 1 && <span style={{ color: textMuted(isDark) }}>· {v.recent.length} recent</span>}
