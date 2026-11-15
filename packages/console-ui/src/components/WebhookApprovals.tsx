@@ -10,6 +10,7 @@
  * "approved by …" line until the run finishes. Works with AI off: nothing here
  * goes through the assistant.
  */
+import { approvalPolicyText } from '../consoleInfo'
 import { useRef, useState } from 'react'
 import { Button, message } from 'antd'
 import { DownOutlined, RightOutlined } from '@ant-design/icons'
@@ -29,10 +30,10 @@ export const FIELDS_SHOWN_OPEN = 6
 /** Cards shown before the rest fold behind "N more". */
 export const SHOWN_AT_ONCE = 3
 
+// The chat approval card's words, from one source (consoleInfo).
 const AUTONOMY_WHY: Record<string, string> = {
-  // The chat approval card's words (OutputPanel), so both read alike.
-  confirm: 'Asks before running.',
-  supervised: 'Asks before running, and you review what it does.',
+  confirm: approvalPolicyText('confirm'),
+  supervised: approvalPolicyText('supervised'),
 }
 
 /** Why this delivery waits for a person: the hook asked for it

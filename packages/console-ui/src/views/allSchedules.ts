@@ -414,7 +414,9 @@ export function inScope(source: RowSource, scope: ScheduleScope): boolean {
   return source === scope
 }
 
-export interface ScopeCount { schedules: number; problems: number }
+/** `shared`: problems that also count on the other host card (a venv that
+ *  couldn't be read belongs to both), so the cards needn't add up to All. */
+export interface ScopeCount { schedules: number; problems: number; shared: number }
 
 /** Schedule and problem counts for each option card. */
 export function scopeCounts(c: Collected): Record<ScheduleScope, ScopeCount> {
@@ -424,6 +426,9 @@ export function scopeCounts(c: Collected): Record<ScheduleScope, ScopeCount> {
     out[scope] = {
       schedules: rows.filter(r => r.kind === 'schedule').length,
       problems: rows.filter(r => r.problem).length + c.notes.filter(n => inScope(n.source, scope)).length,
+      shared: scope === 'cron' || scope === 'daemon'
+        ? rows.filter(r => r.problem && r.source === 'unknown').length + c.notes.filter(n => n.source === 'unknown').length
+        : 0,
     }
   }
   return out

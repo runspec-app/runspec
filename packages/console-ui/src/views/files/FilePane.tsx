@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Input, Modal, Select, Spin, Tooltip, Typography, message } from 'antd'
+import { Button, Dropdown, Input, Modal, Select, Spin, Tooltip, Typography, message } from 'antd'
 import {
   ArrowUpOutlined, HomeOutlined, ReloadOutlined, FolderAddOutlined, FolderFilled,
   FileOutlined, CodeOutlined, LinkOutlined, EditOutlined, DeleteOutlined,
@@ -348,14 +348,26 @@ export function FilePane({
           what changes files is named, beside the filter. */}
       <div style={{ padding: '0 10px 6px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <Input size="small" allowClear value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" aria-label={`${side} pane name filter`} style={{ flex: '1 1 140px', minWidth: 0 }} />
+        {/* A narrow pane folds these three into one menu (index.css), so
+            Delete never wraps onto a line of its own. */}
+        <Dropdown trigger={['click']} menu={{
+          items: [
+            { key: 'new', label: 'New folder', icon: <FolderAddOutlined />, disabled: !canHostActions },
+            { key: 'rename', label: 'Rename (F2)', icon: <EditOutlined />, disabled: !canHostActions || selected.length !== 1 },
+            { key: 'delete', label: 'Delete (Del)', icon: <DeleteOutlined />, danger: true, disabled: !canHostActions || selected.length === 0 },
+          ],
+          onClick: ({ key }) => { if (key === 'new') setNewFolder(''); else if (key === 'rename') startRename(); else startDelete() },
+        }}>
+          <Button size="small" type="text" className="rs-pane-compact" aria-label="More file actions">More</Button>
+        </Dropdown>
         <Tooltip title={canHostActions ? '' : 'Works on this computer and configured hosts'}>
-          <Button size="small" type="text" icon={<FolderAddOutlined aria-hidden />} aria-label="New folder" disabled={!canHostActions} onClick={() => setNewFolder('')}>New folder</Button>
+          <Button size="small" type="text" className="rs-pane-full" icon={<FolderAddOutlined aria-hidden />} aria-label="New folder" disabled={!canHostActions} onClick={() => setNewFolder('')}>New folder</Button>
         </Tooltip>
         <Tooltip title={canHostActions ? 'F2' : 'Works on this computer and configured hosts'}>
-          <Button size="small" type="text" icon={<EditOutlined aria-hidden />} aria-label="Rename" disabled={!canHostActions || selected.length !== 1} onClick={startRename}>Rename</Button>
+          <Button size="small" type="text" className="rs-pane-full" icon={<EditOutlined aria-hidden />} aria-label="Rename" disabled={!canHostActions || selected.length !== 1} onClick={startRename}>Rename</Button>
         </Tooltip>
         <Tooltip title={canHostActions ? 'Del' : 'Works on this computer and configured hosts'}>
-          <Button size="small" type="text" icon={<DeleteOutlined aria-hidden />} aria-label="Delete" danger className="rs-quiet-danger" disabled={!canHostActions || selected.length === 0} onClick={startDelete}>Delete</Button>
+          <Button size="small" type="text" icon={<DeleteOutlined aria-hidden />} aria-label="Delete" danger className="rs-quiet-danger rs-pane-full" disabled={!canHostActions || selected.length === 0} onClick={startDelete}>Delete</Button>
         </Tooltip>
       </div>
 

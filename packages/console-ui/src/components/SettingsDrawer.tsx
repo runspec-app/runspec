@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { theme, Modal, Form, Input, InputNumber, Button, Divider, Typography, Space, Tabs, message, Tag, Tooltip, Select, Switch, Collapse, Alert, Segmented, AutoComplete, Table, Slider, Progress } from 'antd'
 import type { SelectProps } from 'antd'
-import { EmptyState, OnceHint, RowActions, SaveBar, StatusTag, withLabel, type StatusTone } from './kit'
+import { EmptyState, HowItWorks, OnceHint, RowActions, SaveBar, StatusTag, withLabel, type StatusTone } from './kit'
 import { PlusOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, UploadOutlined, DownloadOutlined, UpOutlined, DownOutlined, RightOutlined, ApiOutlined, LoadingOutlined, KeyOutlined, DesktopOutlined, MailOutlined, ThunderboltOutlined, TeamOutlined, StopOutlined, ReloadOutlined, WarningOutlined, SearchOutlined, SoundOutlined, CloudServerOutlined, DiffOutlined, SyncOutlined } from '@ant-design/icons'
 import { VoiceConfig, VoiceDevice, bridge, type JumpHost, type LocalVenvConfig, type HostGroup, type HostProfile, type Repo, type TestResult, type RotateHostResult, type Filter, type Credential, type CredentialGuide, type Mailbox, type MailCategories, type Watch, type TriggerListResult, type Team, type TeamsEvent, type SyncConfig, type SyncPullResult, type SyncPreview, type SyncUpdateCheck, type SeedStatus, type SeedOverride, type SeedApplyResult, type Runbook, type RunbookStep, type SavedRun, type Host, type DenylistPayload, type DenylistHostStatus, type SelfServiceEntry, type Runnable, type RoomHost, type McpServer, type McpHeaderCredential, type McpStatus, type McpServerStatus, type McpCredentialOption, type ToolVisibility, type NamedSound, type MarketplaceConfig, type MarketplaceConfigInput, type MarketplaceRepo, type OwnMcpClaudePlugin } from '../bridge'
 import { CopyKeyModal } from '../views/CopyKeyModal'
@@ -2769,8 +2769,8 @@ function JumpHostsTab({ onHostsChanged }: { onHostsChanged?: () => void }) {
                   </div>
                   {g.profiles.map(pn => <Tag key={pn} style={{ margin: 0, fontSize: 11 }}>{pn}</Tag>)}
                   <span onClick={e => e.stopPropagation()} style={{ display: 'flex' }}>
-                    <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupUp(groupIdx)} disabled={isEditing || groupIdx === 0} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} aria-label={`Move group ${g.name || 'Ungrouped'} up`} />
-                    <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupDown(groupIdx)} disabled={isEditing || groupIdx === groupsSummary.length - 1} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 18 }} aria-label={`Move group ${g.name || 'Ungrouped'} down`} />
+                    <Button type="text" size="small" icon={<UpOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupUp(groupIdx)} disabled={isEditing || groupIdx === 0} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 24, minWidth: 24 }} aria-label={`Move group ${g.name || 'Ungrouped'} up`} />
+                    <Button type="text" size="small" icon={<DownOutlined style={{ fontSize: 9 }} />} onClick={() => moveGroupDown(groupIdx)} disabled={isEditing || groupIdx === groupsSummary.length - 1} style={{ padding: '0 4px', color: 'var(--rs-text-faint)', height: 24, minWidth: 24 }} aria-label={`Move group ${g.name || 'Ungrouped'} down`} />
                   </span>
                   <RightOutlined style={{ fontSize: 10, color: 'var(--rs-text-muted)' }} />
                 </div>
@@ -5727,13 +5727,17 @@ export function TelemetryTab() {
               </OnceHint>
             </>
           ) : (
-            <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-              Export <strong>metrics</strong> over OpenTelemetry (OTLP) — per-runnable-run counters and
-              durations for every run this console does (Forms, MCP server, schedules, triggers). Tracing is
-              for agent turns, so it's not shown here. Requires the optional <code>otel</code> extra.
-              Configure the endpoint in the <strong>Metrics</strong> section; the resource identity and
-              TLS settings here apply to it.
-            </Typography.Paragraph>
+            <>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+                Export run counts and durations to your metrics backend.
+              </Typography.Paragraph>
+              <HowItWorks summary="How this works">
+                Every run this console does (Forms, MCP server, schedules, triggers) is counted over
+                OpenTelemetry (OTLP). Tracing is for assistant turns, so it isn't shown here. Needs the
+                optional <code>otel</code> extra. Set the endpoint under <strong>Metrics</strong>; the identity
+                and TLS settings here apply to it.
+              </HowItWorks>
+            </>
           )}
 
           {ai && (
@@ -5916,16 +5920,17 @@ export function TelemetryTab() {
           <Divider style={{ margin: '14px 0 18px' }} />
           <Typography.Title level={5} style={{ marginTop: 0 }}>Metrics</Typography.Title>
           <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-            Also export <strong>metrics</strong> — per-tool-run and per-turn counters and duration
-            histograms (<code>runspec.tool.runs</code>, <code>runspec.tool.duration</code>,{' '}
-            <code>runspec.agent.turns</code>, <code>runspec.agent.turn.duration</code>,{' '}
-            <code>runspec.agent.turn.tokens</code>) pushed on an interval. Metrics are a{' '}
-            <strong>separate signal with their own endpoint</strong>, so they can go to a different
-            backend than traces — many trace backends (LangSmith) ingest OTLP traces but not metrics,
-            so point these at a metrics/OTLP endpoint (a Grafana / Prometheus OTLP endpoint, or a
-            collector). Transport trust (CA bundle / TLS verify) is inherited from the trace settings
-            above; endpoint and auth are set here. Requires the same <code>otel</code> extra.
+            Counts and durations of runs and turns, sent to their own endpoint.
           </Typography.Paragraph>
+          <HowItWorks summary="How metrics work" style={{ marginBottom: 12 }}>
+            Per-tool-run and per-turn counters and duration histograms (<code>runspec.tool.runs</code>,{' '}
+            <code>runspec.tool.duration</code>, <code>runspec.agent.turns</code>,{' '}
+            <code>runspec.agent.turn.duration</code>, <code>runspec.agent.turn.tokens</code>), pushed on an
+            interval. They are a separate signal with their own endpoint: many trace backends (LangSmith)
+            take traces but not metrics, so point these at a metrics endpoint (Grafana or Prometheus OTLP, or
+            a collector). The CA bundle and TLS check above apply; endpoint and auth are set here. Needs the
+            same <code>otel</code> extra.
+          </HowItWorks>
           {row('Enable metrics', <Switch checked={metricsEnabled} onChange={setMetricsEnabled} />)}
           {row('OTLP metrics endpoint', <Input style={{ flex: 1, maxWidth: 600, minWidth: 0 }} placeholder="https://…/v1/metrics  (blank ⇒ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT)" value={metricsEndpoint} onChange={e => setMetricsEndpoint(e.target.value)} disabled={!metricsEnabled} />)}
           <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -2 }}>
@@ -6037,7 +6042,7 @@ function ChatHistoryTab() {
       <SettingsColumns>
         <div>
           <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-            Save each chat so you can reopen and continue past conversations from the Console's <strong>History</strong> button.
+            Save each chat so you can reopen and continue past conversations from the Console's <strong>Past chats</strong> button.
             Transcripts are stored <strong>only on this machine</strong> (never synced) and may contain sensitive content.
             Old conversations are pruned to the limits below.
           </Typography.Paragraph>

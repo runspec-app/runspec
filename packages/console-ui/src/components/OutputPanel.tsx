@@ -14,7 +14,7 @@ import {
   InfoCircleOutlined,
 } from '@ant-design/icons'
 import { pressable, StatusTag, type StatusTone } from './kit'
-import { approvalConsequence, fallbackTarget, useConsoleInfo } from '../consoleInfo'
+import { approvalConsequence, approvalPolicyText, fallbackTarget, useConsoleInfo } from '../consoleInfo'
 import { APPROVAL_BG, APPROVAL_BORDER, ApprovalActions, QueueMark, useGatePosition } from './approval'
 import { AskFirst } from './risk'
 import { Clock } from '../when'
@@ -2672,10 +2672,8 @@ const BlockCard = memo(function BlockCard({
   )
 })
 
-/** The approval card's policy line, in words rather than the level's name. */
-export function approvalPolicyText(level: string): string {
-  return level === 'supervised' ? 'Asks before running, and you review what it does' : 'Asks before running'
-}
+// The approval card's policy line lives in consoleInfo (shared with webhook cards).
+export { approvalPolicyText } from '../consoleInfo'
 
 /** Who asked for a gated call, for the approval card: the trigger, schedule or
  *  outside agent behind the block. Nothing for the operator's own chat. */

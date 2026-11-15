@@ -16,7 +16,7 @@ import {
   planCopy, rememberFilter, relaySource, targetHost, targetKey, targetLabel,
   type DragPayload, type PaneTarget, type Side,
 } from './filesModel'
-import { StatusTag } from '../../components/kit'
+import { RowActions, StatusTag } from '../../components/kit'
 import { consentKey, hasConsent, rememberConsent, useRiskConfirm } from '../../components/risk'
 
 const { Text } = Typography
@@ -44,15 +44,28 @@ export function FilesView({ hosts, selectedHost, active }: {
   const [workspacePath, setWorkspacePath] = useState('')
   const [creds, setCreds] = useState<Credential[]>([])
   // Saved transfers: your last choice, else open only on a wide window (at
-  // 1024 it left each pane ~210px and the file names no room).
-  const [rail, setRail] = useState(() => {
+  // 1024 it left each pane ~210px and the file names no room). The width is
+  // followed live, so narrowing the window closes it unless you chose it.
+  const [railChoice, setRailChoice] = useState<'on' | 'off' | null>(() => {
     try {
       const v = localStorage.getItem(RAIL_KEY)
-      if (v === 'off') return false
-      if (v === 'on') return true
-    } catch { /* storage unavailable */ }
-    return typeof window === 'undefined' || window.innerWidth >= 1200
+      return v === 'on' || v === 'off' ? v : null
+    } catch { return null }
   })
+  const [viewW, setViewW] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth))
+  useEffect(() => {
+    const onResize = () => setViewW(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  const rail = railChoice ? railChoice === 'on' : viewW >= 1200
+  // Below 1000px an open rail floats over the panes instead of taking their room.
+  const railOverlay = rail && viewW < 1000
+  const setRail = (f: (r: boolean) => boolean) => {
+    const next = f(rail)
+    try { localStorage.setItem(RAIL_KEY, next ? 'on' : 'off') } catch { /* private window */ }
+    setRailChoice(next ? 'on' : 'off')
+  }
   const [saved, setSaved] = useState<SavedTransfer[]>([])
   const [editing, setEditing] = useState<{ draft: SavedTransfer; replaceId?: string } | null>(null)
   const [runningSaved, setRunningSaved] = useState<SavedTransfer | null>(null)
@@ -204,7 +217,7 @@ export function FilesView({ hosts, selectedHost, active }: {
       {riskHolder}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--rs-border)', flexWrap: 'wrap' }}>
         <Tooltip title={rail ? 'Hide saved transfers' : 'Show saved transfers'}>
-          <Button size="small" icon={rail ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} aria-pressed={rail} onClick={() => setRail(r => { try { localStorage.setItem(RAIL_KEY, r ? 'off' : 'on') } catch { /* private window */ } return !r })}>Saved transfers</Button>
+          <Button size="small" icon={rail ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} aria-pressed={rail} onClick={() => setRail(r => !r)}>Saved transfers</Button>
         </Tooltip>
         <Tooltip title={copyPlan.error ?? (selectedPaths.length ? `Copy the selected file${selectedPaths.length === 1 ? '' : 's'} to the other pane` : 'Select files first (or drag them across)')}>
           <Button size="small" icon={<SwapOutlined />} disabled={!selectedPaths.length || !!copyPlan.error} onClick={copySelected}>
@@ -221,9 +234,12 @@ export function FilesView({ hosts, selectedHost, active }: {
         <Text type="secondary" style={{ fontSize: 12 }}>Drag files between the panes to copy.</Text>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: rail ? '250px minmax(0,1fr)' : 'minmax(0,1fr)' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'grid', position: 'relative', gridTemplateColumns: rail && !railOverlay ? '250px minmax(0,1fr)' : 'minmax(0,1fr)' }}>
         {rail && (
-          <aside aria-label="Saved transfers" style={{ borderRight: '1px solid var(--rs-border)', background: 'var(--rs-surface-sunken)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <aside aria-label="Saved transfers" style={{
+            borderRight: '1px solid var(--rs-border)', background: 'var(--rs-surface-sunken)', display: 'flex', flexDirection: 'column', minHeight: 0,
+            ...(railOverlay ? { position: 'absolute', top: 0, bottom: 0, left: 0, width: 250, zIndex: 5, boxShadow: 'var(--rs-shadow-md)' } : {}),
+          }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px 6px' }}>
               <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.07em', textTransform: 'uppercase' }}>Saved transfers</Text>
               <span>
@@ -246,17 +262,21 @@ export function FilesView({ hosts, selectedHost, active }: {
                   <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: `${t.source ?? ''} → ${t.dest ?? ''}` }}>{t.source ?? '—'} → {t.dest ?? '—'}</Text>
                   {t.filter && <Text type="secondary" style={{ fontSize: 12 }}>Filter: {t.filter}</Text>}
                   {t.error && <Text type="danger" style={{ fontSize: 12 }}>{t.error}</Text>}
-                  <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-                    <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={!!t.error} onClick={() => setRunningSaved(t)}>Run…</Button>
-                    <Tooltip title="Open its source and destination folders in the panes"><Button size="small" icon={<FolderOpenOutlined />} aria-label={`Open ${t.id} in panes`} onClick={() => openInPanes(t)} /></Tooltip>
-                    <Tooltip title="Edit"><Button size="small" icon={<EditOutlined />} aria-label={`Edit ${t.id}`} onClick={() => setEditing({ draft: t, replaceId: t.id })} /></Tooltip>
-                    <Tooltip title="Delete"><Button size="small" danger className="rs-quiet-danger" icon={<DeleteOutlined />} aria-label={`Delete ${t.title || t.id}`}
-              onClick={async () => {
-                const r = await askRisk({ level: 'local', title: 'Delete this saved transfer?', action: t.title ? `${t.title} (${t.id})` : t.id, okText: 'Delete' })
-                if (r.ok) deleteSaved(t.id)
-              }} /></Tooltip>
-                    
-                  </div>
+                  {/* Labelled like every other list: Run and Edit, the rest under More. */}
+                  <RowActions
+                    style={{ marginTop: 4 }}
+                    testId={`saved-actions-${t.id}`}
+                    primary={{ key: 'run', label: 'Run…', ariaLabel: `Run ${t.title || t.id}`, icon: <PlayCircleOutlined />, onClick: () => setRunningSaved(t), disabled: !!t.error }}
+                    secondary={[{ key: 'edit', label: 'Edit', ariaLabel: `Edit ${t.title || t.id}`, icon: <EditOutlined />, onClick: () => setEditing({ draft: t, replaceId: t.id }) }]}
+                    more={[
+                      { key: 'open', label: 'Open in panes', icon: <FolderOpenOutlined />, onClick: () => openInPanes(t) },
+                      {
+                        key: 'delete', label: 'Delete', icon: <DeleteOutlined />, danger: true,
+                        confirm: { title: 'Delete this saved transfer?', what: t.title ? `${t.title} (${t.id})` : t.id, okText: 'Delete' },
+                        onClick: () => deleteSaved(t.id),
+                      },
+                    ]}
+                  />
                 </div>
               ))}
             </div>

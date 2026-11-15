@@ -173,7 +173,6 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
           it sits outside the dimmed block above. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <Switch
-          size="small"
           checked={lockSuspend}
           onChange={setLockSuspend}
           aria-label="Pause reactive triggers while my screen is locked"

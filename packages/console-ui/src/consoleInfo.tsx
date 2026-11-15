@@ -61,3 +61,9 @@ export function approvalConsequence(opts: {
   const fanout = host ? info.groupSize(host) : 0
   return { description: info.describe(name), fanout, markers }
 }
+
+/** An approval's policy line, in words rather than the level's name. One
+ *  source for the chat card and the webhook card, so both say it the same way. */
+export function approvalPolicyText(level: string): string {
+  return level === 'supervised' ? 'Asks before running, and you review what it does' : 'Asks before running'
+}

@@ -101,7 +101,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
   useEffect(() => {
     const row = rowRef.current
     if (!row || !selectedId) return
-    chipEl(row, selectedId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    showChip(row, chipEl(row, selectedId))
   }, [selectedId, sessions.length])
   // Chips scrolled out of the row join the "+N more" menu, so its count is
   // everything you can't see.
@@ -128,7 +128,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
     let ro: ResizeObserver | undefined
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => {
-        row.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        showChip(row, row.querySelector<HTMLElement>('[aria-selected="true"]'))
         measureRef.current()
       })
       ro.observe(row)
@@ -141,7 +141,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
     const fresh = ids.filter(id => !seenWaiting.current.has(id))
     seenWaiting.current = new Set(ids)
     if (!row || fresh.length === 0) return
-    chipEl(row, fresh[fresh.length - 1])?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    showChip(row, chipEl(row, fresh[fresh.length - 1]))
   }, [waitingKey])
   if (sessions.length === 0) return null
   const parts = partitionSessions(sessions, statusOf, selectedId)
@@ -213,8 +213,9 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
         display: 'flex', alignItems: 'center', gap: 6,
         flex: '0 1 auto', minWidth: 0,
         overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'thin',
-        // Scrolling settles on whole chips, never a sliver of one.
-        scrollSnapType: 'x proximity', scrollPaddingInline: 2,
+        // Scrolling by hand settles on whole chips; scrolls the row makes itself
+        // land on whole chips too (wholeChipScroll).
+        scrollSnapType: 'x proximity',
         padding: '2px 0',
       }}
     >
@@ -319,6 +320,33 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
       )}
     </div>
   )
+}
+
+/**
+ * Where to scroll the chip row so the target chip is fully shown and the row
+ * starts on a whole chip (never a sliver of one). `starts`/`widths` are each
+ * chip's offset and width inside the row's content; pure, for tests.
+ */
+export function wholeChipScroll(starts: number[], widths: number[], view: number, current: number, target: number): number {
+  const left = starts[target], right = left + widths[target]
+  let want = current
+  if (left < current) want = left
+  else if (right > current + view) want = right - view
+  // The first chip starting at or after `want` that still shows the target.
+  const snapped = starts.find(st => st >= want - 0.5 && st <= left + 0.5)
+  return snapped ?? left
+}
+
+/** Scroll the row to whole chips with this one in full view. */
+function showChip(row: HTMLElement, chip: HTMLElement | null | undefined) {
+  if (!chip) return
+  const box = row.getBoundingClientRect()
+  const chips = Array.from(row.querySelectorAll<HTMLElement>('[data-session-id]'))
+  const starts = chips.map(c => c.getBoundingClientRect().left - box.left + row.scrollLeft)
+  const widths = chips.map(c => c.getBoundingClientRect().width)
+  const i = chips.indexOf(chip)
+  if (i < 0) return
+  row.scrollLeft = wholeChipScroll(starts, widths, row.clientWidth, row.scrollLeft, i)
 }
 
 const chipEl = (row: HTMLElement, id: string) =>

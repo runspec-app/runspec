@@ -195,6 +195,8 @@ export function EnvFilesModal({ open, onClose, hosts, initial }: EnvFilesModalPr
           onChange={v => guard(() => setMode(v as 'one' | 'many'))}
           options={[{ label: 'One venv', value: 'one' }, { label: 'Across venvs', value: 'many' }]}
         />
+        {/* Labelled, so it doesn't read as a second view switch. */}
+        <span style={{ fontSize: 13, color: 'var(--rs-text-secondary)' }}>File:</span>
         <Segmented
           aria-label="Env file"
           value={file || 'runspec_env'}
