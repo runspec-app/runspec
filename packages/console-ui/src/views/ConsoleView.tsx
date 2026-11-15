@@ -159,7 +159,7 @@ export function activitySummary(running: number, waiting: number, chats = 0): st
   // With chats working too, say which is which: the Console tab badge counts
   // only the runs on hosts, so the two numbers must not look like one count.
   const runs = chats > 0
-    ? [running ? `${running} on hosts` : '', `${chats} chat${chats === 1 ? '' : 's'} working`]
+    ? [running ? `${running} host run${running === 1 ? '' : 's'}` : '', `${chats} chat${chats === 1 ? '' : 's'} working`]
     : [running ? `${running} running` : '']
   return [...runs, waiting ? `${waiting} waiting` : ''].filter(Boolean).join(' · ')
 }

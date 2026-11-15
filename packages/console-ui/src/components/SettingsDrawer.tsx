@@ -7056,7 +7056,20 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
           {elsewhere(query) ?? 'No section matches.'}
         </div>
       )}
-      <div role="tablist" aria-label="Settings sections" aria-orientation="vertical" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* One Tab stop (the open section); Up/Down/Home/End move between
+          sections and open them, as a tab list does. */}
+      <div role="tablist" aria-label="Settings sections" aria-orientation="vertical" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
+        onKeyDown={e => {
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+          const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+          const i = tabs.indexOf(document.activeElement as HTMLButtonElement)
+          if (i < 0) return
+          e.preventDefault()
+          const j = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1
+            : (i + (e.key === 'ArrowDown' ? 1 : -1) + tabs.length) % tabs.length
+          tabs[j].focus()
+          tabs[j].click()
+        }}>
       {groupSettingsTabs(shown).map(group => (
         <div key={group.label} className="rs-settings-group">
           <div aria-hidden className="rs-settings-group-label" style={{ color: textMuted(isDark) }}>{group.label}</div>
@@ -7068,6 +7081,7 @@ export function SettingsTabBar({ items, activeKey, onSelect }: {
                 type="button"
                 role="tab"
                 aria-selected={active}
+                tabIndex={active || (!shown.some(t => t.key === activeKey) && item.key === groupSettingsTabs(shown)[0]?.items[0]?.key) ? 0 : -1}
                 className="rs-nav-tab rs-settings-tab"
                 onClick={() => onSelect(item.key)}
                 style={{

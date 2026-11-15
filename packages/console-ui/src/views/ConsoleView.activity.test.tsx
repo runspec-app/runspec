@@ -23,7 +23,7 @@ describe('activitySummary', () => {
     expect(activitySummary(2, 1)).toBe('2 running · 1 waiting')
     expect(activitySummary(0, 3)).toBe('3 waiting')
     expect(activitySummary(1, 0)).toBe('1 running')
-    expect(activitySummary(2, 1, 2)).toBe('2 on hosts · 2 chats working · 1 waiting')
+    expect(activitySummary(2, 1, 2)).toBe('2 host runs · 2 chats working · 1 waiting')
   })
 })
 
@@ -55,7 +55,7 @@ describe('ActivityControl counts', () => {
     render(<ActivityControl inFlight={[RUN]} working={[{ id: 's1', label: 'restart nginx' }]} waiting={[]}
       waitingTotal={2} webhookWaiting={2} onOpenWebhooks={onOpenWebhooks} onOpen={() => {}} />)
     const btn = screen.getByTestId('activity-control')
-    expect(btn.getAttribute('aria-label')).toBe('Activity: 1 on hosts · 1 chat working · 2 waiting')
+    expect(btn.getAttribute('aria-label')).toBe('Activity: 1 host run · 1 chat working · 2 waiting')
     fireEvent.click(btn)
     expect(await screen.findByText('restart nginx')).toBeTruthy()
     expect(screen.getByText('2 webhooks')).toBeTruthy()

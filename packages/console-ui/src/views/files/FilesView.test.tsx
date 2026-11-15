@@ -103,6 +103,8 @@ async function dragFile(name: string, toSide: 'left' | 'right', shift = false) {
 describe('FilesView', () => {
   beforeEach(() => {
     localStorage.clear()
+    // jsdom is 1024 wide, where Saved transfers starts closed; these tests use it open.
+    localStorage.setItem('runspec.files.rail', 'on')
     m.listDir.mockReset().mockImplementation((host: string, path: string) => Promise.resolve(listing(host, path)))
     m.startTransfer.mockReset().mockResolvedValue({ id: 't1' })
     m.startRelay.mockReset().mockResolvedValue({ id: 't2' })

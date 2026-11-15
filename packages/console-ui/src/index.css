@@ -161,12 +161,22 @@ body {
 /* Status bar: its clickable items fill the bar's height (a 24px+ target; the
    text alone was 15-17px tall). */
 .rs-statusbar [role="button"] { align-self: stretch; display: inline-flex; align-items: center; cursor: pointer; }
-.rs-statusbar-item { border-radius: 4px; }
+/* Nested in their own row, so they set their own 24px height. */
+.rs-statusbar-item { border-radius: 4px; min-height: 24px; display: inline-flex; align-items: center; }
 
 /* 24px targets for small links and Ant's copy icon (it was 13x15). */
 .rs-link-row a { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; }
 .ant-typography-copy { min-width: 24px; min-height: 24px; display: inline-flex !important; align-items: center; justify-content: center; vertical-align: middle; }
 .rs-statusbar-item:focus-visible { outline: 2px solid var(--rs-focus, var(--rs-accent)); outline-offset: -2px; }
+
+/* Files panes: name, size, modified. A narrow pane drops Modified (its date
+   is on the row's hover) so the name never shrinks to nothing. */
+.rs-file-pane { container-type: inline-size; }
+.rs-file-grid { grid-template-columns: minmax(120px, 1fr) 76px 150px; }
+@container (max-width: 420px) {
+  .rs-file-grid { grid-template-columns: minmax(0, 1fr) 64px; }
+  .rs-file-grid > :nth-child(3) { display: none; }
+}
 
 /* Console toolbar: when the column is narrow the session chips take a row of
    their own under the actions, instead of shrinking to one clipped chip. */
@@ -214,6 +224,8 @@ body {
    alarms. The confirmation it opens is still red. */
 /* Settings help paragraphs: about 80 characters a line, not the window's width. */
 .rs-settings-modal .ant-typography:is(div, p), .rs-settings-modal .ant-form-item-extra { max-width: 80ch; }
+/* Disabled, it greys like its neighbours (its muted grey read as enabled). */
+.rs-quiet-danger.ant-btn-dangerous:disabled { color: inherit !important; opacity: 0.35; border-color: var(--rs-border) !important; }
 .rs-quiet-danger.ant-btn-dangerous:not(:hover):not(:focus-visible):not(:disabled) {
   color: var(--rs-text-muted) !important;
   border-color: var(--rs-border) !important;

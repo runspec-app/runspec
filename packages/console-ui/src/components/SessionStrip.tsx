@@ -213,6 +213,8 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
         display: 'flex', alignItems: 'center', gap: 6,
         flex: '0 1 auto', minWidth: 0,
         overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'thin',
+        // Scrolling settles on whole chips, never a sliver of one.
+        scrollSnapType: 'x proximity', scrollPaddingInline: 2,
         padding: '2px 0',
       }}
     >
@@ -242,7 +244,7 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
             onClick={() => onSelect(s.id)}
             title={`${label} — ${STATUS_TIP[status]}`}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
+              display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0, scrollSnapAlign: 'start',
               height: 26, padding: '0 8px', cursor: 'pointer', userSelect: 'none',
               borderRadius: RADIUS.sm,
               border: `1px solid ${selected ? accent : sf.border}`,

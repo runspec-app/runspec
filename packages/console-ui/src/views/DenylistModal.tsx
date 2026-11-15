@@ -296,7 +296,22 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
       title={<span><StopOutlined style={{ marginRight: 8 }} />Denylist — fleet kill switch</span>}
       destroyOnHidden
     >
-      {/* The emergency action first; how it works folds away underneath. */}
+      {/* Which hosts first, then the emergency action that applies to them;
+          how it works folds away underneath. */}
+      <div style={{ marginBottom: 8 }}>
+        <Text style={{ fontSize: 13 }}>Target hosts</Text>
+        <Select
+          aria-label="Target hosts"
+          mode="multiple"
+          allowClear
+          size="small"
+          style={{ width: '100%', marginTop: 4 }}
+          placeholder={`Every connected host (${scopeLabel}), or pick some`}
+          value={targets}
+          onChange={setTargets}
+          options={hostOptions}
+        />
+      </div>
       <div data-testid="kill-switch" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
         <Button type="primary" danger icon={<StopOutlined />} loading={busy === 'all'} onClick={disableAll}>
           Disable all runnables
@@ -329,20 +344,6 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
         </Text>
       </details>
 
-      <div style={{ marginBottom: 8 }}>
-        <Text style={{ fontSize: 13 }}>Target hosts</Text>
-        <Select
-          aria-label="Target hosts"
-          mode="multiple"
-          allowClear
-          size="small"
-          style={{ width: '100%', marginTop: 4 }}
-          placeholder={`Every connected host (${scopeLabel}), or pick some`}
-          value={targets}
-          onChange={setTargets}
-          options={hostOptions}
-        />
-      </div>
 
       <Table<DenylistHostStatus>
         size="small"
@@ -352,7 +353,8 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
         loading={loadingStatus ? { tip: `Querying ${scopeLabel}…` } : false}
         pagination={false}
         sticky
-        scroll={{ y: 300 }}
+        // Short enough that the mode controls below show in a 700px window.
+        scroll={{ y: 220 }}
         style={{ marginBottom: 12 }}
         locale={{ emptyText: !scopeNames.length ? 'No connected hosts.' : targets.length && status.length ? 'No rows for the selected hosts.' : 'No connected host has a runspec path.' }}
       />

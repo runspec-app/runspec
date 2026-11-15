@@ -43,7 +43,16 @@ export function FilesView({ hosts, selectedHost, active }: {
   const [viewing, setViewing] = useState<{ side: Side; path: string } | null>(null)
   const [workspacePath, setWorkspacePath] = useState('')
   const [creds, setCreds] = useState<Credential[]>([])
-  const [rail, setRail] = useState(() => { try { return localStorage.getItem(RAIL_KEY) !== 'off' } catch { return true } })
+  // Saved transfers: your last choice, else open only on a wide window (at
+  // 1024 it left each pane ~210px and the file names no room).
+  const [rail, setRail] = useState(() => {
+    try {
+      const v = localStorage.getItem(RAIL_KEY)
+      if (v === 'off') return false
+      if (v === 'on') return true
+    } catch { /* storage unavailable */ }
+    return typeof window === 'undefined' || window.innerWidth >= 1200
+  })
   const [saved, setSaved] = useState<SavedTransfer[]>([])
   const [editing, setEditing] = useState<{ draft: SavedTransfer; replaceId?: string } | null>(null)
   const [runningSaved, setRunningSaved] = useState<SavedTransfer | null>(null)
@@ -90,7 +99,6 @@ export function FilesView({ hosts, selectedHost, active }: {
     })
   }, [active, hosts, selectedHost])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { try { localStorage.setItem(RAIL_KEY, rail ? 'on' : 'off') } catch { /* private window */ } }, [rail])
 
   // ── copying ──────────────────────────────────────────────────────────────
 
@@ -196,7 +204,7 @@ export function FilesView({ hosts, selectedHost, active }: {
       {riskHolder}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--rs-border)', flexWrap: 'wrap' }}>
         <Tooltip title={rail ? 'Hide saved transfers' : 'Show saved transfers'}>
-          <Button size="small" icon={rail ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} aria-pressed={rail} onClick={() => setRail(r => !r)}>Saved transfers</Button>
+          <Button size="small" icon={rail ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} aria-pressed={rail} onClick={() => setRail(r => { try { localStorage.setItem(RAIL_KEY, r ? 'off' : 'on') } catch { /* private window */ } return !r })}>Saved transfers</Button>
         </Tooltip>
         <Tooltip title={copyPlan.error ?? (selectedPaths.length ? `Copy the selected file${selectedPaths.length === 1 ? '' : 's'} to the other pane` : 'Select files first (or drag them across)')}>
           <Button size="small" icon={<SwapOutlined />} disabled={!selectedPaths.length || !!copyPlan.error} onClick={copySelected}>

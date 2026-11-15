@@ -162,7 +162,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
   return (
     <div style={{ color: textColor(isDark) }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-        <Switch size="small" checked={enabled} onChange={setEnabled} aria-label="Only run triggers and schedules during working hours" />
+        <Switch checked={enabled} onChange={setEnabled} aria-label="Only run triggers and schedules during working hours" />
         <span>Only run triggers and schedules during working hours</span>
         <span style={{ color: dim, fontSize: 13 }}>
           {enabled ? '(outside these, events are ignored)' : '(off — automation runs anytime)'}
@@ -213,7 +213,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
               />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <Switch size="small" checked={hold} onChange={setHold} aria-label="Hold while I'm in a meeting or out of office" />
+              <Switch checked={hold} onChange={setHold} aria-label="Hold while I'm in a meeting or out of office" />
               <span>Hold while I'm in a meeting / OOO</span>
             </div>
             <div style={{ color: dim, fontSize: 13 }}>
@@ -225,7 +225,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
         {DAYS.map(([k, label]) => (
           <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
             <span style={{ width: 90 }}>{label}</span>
-            <Switch size="small" checked={!!days[k].on} onChange={v => setDay(k, { on: v })} aria-label={`Work on ${label}`} />
+            <Switch checked={!!days[k].on} onChange={v => setDay(k, { on: v })} aria-label={`Work on ${label}`} />
             {days[k].on ? (
               <>
                 <input

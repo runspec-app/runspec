@@ -374,8 +374,8 @@ function OneVenv({ file, targets, options, loadingTargets, initial, onSelect, on
     {
       title: '',
       key: 'act',
-      // Fits the labelled Remove / Keep (44px clipped it).
-      width: 96,
+      // Fits the labelled Remove / Keep with its cell padding (44px, then 96, clipped it).
+      width: 112,
       render: (_: unknown, r: DraftRow) => {
         const i = rows.indexOf(r)
         if (r.removed) return <Button size="small" type="text" icon={<UndoOutlined aria-hidden />} aria-label={`Keep ${r.key}`} onClick={() => update(i, { removed: false })}>Keep</Button>

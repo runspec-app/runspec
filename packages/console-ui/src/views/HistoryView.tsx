@@ -658,8 +658,8 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   useLayoutEffect(() => { scopeToggleRef.current = onScopeToggle })
 
   const columns: ColumnType<HistoryRecord>[] = useMemo(() => [
-    // When and how it went sit next to what ran: at 1440 the old order pushed
-    // Time off the right edge behind Operator and Run as.
+    // What ran, how it went, where and when first: at 1024 these stay on
+    // screen. Group sits last (the name already carries it as a prefix).
     {
       title: 'Runnable',
       key: 'runnable',
@@ -723,6 +723,15 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       filteredValue: colFilters['exitCode'] ?? null,
     },
     {
+      title: 'Host',
+      dataIndex: 'host',
+      key: 'host',
+      render: (h: string) => <Tag>{h}</Tag>,
+      filters: hosts.map(h => ({ text: h, value: h })),
+      onFilter: (value, record) => record.host === value,
+      filteredValue: colFilters['host'] ?? null,
+    },
+    {
       title: 'Time',
       dataIndex: 'ts',
       key: 'ts',
@@ -762,6 +771,38 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       filters: RUN_BY_FILTERS,
       onFilter: (value, record) => runBy(record).kind === value,
       filteredValue: colFilters['runBy'] ?? null,
+    },
+    {
+      title: 'Operator',
+      dataIndex: 'operator',
+      key: 'operator',
+      filters: operators.map(u => ({ text: u, value: u })),
+      onFilter: (value, record) => record.operator === value,
+      filteredValue: colFilters['operator'] ?? null,
+      // The self-reported operator, plus the kernel-attested account when they
+      // differ (runspec >= 0.66) — e.g. a sudo'd run, or a claim that doesn't match.
+      render: (op: string, record: HistoryRecord) => {
+        const acct = accountNote(record)
+        return (
+          <span>
+            {op}
+            {acct && (
+              <Tooltip title={`Ran as OS account ${acct} (from the file / process owner — trustworthy; the operator name is self-reported)`}>
+                <Tag style={{ marginLeft: 6, fontSize: 11, fontFamily: MONO_FONT }}>{acct}</Tag>
+              </Tooltip>
+            )}
+          </span>
+        )
+      },
+    },
+    {
+      title: 'Run as',
+      dataIndex: 'runAs',
+      key: 'runAs',
+      render: (u: string) => <code style={{ fontSize: 13 }}>{u}</code>,
+      filters: runAsUsers.map(u => ({ text: u, value: u })),
+      onFilter: (value, record) => record.runAs === value,
+      filteredValue: colFilters['runAs'] ?? null,
     },
     {
       title: 'Group',
@@ -806,47 +847,6 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       onFilter: (value, record) => record.label === value,
       filteredValue: colFilters['label'] ?? null,
     } as ColumnType<HistoryRecord>] : []),
-    {
-      title: 'Host',
-      dataIndex: 'host',
-      key: 'host',
-      render: (h: string) => <Tag>{h}</Tag>,
-      filters: hosts.map(h => ({ text: h, value: h })),
-      onFilter: (value, record) => record.host === value,
-      filteredValue: colFilters['host'] ?? null,
-    },
-    {
-      title: 'Operator',
-      dataIndex: 'operator',
-      key: 'operator',
-      filters: operators.map(u => ({ text: u, value: u })),
-      onFilter: (value, record) => record.operator === value,
-      filteredValue: colFilters['operator'] ?? null,
-      // The self-reported operator, plus the kernel-attested account when they
-      // differ (runspec >= 0.66) — e.g. a sudo'd run, or a claim that doesn't match.
-      render: (op: string, record: HistoryRecord) => {
-        const acct = accountNote(record)
-        return (
-          <span>
-            {op}
-            {acct && (
-              <Tooltip title={`Ran as OS account ${acct} (from the file / process owner — trustworthy; the operator name is self-reported)`}>
-                <Tag style={{ marginLeft: 6, fontSize: 11, fontFamily: MONO_FONT }}>{acct}</Tag>
-              </Tooltip>
-            )}
-          </span>
-        )
-      },
-    },
-    {
-      title: 'Run as',
-      dataIndex: 'runAs',
-      key: 'runAs',
-      render: (u: string) => <code style={{ fontSize: 13 }}>{u}</code>,
-      filters: runAsUsers.map(u => ({ text: u, value: u })),
-      onFilter: (value, record) => record.runAs === value,
-      filteredValue: colFilters['runAs'] ?? null,
-    },
   ], [runnableNames, groups, runbooks, labels, hosts, operators, runAsUsers, colFilters, activeScope, accent])
 
   return (
