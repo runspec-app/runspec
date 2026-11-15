@@ -130,14 +130,20 @@ describe('WebhooksSection', () => {
     expect((within(row).getByRole('button', { name: 'Follow webhooks on old-01' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('opens the listener settings from Set up…', async () => {
-    render(<WebhooksSection editable venvs={[sv('db-01', 'ops', false)]} status={status([], {})} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Set up on db-01 / ops' }))
+  it('turns a venv on an unfollowed host on in one save, or opens its settings', async () => {
+    fns.webhook_settings.mockResolvedValue({ ok: true, settings: { enabled: true, port: 8978 } })
+    const changed = vi.fn()
+    const other = { ...sv('db-01', 'tools', true), webhooks: { enabled: true, hooks: [], port: 8977 } }
+    render(<WebhooksSection editable venvs={[sv('db-01', 'ops', false), other]} status={status([], {})} onChanged={changed} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on db-01 / ops' }))
+    expect(fns.webhook_settings).toHaveBeenCalledWith({ host: 'db-01', venv: 'ops', hooks: { enabled: true, port: 8978 } })
+    await waitFor(() => expect(changed).toHaveBeenCalled())
+    await userEvent.click(screen.getByRole('button', { name: 'Listener settings on db-01 / ops' }))
     expect(await screen.findByRole('tab', { name: 'Listener & mail', selected: true })).toBeTruthy()
     expect(fns.webhook_hooks).toHaveBeenCalledWith({ host: 'db-01', venv: 'ops' })
   })
 
-  it('lists followed venvs with webhooks off as one row per host with a Turn on button', async () => {
+  it('lists followed venvs with webhooks off by host, each with Turn on, Hooks… and Settings…', async () => {
     render(<WebhooksSection editable venvs={[]} status={status([
       strip(),
       strip({ key: 'web-01/tools', venv: 'tools', settings: { enabled: false }, recent: [] }),
@@ -153,10 +159,42 @@ describe('WebhooksSection', () => {
       expect.stringContaining('db-01'),
       expect.stringContaining('web-01'),
     ])
+    expect(within(rows[1]).getAllByTestId('webhook-off-venv')).toHaveLength(2)
     expect(within(rows[1]).getAllByRole('button', { name: /Turn on webhooks/ })).toHaveLength(2)
+    expect(within(rows[1]).getAllByRole('button', { name: /^Hooks on/ })).toHaveLength(2)
+    // the host keeps its More menu (Stop following), as a listening strip has
+    expect(within(rows[1]).getByTestId('row-actions-more')).toBeTruthy()
     expect(webhookCounts(status([strip({ settings: { enabled: false }, recent: [] })])).problems).toBe(0)
-    await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on web-01 / tools' }))
-    expect(await screen.findByRole('tab', { name: 'Listener & mail', selected: true })).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Hooks on web-01 / tools' }))
+    expect(await screen.findByRole('tab', { name: /Hooks/, selected: true })).toBeTruthy()
+    expect(fns.webhook_hooks).toHaveBeenCalledWith({ host: 'web-01', venv: 'tools' })
+  })
+
+  it('Turn on saves enabled and a free port at once, keeping a port already set', async () => {
+    fns.webhook_settings.mockResolvedValue({ ok: true, settings: { enabled: true, port: 8978 } })
+    const changed = vi.fn()
+    render(<WebhooksSection editable venvs={[]} onChanged={changed} status={status([
+      strip({ key: 'web-01/tools', venv: 'tools', settings: { enabled: true, port: 8977 } }),
+      strip({ settings: { enabled: false, port: 0 }, recent: [] }),
+      strip({ key: 'web-01/batch', venv: 'batch', settings: { enabled: false, port: 9100 }, recent: [] }),
+    ])} />)
+    expect(screen.getByText('listener off, port 9100')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on web-01 / ops' }))
+    expect(fns.webhook_settings).toHaveBeenLastCalledWith({ host: 'web-01', venv: 'ops', hooks: { enabled: true, port: 8978 } })
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on web-01 / batch' }))
+    expect(fns.webhook_settings).toHaveBeenLastCalledWith({ host: 'web-01', venv: 'batch', hooks: { enabled: true, port: 9100 } })
+    expect(screen.queryByRole('tab')).toBeNull() // no dialog: nothing left unsaved
+  })
+
+  it('a refused Turn on reports the error and re-reads nothing', async () => {
+    fns.webhook_settings.mockResolvedValue({ ok: false, error: 'sudo refused' })
+    const changed = vi.fn()
+    render(<WebhooksSection editable venvs={[]} onChanged={changed} status={status([strip({ settings: { enabled: false }, recent: [] })])} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on web-01 / ops' }))
+    await waitFor(() => expect(fns.webhook_settings).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Turn on webhooks on web-01 / ops' }) as HTMLButtonElement).disabled).toBe(false))
+    expect(changed).not.toHaveBeenCalled()
   })
 
   it('shows no Turn on buttons when the section is read-only', () => {
@@ -264,18 +302,22 @@ describe('hook editor', () => {
     expect(fns.webhook_settings).toHaveBeenCalledWith({ host: 'web-01', venv: 'ops', hooks: { approve_within: '30m' }, smtp: {} })
   })
 
-  it('Turn on starts the form switched on with a free port, and saves both', async () => {
-    fns.webhook_hooks.mockResolvedValue({ ok: true, settings: { enabled: false, port: 0 }, smtp: {}, hooks: [] })
+  it('switching the listener on says it is not saved yet and hides the host\'s "off" warning until Save', async () => {
+    fns.webhook_hooks.mockResolvedValue({ ok: true, settings: { enabled: false, port: 0, problem: 'webhooks are off ([hooks] enabled = false)' }, smtp: {}, hooks: [] })
     fns.webhook_settings.mockResolvedValue({ ok: true })
     render(<WebhooksSection editable venvs={[]} status={status([
       strip({ key: 'web-01/tools', venv: 'tools', settings: { enabled: true, port: 8977 } }),
       strip({ settings: { enabled: false, port: 0 }, recent: [] }),
     ])} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Turn on webhooks on web-01 / ops' }))
-    const port = (await screen.findAllByRole('spinbutton', { name: /Port/ }))[0] as HTMLInputElement
+    await userEvent.click(screen.getByRole('button', { name: 'Listener settings on web-01 / ops' }))
+    expect(await screen.findByText('webhooks are off ([hooks] enabled = false)')).toBeTruthy()
+    expect(screen.getByText('Not taking webhooks')).toBeTruthy()
+    await userEvent.click(screen.getByRole('switch', { name: 'Take webhooks' }))
+    expect(screen.getByText('Taking webhooks')).toBeTruthy()
+    expect(screen.getByTestId('webhook-unsaved').textContent).toBe('not saved yet')
+    expect(screen.queryByText('webhooks are off ([hooks] enabled = false)')).toBeNull()
+    const port = screen.getAllByRole('spinbutton', { name: /Port/ })[0] as HTMLInputElement
     expect(port.value).toBe('8978')
-    expect(screen.getByText('Other venvs on this host use 8977.')).toBeTruthy()
-    expect(screen.getByRole('switch', { checked: true })).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(fns.webhook_settings).toHaveBeenCalledWith({ host: 'web-01', venv: 'ops', hooks: { enabled: true, port: 8978 }, smtp: {} })
   })

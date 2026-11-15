@@ -138,6 +138,10 @@ class LineStream:
             "invalid choice" in tail or "unknown command" in tail.lower()
         ):
             return "this venv's runspec-scheduler is older than 0.11.0 (no webhooks); Update venv… upgrades it"
+        if not tail and code == -1:
+            # paramiko's code when the channel closed with no exit status: the
+            # SSH connection dropped or the process was killed by a signal.
+            return "the connection to the host closed (no exit code); reconnecting"
         return tail or f"hooks follow stopped (exit {code})"
 
     def close(self) -> None:

@@ -9,6 +9,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.446.1] — 2026-11-15
+
+### Fixed
+
+- **Webhooks show a change as soon as it's saved.** Turning a venv's listener
+  on (or saving or removing a hook) wrote it on the host, but the Webhooks view
+  kept saying "webhooks off" until the console reconnected (a restart). The
+  follow stream sends settings and hooks only when it connects, so the console
+  now reads the venv again after any change it makes.
+- **Turn on turns the listener on.** It used to open the settings already
+  switched on but unsaved, beside the host's own "webhooks are off" warning.
+  It now saves `enabled = true` in one click, keeping a port already set or
+  picking the first free one from 8977. *Settings…* opens the full settings.
+- **Venvs with webhooks off can be configured again.** Under *Followed, not
+  listening* each such venv has Turn on, Hooks… and Settings…, and the host has
+  its ⋯ menu with Stop following, as a listening venv's strip has. Unfollowed
+  hosts get the same buttons.
+- **The listener switch is readable.** "Taking webhooks" / "Not taking
+  webhooks" is now normal text beside the switch, with "not saved yet" while it
+  differs from the host, and the host's "off" warning is hidden while there are
+  unsaved changes.
+- **A followed host no longer drops its webhook stream every 5 minutes.** The
+  SSH pool closed a connection idle for 5 minutes even while a follow stream
+  was open on it, so a host the console wasn't otherwise using (e.g. outside
+  the active profile) logged "hooks follow stopped (exit -1)" and reconnected.
+  An open exec channel now counts as use, and the log says "the connection to
+  the host closed" instead of "exit -1".
+
 ## [0.446.0] — 2026-11-14
 
 ### Fixed

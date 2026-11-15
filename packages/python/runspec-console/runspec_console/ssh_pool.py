@@ -158,6 +158,10 @@ class PooledConnection:
         # if no command ran on it lately, so the idle reaper leaves it alone.
         self._tunnels = 0
         self._tunnel_lock = threading.Lock()
+        # Open long-lived exec channels (``open_exec``: a webhook follow stream,
+        # the room exec relay). Same rule: no command may run for hours, but the
+        # transport is in use, and reaping it cuts the stream (exit -1).
+        self._execs = 0
 
     def is_alive(self, idle_ttl: int) -> bool:
         """True if the transport is still usable and not stale.
@@ -169,7 +173,7 @@ class PooledConnection:
         transport = self._client.get_transport()
         if transport is None or not transport.is_active():
             return False
-        if self._tunnels > 0:
+        if self._tunnels > 0 or self._execs > 0:
             return True
         if idle_ttl and (self._clock() - self.last_used) > idle_ttl:
             return False
@@ -345,6 +349,8 @@ class PooledConnection:
         except BaseException:
             self._sessions.release()
             raise
+        with self._tunnel_lock:
+            self._execs += 1
 
         released = threading.Event()
 
@@ -355,6 +361,8 @@ class PooledConnection:
                     chan.close()
                 except Exception:
                     pass
+                with self._tunnel_lock:
+                    self._execs -= 1
                 self.last_used = self._clock()
                 self._sessions.release()
 

@@ -166,6 +166,17 @@ class VenvHooks:
         if self.cursor is None or isinstance(msg.get("event"), int):
             self.cursor = int(msg.get("event") or 0)
 
+    def reconfigure(
+        self, settings: dict[str, Any] | None, hooks: list[dict[str, Any]] | None
+    ) -> None:
+        """New ``[hooks]`` settings and hook list after a change made from this
+        console. The follow stream only sends them on connect, so without this
+        the view keeps the old ones until a reconnect. ``None`` keeps a part."""
+        if isinstance(settings, dict):
+            self.settings = settings
+        if isinstance(hooks, list):
+            self.hook_list = [h for h in hooks if isinstance(h, dict)]
+
     def apply(
         self, event: dict[str, Any], *, now: float | None = None, replay_s: int = 900
     ) -> dict[str, Any] | None:

@@ -790,3 +790,59 @@ def test_agent_sees_a_readable_webhook_request() -> None:
     assert "nothing ran on the host" in text
     assert "- version: 1.2" in text and 'Body:\n{"version": "1.2"}' in text
     assert "webhook:" not in text and "- venv:" not in text
+
+
+def test_a_change_made_here_shows_on_a_followed_venv_at_once() -> None:
+    """The follow stream sends settings + hooks only on connect, so a save made
+    from this console re-reads them; the view no longer says "off" after the
+    listener was turned on."""
+    b = FakeBridge()
+    vs = wh.VenvHooks("web-01", "ops", hooks=["*"])
+    vs.hello({"settings": {"enabled": False, "port": 0}, "hooks": []})
+    b._wh()["venvs"]["web-01/ops"] = vs
+    on = {"enabled": True, "port": 8977, "problem": None}
+    b.answers = [
+        {"ok": True, "error": "", "json": {"ok": True, "settings": on}},
+        {
+            "ok": True,
+            "error": "",
+            "json": {"ok": True, "settings": on, "hooks": [{"name": "alerts"}]},
+        },
+    ]
+    out = b.webhook_settings(
+        {"host": "web-01", "venv": "ops", "hooks": {"enabled": True, "port": 8977}}
+    )
+    assert out["ok"] and b.calls[-1][0] == ["hooks", "list"]
+    assert vs.settings == on and vs.hook_list == [{"name": "alerts"}]
+    name, detail = b.events[-1]
+    assert name == "runspec:webhooks" and detail["venv"]["settings"]["enabled"]
+
+    # the re-read failing still uses the settings the change answered with
+    off = {"enabled": False, "port": 8977, "problem": "webhooks are off"}
+    b.answers = [
+        {"ok": True, "error": "", "json": {"ok": True, "settings": off}},
+        {"ok": False, "error": "ssh dropped", "json": {}},
+    ]
+    b.webhook_settings({"host": "web-01", "venv": "ops", "hooks": {"enabled": False}})
+    assert vs.settings == off and vs.hook_list == [{"name": "alerts"}]
+
+    # saving and removing a hook re-read the list
+    b.answers = [
+        {"ok": True, "error": "", "json": {"ok": True, "hook": {"name": "deploy"}}},
+        {"ok": True, "error": "", "json": {"ok": True, "hooks": [{"name": "deploy"}]}},
+    ]
+    b.webhook_hook_save({"host": "web-01", "venv": "ops", "hook": {"name": "deploy"}})
+    assert vs.hook_list == [{"name": "deploy"}] and vs.settings == off
+    b.answers = [
+        {"ok": True, "error": "", "json": {"ok": True}},
+        {"ok": True, "error": "", "json": {"ok": True, "hooks": []}},
+    ]
+    b.webhook_hook_remove({"host": "web-01", "venv": "ops", "name": "deploy"})
+    assert vs.hook_list == []
+
+    # a failed change, or a venv nobody follows, reads nothing more
+    calls = len(b.calls)
+    b.answers = [{"ok": False, "error": "denied", "json": {}}]
+    b.webhook_settings({"host": "web-01", "venv": "ops", "hooks": {"enabled": True}})
+    b.webhook_settings({"host": "web-01", "venv": "other", "hooks": {"enabled": True}})
+    assert len(b.calls) == calls + 2

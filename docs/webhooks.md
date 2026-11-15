@@ -66,10 +66,11 @@ bin/runspec-scheduler hooks settings --set enabled=true --set port=8977
 bin/runspec-scheduler hooks list
 ```
 
-Each venv on a host needs its own port. In runspec-console, *Turn on…* on a
-followed venv (Automation → Webhooks, under *Followed, not listening*) opens
-these settings already switched on with a free port filled in: the first from
-8977 up that no other venv on that host uses.
+Each venv on a host needs its own port. In runspec-console, *Turn on* on a
+venv with its listener off (Automation → Webhooks) saves `enabled = true` on
+the host in one click, keeping a port already set or picking the first from
+8977 up that no other venv on that host uses. The view updates as soon as the
+host has saved it. *Settings…* opens these settings to change anything else.
 
 Plain HTTP is only allowed on `127.0.0.1`, behind a reverse proxy that does
 TLS. Anywhere else give it a certificate:
@@ -268,8 +269,11 @@ are skipped, since runspec-scheduler never runs as root.
   has one strip per followed venv: whether it's connected, what's waiting,
   mutes, recent deliveries, a *Mute* menu and *Hooks…*. Below them, every
   connected host in the profile that you don't follow is listed with each
-  venv's state: webhooks on, off (*Set up…* opens the listener settings), no
-  hooks yet (*Add a hook…*), or needs runspec-scheduler 0.11.0. *Follow* works
+  venv's state: webhooks on, off (*Turn on*, *Hooks…*, *Settings…*), no
+  hooks yet (*Add a hook…*), or needs runspec-scheduler 0.11.0. Followed venvs
+  with their listener off are listed under *Followed, not listening*, one row
+  per host, with the same buttons per venv and *Stop following* in the host's
+  ⋯ menu. *Follow* works
   before any hook exists or the listener is on. The Schedules tab keeps a
   one-line summary.
 - **Hooks…** lists the venv's hooks. Hooks made from the console can be edited
