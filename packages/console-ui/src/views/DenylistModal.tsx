@@ -13,6 +13,7 @@ import { ReloadOutlined, StopOutlined, WarningOutlined, LoadingOutlined, InfoCir
 import { bridge, type DenylistHostStatus, type DenylistPayload, type DenylistPending, type DenylistRule, type Host } from '../bridge'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
 import { targetList, useRiskConfirm } from '../components/risk'
+import { globMatch } from '../denylistPending'
 import { StatusTag } from '../components/kit'
 
 const { Text } = Typography
@@ -30,25 +31,7 @@ function FieldLabel({ children, hint }: { children: ReactNode; hint: ReactNode }
   )
 }
 
-/** Shell-style glob match (`*`, `?`, `[…]`) — the same semantics as the
- *  core's `fnmatch` for the patterns a rule holds, case-sensitive like POSIX. */
-export function globMatch(pattern: string, value: string): boolean {
-  let re = ''
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i]
-    if (ch === '*') re += '.*'
-    else if (ch === '?') re += '.'
-    else if (ch === '[') {
-      const end = pattern.indexOf(']', i + 1)
-      if (end === -1) { re += '\\['; continue }
-      let body = pattern.slice(i + 1, end)
-      if (body.startsWith('!')) body = '^' + body.slice(1)
-      re += `[${body.replace(/\\/g, '\\\\')}]`
-      i = end
-    } else re += ch.replace(/[.+^${}()|\\]/g, '\\$&')
-  }
-  return new RegExp(`^${re}$`).test(value)
-}
+export { globMatch }
 
 /** Host globs that match none of the target machines' real hostnames — a rule
  *  carrying one can never fire on those targets. Empty when no hostname is
@@ -150,7 +133,10 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
   // control can say it and go back to it when a change is cancelled.
   const liveModes = [...new Set(shownStatus.filter(r => r.ok && r.mode).map(r => r.mode as 'enforce' | 'warn' | 'off'))]
   const liveMode = liveModes.length === 1 ? liveModes[0] : null
-  useEffect(() => { if (liveMode) setMode(liveMode) }, [liveMode])
+  // Follow the hosts' mode until the operator picks one (a status that lands
+  // after a pick mustn't undo it).
+  const modeTouched = useRef(false)
+  useEffect(() => { if (liveMode && !modeTouched.current) setMode(liveMode) }, [liveMode])
   // Every rule in the shown rows, "host/venv: rule", for the Clear ask.
   const allRules = shownStatus.flatMap(r => (r.ok ? r.rules ?? [] : []).map(rule => `${r.host}/${r.venv}: ${ruleText(rule)}`))
   const ruleCount = allRules.length
@@ -459,7 +445,7 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
           aria-label="Enforcement mode"
           size="small"
           value={mode}
-          onChange={v => setMode(v as 'enforce' | 'warn' | 'off')}
+          onChange={v => { modeTouched.current = true; setMode(v as 'enforce' | 'warn' | 'off') }}
           options={[
             { label: 'Enforce', value: 'enforce' },
             { label: 'Warn', value: 'warn' },
@@ -477,7 +463,7 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
               okText: mode === 'off' ? 'Turn off' : 'Only warn',
             })
             // Cancelled: the control goes back to what the hosts are doing.
-            if (!a.ok) { setMode(liveMode ?? 'enforce'); return }
+            if (!a.ok) { modeTouched.current = false; setMode(liveMode ?? 'enforce'); return }
           }
           await run({ action: 'mode', setting: mode }, 'mode')
         }}>

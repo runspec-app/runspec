@@ -125,6 +125,9 @@ describe('DenylistModal', () => {
   it('turning the mode off asks first; Cancel changes nothing', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
     await screen.findByText('Disable all runnables')
+    // Wait for the hosts' status: when it lands the control syncs to their
+    // live mode, which would undo an Off picked before it.
+    await screen.findByText('Now: enforce')
     const user = userEvent.setup()
     await act(async () => { await user.click(screen.getByText('Off')) })
     await act(async () => { await user.click(screen.getByRole('button', { name: 'Apply mode' })) })
