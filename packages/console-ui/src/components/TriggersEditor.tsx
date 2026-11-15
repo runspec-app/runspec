@@ -12,7 +12,7 @@ import { bridge, type TriggerSourceInfo, type Host, type Runnable, type ArgDef }
 import { SoundSelect } from './SoundSelect'
 import { ModelSelect } from './ModelSelect'
 import { MONO_FONT, RADIUS } from '../ThemeContext'
-import { EmptyState, IconAction, StatusTag } from './kit'
+import { EmptyState, IconAction, RowActions, StatusTag } from './kit'
 import { useFeatures } from '../features'
 import { useRiskConfirm } from './risk'
 
@@ -915,21 +915,26 @@ export function TriggersEditor({
               <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {String(t.source ?? '')}:{String(t.event ?? '')}
               </Text>
-              <StatusTag tone="neutral">{String(t.mode ?? 'agent')}</StatusTag>
+              <StatusTag tone="neutral" tip={(t.mode ?? 'agent') === 'rule'
+                ? 'rule: runs the runnables it names, no assistant involved'
+                : 'agent: the assistant reads the event and decides what to run'}>{String(t.mode ?? 'agent')}</StatusTag>
               <Switch size="small" aria-label={`Enable trigger ${String(t.name)}`} checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)} />
-              {t.source === 'paste' && (
-                <Tooltip title="Run with pasted text — paste a block of text as this trigger’s input">
-                  <Button aria-label={`Run ${String(t.name)} with pasted text`} type="text" size="small" icon={<SnippetsOutlined />} onClick={() => setPasteName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-                </Tooltip>
-              )}
-              <Tooltip title="Trigger now — fire with a test event">
-                <Button aria-label={`Trigger ${String(t.name)} now`} type="text" size="small" icon={<PlayCircleOutlined />} onClick={() => setTestName(String(t.name))} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} />
-              </Tooltip>
-              <Tooltip title="Edit"><Button aria-label={`Edit ${String(t.name)}`} type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(t)} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} /></Tooltip>
-                <Button onClick={async () => {
-                  const a = await askRisk({ level: 'local', title: 'Delete this trigger?', action: String(t.name), okText: 'Delete' })
-                  if (a.ok) remove(String(t.name))
-                }} aria-label={`Delete ${String(t.name)}`} type="text" size="small" icon={<DeleteOutlined />} disabled={editing} style={{ padding: '0 4px', color: 'var(--rs-text-muted)' }} danger />
+              {/* Labelled like every other list: Test and Edit, the rest under More. */}
+              <RowActions
+                testId={`trigger-actions-${String(t.name)}`}
+                secondary={[
+                  { key: 'test', label: 'Test', ariaLabel: `Trigger ${String(t.name)} now`, icon: <PlayCircleOutlined />, onClick: () => setTestName(String(t.name)), disabled: editing, tip: 'Fire it with a test event' },
+                  { key: 'edit', label: 'Edit', ariaLabel: `Edit ${String(t.name)}`, icon: <EditOutlined />, onClick: () => startEdit(t), disabled: editing },
+                ]}
+                more={[
+                  ...(t.source === 'paste' ? [{ key: 'paste', label: 'Run with pasted text…', icon: <SnippetsOutlined />, onClick: () => setPasteName(String(t.name)), disabled: editing }] : []),
+                  {
+                    key: 'delete', label: 'Delete trigger', icon: <DeleteOutlined />, danger: true, disabled: editing,
+                    confirm: { title: 'Delete this trigger?', what: String(t.name), consequence: 'It stops reacting to events.', okText: 'Delete' },
+                    onClick: () => remove(String(t.name)),
+                  },
+                ]}
+              />
             </div>
           ))}
         </div>

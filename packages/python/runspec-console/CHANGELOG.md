@@ -9,6 +9,54 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.451.0] — 2026-11-15
+
+### Changed
+
+- **The Console tab shows a chat waiting for you.** When a chat is stopped at
+  Approve, the tab badge turns amber with the waiting count, so you can see it
+  from any tab. Before, it showed only runs on hosts.
+- **Trigger rows use labelled actions:** **Test** and **Edit**, with Run with
+  pasted text and Delete under More. The agent/rule tag says what each means
+  on hover.
+- **History → Runs:** Host follows Status, so it stays on screen at 1024px.
+  Group moves to the end, since the runnable's name already shows it.
+- **Files on a narrow window.** Saved transfers starts closed below 1200px (your
+  own choice is remembered). A narrow pane drops the Modified column so file
+  names keep at least 120px; they had shrunk to nothing at 1024px.
+- **Session chips snap to whole chips** when the row scrolls, never a sliver.
+- **The dot on More** is amber when a folded tab has something waiting for you,
+  and grey otherwise. It no longer uses the brand colour, which may be red.
+- **Denylist:** Target hosts come first, then Disable all, which applies to
+  them. The host table is shorter, so the mode controls show in a 700px window.
+- **Words.**
+  - A webhook approval says "Asks before running.", as the chat approval
+    card does.
+  - The footer reads "local + 2/5 connected", the same shape as History's
+    "local + 2 connected". Automation → Webhooks uses it too.
+  - The Schedules card says "7 problems", not "⚠ 7".
+  - A Console turn's checkbox reads "in context".
+  - The activity button says "2 host runs".
+  - The Env files button's tooltip names both files it edits,
+    `.runspec_env` and `.runspec_scheduler_env`.
+- **Settings tabs** are one Tab stop. Up, Down, Home and End move between
+  sections, as in a tab list.
+
+### Fixed
+
+- **"waited · ran" now shows.** An approved tool's time splits into the wait
+  for your answer and the run. The approval time was recorded inside a React
+  state update, so the tool's row missed it.
+- **Automation's screen-reader label** counts waiting webhooks, as its badge
+  does.
+- **Status bar:** the version and update items are 24px tall (they were 18px).
+  "checking…" and the discovery count use the muted text colour, not reduced
+  opacity, which was 3.6:1 in dark and 2.4:1 in light.
+- **Env files:** the Remove / Keep column no longer clips at 1024px.
+- **Files:** a disabled Delete greys out like its neighbours; it looked
+  enabled.
+- **24px targets:** the Working hours switches and the Forms section headers.
+
 ## [0.450.0] — 2026-11-15
 
 ### Changed

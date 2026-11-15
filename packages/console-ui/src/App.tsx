@@ -1099,9 +1099,16 @@ export default function App() {
   // and the badge number are hidden from screen readers).
   // Runs on hosts, as Activity's "Runs on hosts" list counts them (chats
   // working are on the session chips).
-  const runsStatus = inFlight.length > 0 ? `${inFlight.length} run${inFlight.length === 1 ? '' : 's'} on hosts in progress` : ''
+  // A chat waiting at Approve outranks runs: it is the badge you need to see
+  // from another tab.
+  const chatWaiting = aiEnabled ? pendingConfirms.size : 0
+  const runsStatus = [
+    chatWaiting > 0 ? `${chatWaiting} waiting for you` : '',
+    inFlight.length > 0 ? `${inFlight.length} run${inFlight.length === 1 ? '' : 's'} on hosts in progress` : '',
+  ].filter(Boolean).join(', ')
   const updatesStatus = marketplaceUpdates > 0 ? `${marketplaceUpdates} package update${marketplaceUpdates === 1 ? '' : 's'} available` : ''
-  const automationStatus = triggerAwaiting > 0 ? `${triggerAwaiting} waiting for you`
+  // Counts webhooks too, as the badge does.
+  const automationStatus = triggerAwaiting + webhookWaiting > 0 ? `${triggerAwaiting + webhookWaiting} waiting for you`
     : scheduleRunning > 0 ? `${scheduleRunning} scheduled run${scheduleRunning === 1 ? '' : 's'} in progress`
       : triggerUnseen ? 'new trigger activity' : ''
   const viewTabs = visibleNavTabs([
@@ -1109,9 +1116,11 @@ export default function App() {
       key: 'console' as ViewKey,
       status: runsStatus,
       label: 'Console',
-      icon: inFlight.length > 0
-        ? <Badge count={inFlight.length} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${inFlight.length} run${inFlight.length === 1 ? '' : 's'} on hosts in progress`}><ThunderboltOutlined /></Badge>
-        : <ThunderboltOutlined />,
+      icon: chatWaiting > 0
+        ? <Badge count={chatWaiting} size="small" offset={[2, -1]} style={WAITING_BADGE} title={`${chatWaiting} waiting for you`}><ThunderboltOutlined /></Badge>
+        : inFlight.length > 0
+          ? <Badge count={inFlight.length} size="small" offset={[2, -1]} style={RUNNING_BADGE} title={`${inFlight.length} run${inFlight.length === 1 ? '' : 's'} on hosts in progress`}><ThunderboltOutlined /></Badge>
+          : <ThunderboltOutlined />,
     },
     { key: 'history'   as ViewKey, label: 'History',   icon: <HistoryOutlined /> },
     { key: 'logs'      as ViewKey, label: 'Log files', icon: <FileTextOutlined /> },
@@ -1835,7 +1844,7 @@ export default function App() {
               {(() => {
                 const sweeping = !discovery.ready || refreshingHosts
                 return (
-                  <Tooltip title={sweeping ? 'Waiting for the fleet to finish connecting…' : 'Edit the .runspec_env file of local and connected venvs'} placement="topLeft">
+                  <Tooltip title={sweeping ? 'Waiting for the fleet to finish connecting…' : 'Env files: edit .runspec_env (runnables) and .runspec_scheduler_env (shared schedules) in local and connected venvs'} placement="topLeft">
                     <Button
                       type="text"
                       icon={sweeping ? <LoadingOutlined aria-hidden /> : <CodeOutlined aria-hidden />}
@@ -1925,7 +1934,9 @@ export default function App() {
                 // More: the occasional tabs. While one of them is open the
                 // button takes its name and the active underline.
                 const active = navLayout.overflow.find(t => t.key === currentTab)
-                // A tab folded into More keeps its badge visible as a dot on More.
+                // A tab folded into More keeps its badge visible as a dot on More:
+                // amber when something waits for you, else neutral (never the
+                // brand colour, which may be red).
                 const flagged = navLayout.overflow.filter(t => t.status && t.key !== currentTab)
                 return (
                   <Dropdown
@@ -1956,7 +1967,7 @@ export default function App() {
                     >
                       {active ? <>{active.icon}{active.label}</> : 'More'}
                       <DownOutlined style={{ fontSize: 10 }} />
-                      {flagged.length > 0 && <span data-testid="more-dot" aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--rs-accent)', marginLeft: -2, alignSelf: 'flex-start', marginTop: 12 }} />}
+                      {flagged.length > 0 && <span data-testid="more-dot" aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: flagged.some(t => /waiting/.test(t.status)) ? 'var(--rs-waiting)' : 'var(--rs-text-secondary)', marginLeft: -2, alignSelf: 'flex-start', marginTop: 12 }} />}
                     </button>
                   </Dropdown>
                 )
@@ -2156,7 +2167,8 @@ export default function App() {
                   <Tooltip title={`${up} of ${remote.length} hosts in the ${activeProfile ? `“${activeProfile}” profile` : 'fleet'} are connected`} placement="topLeft">
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: up === remote.length ? 'var(--rs-ok)' : (up === 0 ? textFaint(isDark) : 'var(--rs-warn)') }} />
-                      <span style={{ fontVariantNumeric: 'tabular-nums', color: textColor(isDark) }}>{up}/{remote.length}</span> remote hosts connected
+                      {/* Same shape as History's "local + 2 connected", with the profile's total. */}
+                      local + <span style={{ fontVariantNumeric: 'tabular-nums', color: textColor(isDark) }}>{up}/{remote.length}</span> connected
                     </span>
                   </Tooltip>
                 )
@@ -2315,7 +2327,7 @@ export default function App() {
                     {' '}runnable{catalogue.distinct === 1 ? '' : 's'}
                     {catalogue.venvCount > 0 && <span> · {catalogue.venvCount} venv{catalogue.venvCount === 1 ? '' : 's'}</span>}
                     {(refreshingHosts || (!discovery.ready && discovery.total > 0)) && (
-                      <span style={{ opacity: 0.7 }}> · {discovery.done}/{discovery.total} hosts</span>
+                      <span style={{ color: textMuted(isDark) }}> · {discovery.done}/{discovery.total} hosts</span>
                     )}
                   </span>
                 </div>
@@ -2456,7 +2468,7 @@ export default function App() {
                   </Tooltip>
                 ) : updateInfo ? null : (
                   <Tooltip title="Checking for updates…">
-                    <span style={{ opacity: 0.6, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                    <span style={{ color: textMuted(isDark), display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                       <LoadingOutlined spin style={{ fontSize: 11 }} /> checking…
                     </span>
                   </Tooltip>

@@ -30,8 +30,9 @@ export const FIELDS_SHOWN_OPEN = 6
 export const SHOWN_AT_ONCE = 3
 
 const AUTONOMY_WHY: Record<string, string> = {
-  confirm: 'The runnable asks for approval before it runs.',
-  supervised: 'The runnable asks for approval before it runs (supervised).',
+  // The chat approval card's words (OutputPanel), so both read alike.
+  confirm: 'Asks before running.',
+  supervised: 'Asks before running, and you review what it does.',
 }
 
 /** Why this delivery waits for a person: the hook asked for it
@@ -115,7 +116,7 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
       {line ? (
         <div>
           <div style={{ fontSize: 12, color: textMuted(isDark), marginBottom: 2 }}>
-            It wants to run this on <span style={{ fontFamily: MONO_FONT }}>{venv.host}</span>{d.rule ? <>, from its rule <span style={{ fontFamily: MONO_FONT }}>{d.rule}</span></> : null}
+            It wants to run this on <span style={{ fontFamily: MONO_FONT }}>{venv.host}</span>{d.rule ? <> (rule <span style={{ fontFamily: MONO_FONT }}>{d.rule}</span>)</> : null}
           </div>
           <code style={{
             display: 'block', fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark), whiteSpace: 'pre-wrap', wordBreak: 'break-word',

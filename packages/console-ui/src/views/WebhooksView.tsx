@@ -7,6 +7,7 @@
  * (one shared cache), so each host's venvs say whether they take webhooks, have
  * them off, or need a newer runspec-scheduler.
  */
+import { readHostsLabel } from '../hostCount'
 import { useMemo } from 'react'
 import { Button, Spin } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
@@ -29,7 +30,7 @@ export function WebhooksView({ hosts, runnables, status }: { hosts: Host[]; runn
     <div style={{ padding: '4px 0' }} data-testid="webhooks-view">
       <PageToolbar actions={<Button size="small" icon={<ReloadOutlined />} onClick={readHosts} loading={hostsLoading}>Refresh</Button>}>
         <span style={{ fontSize: 12, color: textMuted(isDark) }}>
-          {targets.length} host{targets.length === 1 ? '' : 's'} in this profile
+          {readHostsLabel(targets.length)}
         </span>
       </PageToolbar>
       <WebhookApprovals status={status} />

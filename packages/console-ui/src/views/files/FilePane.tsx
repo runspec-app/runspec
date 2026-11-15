@@ -273,6 +273,7 @@ export function FilePane({
       onDrop={drop}
       onMouseDown={onFocus}
       data-testid={`pane-${side}`}
+      className="rs-file-pane"
       style={{
         display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0,
         border: `1px solid ${borderCol}`, borderRadius: 8,
@@ -346,7 +347,7 @@ export function FilePane({
       {/* Navigation stays as icons (Up, Home, Refresh read as a browser);
           what changes files is named, beside the filter. */}
       <div style={{ padding: '0 10px 6px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Input size="small" allowClear value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" aria-label={`${side} pane name filter`} style={{ flex: '1 1 160px', minWidth: 160 }} />
+        <Input size="small" allowClear value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter by name…" aria-label={`${side} pane name filter`} style={{ flex: '1 1 140px', minWidth: 0 }} />
         <Tooltip title={canHostActions ? '' : 'Works on this computer and configured hosts'}>
           <Button size="small" type="text" icon={<FolderAddOutlined aria-hidden />} aria-label="New folder" disabled={!canHostActions} onClick={() => setNewFolder('')}>New folder</Button>
         </Tooltip>
@@ -358,8 +359,10 @@ export function FilePane({
         </Tooltip>
       </div>
 
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 76px 150px', gap: 8, padding: '4px 12px',
+      {/* Columns live in index.css (.rs-file-grid): a narrow pane drops
+          Modified so the name keeps its room. */}
+      <div className="rs-file-grid" style={{
+        display: 'grid', gap: 8, padding: '4px 12px',
         fontSize: 11, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--rs-text-muted)',
         borderBottom: '1px solid var(--rs-border)',
       }}>
@@ -398,8 +401,9 @@ export function FilePane({
                     else if (ev.key === ' ') { ev.preventDefault(); pane.setSelected(isSel ? selected.filter(n => n !== e.name) : [...selected, e.name]) }
                   }}
                   title={isFile ? 'Drag to the other pane to copy · double-click to view' : 'Double-click to open'}
+                  className="rs-file-grid"
                   style={{
-                    display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 76px 150px', gap: 8, alignItems: 'center',
+                    display: 'grid', gap: 8, alignItems: 'center',
                     padding: '4px 12px', cursor: isFile ? 'grab' : 'default', userSelect: 'none',
                     background: isSel ? `color-mix(in srgb, ${accent} 16%, transparent)` : undefined,
                     fontVariantNumeric: 'tabular-nums',

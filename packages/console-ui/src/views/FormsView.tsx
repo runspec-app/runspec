@@ -1036,6 +1036,7 @@ function FormsSection({ title, count, collapsed, onToggle, children }: {
         style={{
           display: 'flex', alignItems: 'center', gap: 8, width: '100%',
           background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 6px',
+          minHeight: 24, // a 24px target (it was 19px)
           marginBottom: collapsed ? 0 : 12,
           borderBottom: '1px solid var(--rs-border)',
           fontSize: 11, color: textSecondary(isDark),

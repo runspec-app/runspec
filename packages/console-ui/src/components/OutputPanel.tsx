@@ -680,8 +680,10 @@ export function finishToolSegment(segments: BlockSegment[], detail: ToolEndDetai
   if (seg.kind !== 'tool') return segments
   // A gated call's time splits into the wait for your answer and the run
   // itself, so "49.5s" doesn't read as a slow tool (gateResolvedAt).
-  const resolvedAt = gateResolvedAt.get(call_id || tool_name)
-  gateResolvedAt.delete(call_id || tool_name)
+  // Keyed by call id, or by tool name when the gate carried none.
+  const gateKey = call_id && gateResolvedAt.has(call_id) ? call_id : tool_name
+  const resolvedAt = gateResolvedAt.get(gateKey)
+  gateResolvedAt.delete(gateKey)
   const gated = resolvedAt !== undefined && seg.entry.startedAt !== undefined && resolvedAt >= seg.entry.startedAt && resolvedAt <= now
   const durationMs = seg.entry.startedAt ? now - (gated ? resolvedAt! : seg.entry.startedAt) : undefined
   const waitedMs = gated ? resolvedAt! - seg.entry.startedAt! : undefined
@@ -1159,6 +1161,10 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
   // normal element in this always-mounted component, not an antd static Modal
   // (which does not render reliably inside the WebView2 host).
   const [pendingConfirms, setPendingConfirms] = useState<Record<string, PendingConfirm>>({})
+  // Read by the answer paths below so they stamp gateResolvedAt directly, not
+  // from inside a state updater (React may run that late or twice).
+  const pendingRef = useRef(pendingConfirms)
+  pendingRef.current = pendingConfirms
 
   // Cold-start seed: a run may have parked at the gate before this view mounted (a
   // reopened console, or a trigger that fired while another tab was active).
@@ -1190,10 +1196,11 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
     // for the same id.
     const onResolved = (e: Event) => {
       const { id, request_id } = (e as CustomEvent).detail as { id: string; request_id: string }
-      const at = Date.now()
+      const pc = pendingRef.current[id]
+      const key = pc && pc.request_id === request_id ? (pc.call_id || pc.tool_name) : ''
+      if (key && !gateResolvedAt.has(key)) gateResolvedAt.set(key, Date.now())
       setPendingConfirms(prev => {
         if (!prev[id] || prev[id].request_id !== request_id) return prev
-        gateResolvedAt.set(prev[id].call_id || prev[id].tool_name, at)
         const next = { ...prev }; delete next[id]; return next
       })
     }
@@ -1224,11 +1231,11 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
       ? bridge.resolve_tool_confirmation(requestId, approved, editedInput, declineReason)
       : bridge.resolve_tool_confirmation(requestId, approved, editedInput)
     call.catch(err => console.error('[runspec] resolve_tool_confirmation failed', err))
-    const at = Date.now()
+    const answered = Object.values(pendingRef.current).find(v => v.request_id === requestId)
+    if (answered) gateResolvedAt.set(answered.call_id || answered.tool_name, Date.now())
     setPendingConfirms(prev => {
       const hit = Object.entries(prev).find(([, v]) => v.request_id === requestId)
       if (!hit) return prev
-      gateResolvedAt.set(hit[1].call_id || hit[1].tool_name, at)
       const next = { ...prev }; delete next[hit[0]]; return next
     })
   }, [])
@@ -2334,7 +2341,7 @@ const BlockCard = memo(function BlockCard({
               style={{ flexShrink: 0 }}
             >
               {/* Named, so it doesn't read as select-for-bulk-action. */}
-              <span style={{ fontSize: 11, color: c.dim, paddingInlineStart: 0 }}>context</span>
+              <span style={{ fontSize: 11, color: c.dim, paddingInlineStart: 0 }}>in context</span>
             </Checkbox>
           </Tooltip>
         )}
