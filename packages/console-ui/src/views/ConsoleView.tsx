@@ -812,7 +812,7 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent, waitingTotal, w
         <RowActions
           style={{ flexShrink: 0, flexWrap: 'nowrap' }}
           primary={ai
-            ? { key: 'new', label: 'New chat', icon: <PlusOutlined />, onClick: handleNewChat, tip: 'Open another chat — this one keeps running (Alt+N)' }
+            ? { key: 'new', label: 'New', ariaLabel: 'New chat', icon: <PlusOutlined />, onClick: handleNewChat, tip: 'New chat: this one keeps running (Alt+N)' }
             : visible.length > 0 ? { key: 'clear', label: 'Clear', icon: <PlusOutlined />, onClick: handleClear, tip: 'Clear the run output' } : undefined}
           secondary={ai ? [{ key: 'history', label: 'History', icon: <HistoryOutlined />, onClick: openConversations, tip: 'Browse and reopen past conversations' }] : []}
           more={visible.length > 0 ? ([
