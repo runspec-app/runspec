@@ -25,6 +25,11 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   - The ask moved from the daemon row into the Schedules view so it can carry
     the warning.
 
+### Fixed
+
+- **The denylist mode control keeps your pick.** If the hosts' status arrived
+  after you'd picked a mode, the control jumped back to the hosts' mode.
+
 ## [0.446.1] — 2026-11-15
 
 ### Fixed

@@ -133,7 +133,10 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
   // control can say it and go back to it when a change is cancelled.
   const liveModes = [...new Set(shownStatus.filter(r => r.ok && r.mode).map(r => r.mode as 'enforce' | 'warn' | 'off'))]
   const liveMode = liveModes.length === 1 ? liveModes[0] : null
-  useEffect(() => { if (liveMode) setMode(liveMode) }, [liveMode])
+  // Follow the hosts' mode until the operator picks one (a status that lands
+  // after a pick mustn't undo it).
+  const modeTouched = useRef(false)
+  useEffect(() => { if (liveMode && !modeTouched.current) setMode(liveMode) }, [liveMode])
   // Every rule in the shown rows, "host/venv: rule", for the Clear ask.
   const allRules = shownStatus.flatMap(r => (r.ok ? r.rules ?? [] : []).map(rule => `${r.host}/${r.venv}: ${ruleText(rule)}`))
   const ruleCount = allRules.length
@@ -442,7 +445,7 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
           aria-label="Enforcement mode"
           size="small"
           value={mode}
-          onChange={v => setMode(v as 'enforce' | 'warn' | 'off')}
+          onChange={v => { modeTouched.current = true; setMode(v as 'enforce' | 'warn' | 'off') }}
           options={[
             { label: 'Enforce', value: 'enforce' },
             { label: 'Warn', value: 'warn' },
@@ -460,7 +463,7 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
               okText: mode === 'off' ? 'Turn off' : 'Only warn',
             })
             // Cancelled: the control goes back to what the hosts are doing.
-            if (!a.ok) { setMode(liveMode ?? 'enforce'); return }
+            if (!a.ok) { modeTouched.current = false; setMode(liveMode ?? 'enforce'); return }
           }
           await run({ action: 'mode', setting: mode }, 'mode')
         }}>
