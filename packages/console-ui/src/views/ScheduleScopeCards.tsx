@@ -57,6 +57,7 @@ export function ScheduleScopeCards({ value, onChange, counts, hostsPending, noDa
       {SCOPE_CARDS.map(c => {
         const selected = c.scope === value
         const problems = counts[c.scope].problems
+        const shared = counts[c.scope].shared ?? 0
         return (
           <button
             key={c.scope}
@@ -90,11 +91,11 @@ export function ScheduleScopeCards({ value, onChange, counts, hostsPending, noDa
                 // Outlined in both themes: a tinted fill took the light text to
                 // 4.2:1. The title says what counts as a problem.
                 <span
-                  aria-label={`${problems} problem${problems === 1 ? '' : 's'}`}
-                  title={`${problems} problem${problems === 1 ? '' : 's'}: schedules whose last run failed, that aren't installed or are out of sync, and hosts that couldn't be read. Pick this card to list them.`}
+                  aria-label={`${problems} problem${problems === 1 ? '' : 's'}${shared ? `, ${shared} shared with the other host card` : ''}`}
+                  title={`${problems} problem${problems === 1 ? '' : 's'}: schedules whose last run failed, that aren't installed or are out of sync, and hosts that couldn't be read.${shared ? ` ${shared} is a venv that couldn't be read, counted on both host cards (once under All).` : ''} Pick this card to list them.`}
                   style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: 'transparent', border: `1px solid ${statusText(isDark).warn}`, color: statusText(isDark).warn }}
                 >
-                  <WarningFilled aria-hidden style={{ fontSize: 11 }} />{problems} problem{problems === 1 ? '' : 's'}
+                  <WarningFilled aria-hidden style={{ fontSize: 11 }} />{problems} problem{problems === 1 ? '' : 's'}{shared ? ` (${shared} shared)` : ''}
                 </span>
               )}
             </span>

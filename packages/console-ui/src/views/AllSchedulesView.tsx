@@ -671,6 +671,8 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
       title: '',
       key: 'actions',
       width: 150,
+      // Pinned, so Run now / Edit stay on screen when the table scrolls.
+      fixed: 'right',
       render: (_: unknown, r) => {
         const v = venvOf(r)
         if (!v) return null
@@ -882,7 +884,8 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
       {chips.length > 0 && (
         <div data-testid="filter-chips" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '-4px 0 12px' }}>
           <span style={{ fontSize: 12, color: muted }}>
-            Showing {rows.length} of {scoped.length}:
+            {/* Rows, not schedules: stale lines and unreadable venvs list too. */}
+            Showing {rows.length} of {scoped.length} rows:
           </span>
           {chips.map(ch => (
             <Tag key={ch.key} closable onClose={e => { e.preventDefault(); setFilters(ch.clear) }}

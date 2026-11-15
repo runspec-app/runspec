@@ -44,7 +44,7 @@ const BASELINE: Record<string, number> = {
   'components/runShared.tsx': 7,
   'views/DevView.tsx': 9,
   'views/EvalsView.tsx': 1,
-  'views/HistoryView.tsx': 3,
+  'views/HistoryView.tsx': 2,
   'views/HostScheduleModal.tsx': 1,
   'views/HostsView.tsx': 5,
   'views/ImproveView.tsx': 1,

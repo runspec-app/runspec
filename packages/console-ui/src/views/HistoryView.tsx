@@ -659,7 +659,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
 
   const columns: ColumnType<HistoryRecord>[] = useMemo(() => [
     // What ran, how it went, where and when first: at 1024 these stay on
-    // screen. Group sits last (the name already carries it as a prefix).
+    // screen.
     {
       title: 'Runnable',
       key: 'runnable',
@@ -691,9 +691,18 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
         )
       },
       sorter: (a, b) => `${a.group}/${a.runnable}`.localeCompare(`${b.group}/${b.runnable}`),
-      filters: runnableNames.map(n => ({ text: n, value: n })),
+      // Groups filter here too: the name already shows its group as a prefix,
+      // so it needs no column of its own (that column only pushed the table
+      // wider at 1024px).
+      filters: [
+        ...runnableNames.map(n => ({ text: n, value: n })),
+        ...groups.map(g => ({ text: `group: ${g}`, value: `group:${g}` })),
+      ],
       filterSearch: true,
-      onFilter: (value, record) => record.runnable === value,
+      onFilter: (value, record) => {
+        const v = String(value)
+        return v.startsWith('group:') ? record.group === v.slice(6) : record.runnable === v
+      },
       filteredValue: colFilters['runnable'] ?? null,
     },
     {
@@ -803,27 +812,6 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
       filters: runAsUsers.map(u => ({ text: u, value: u })),
       onFilter: (value, record) => record.runAs === value,
       filteredValue: colFilters['runAs'] ?? null,
-    },
-    {
-      title: 'Group',
-      dataIndex: 'group',
-      key: 'group',
-      render: (g: string) => {
-        const active = activeScope.includes(g)
-        return (
-          <Tag
-            color={active ? 'geekblue' : 'blue'}
-            onClick={() => scopeToggleRef.current(g)}
-            style={{ cursor: 'pointer', fontWeight: active ? 600 : 400 }}
-            title={active ? 'Remove from scope' : 'Add to scope'}
-          >
-            {g}
-          </Tag>
-        )
-      },
-      filters: groups.map(g => ({ text: g, value: g })),
-      onFilter: (value, record) => record.group === value,
-      filteredValue: colFilters['group'] ?? null,
     },
     ...(runbooks.length > 0 ? [{
       title: 'Runbook',

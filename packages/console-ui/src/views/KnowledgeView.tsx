@@ -268,7 +268,8 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
           onChange={k => setTab(k as 'tools' | 'inbox')}
           sections={[
             { key: 'tools', label: 'Tools' },
-            { key: 'inbox', label: 'Inbox', count: inboxCount, countTone: 'waiting' },
+            // A neutral count: amber means an approval is waiting.
+            { key: 'inbox', label: 'Inbox', count: inboxCount, countTone: 'neutral' },
           ]}
         />
       </PageToolbar>

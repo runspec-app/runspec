@@ -167,3 +167,21 @@ describe('chipText', () => {
     expect(chipText(sess({ id: 'n', label: 'restart nginx on web-01', createdAt: at }))).toBe('restart nginx on web-01')
   })
 })
+
+describe('wholeChipScroll()', () => {
+  // Five 100px chips, 6px apart: starts 0, 106, 212, 318, 424.
+  const starts = [0, 106, 212, 318, 424]
+  const widths = [100, 100, 100, 100, 100]
+  it('shows the target in full and starts on a whole chip', async () => {
+    const { wholeChipScroll } = await import('./SessionStrip')
+    // 250px view, target the last chip: its right edge 524 needs >= 274; the
+    // first whole chip from there starts at 318.
+    expect(wholeChipScroll(starts, widths, 250, 0, 4)).toBe(318)
+    // Already in view at a chip start: stays.
+    expect(wholeChipScroll(starts, widths, 250, 106, 1)).toBe(106)
+    // Scrolled to a sliver (60): moves to the next whole chip that keeps the target.
+    expect(wholeChipScroll(starts, widths, 250, 60, 2)).toBe(106)
+    // Target left of view: starts at it.
+    expect(wholeChipScroll(starts, widths, 250, 318, 0)).toBe(0)
+  })
+})

@@ -39,7 +39,7 @@ describe('approvalWhy', () => {
     expect(approvalWhy({ autonomy: 'confirm', reason: 'the hook asks for an approval' })).toBe('This hook asks for a person to approve each run.')
   })
   it("falls back to the runnable's level (runspec-scheduler 0.11.0)", () => {
-    expect(approvalWhy({ autonomy: 'confirm', reason: 'demo needs an approval (confirm)' })).toBe('Asks before running.')
+    expect(approvalWhy({ autonomy: 'confirm', reason: 'demo needs an approval (confirm)' })).toBe('Asks before running')
     expect(approvalWhy({ autonomy: 'autonomous', reason: '' })).toBe('')
   })
 })

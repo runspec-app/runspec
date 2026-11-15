@@ -448,7 +448,8 @@ function TestTriggerModal({ name, trigger, onClose }: { name: string | null; tri
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
         Fires this trigger immediately with a synthetic event — bypassing the match
         rules and the working-hours rota — so you can test it without waiting for a
-        real event. The message lands under the <code>body</code> field. For an
+        real event. <strong>Its action runs for real</strong>; anything that asks
+        first still waits for your approval. The message lands under the <code>body</code> field. For an
         Outlook trigger the <code>folder</code>/<code>mailbox</code> below are
         pre-filled from its match so the run has the same location a real email
         would; a real arriving email carries these automatically.
@@ -915,15 +916,23 @@ export function TriggersEditor({
               <Text type="secondary" style={{ fontFamily: MONO_FONT, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {String(t.source ?? '')}:{String(t.event ?? '')}
               </Text>
+              {/* Its event source is down: it can't fire, whatever its switch says. */}
+              {(() => {
+                const src = sources.find(x => x.id === t.source)
+                return src && !src.available
+                  ? <StatusTag tone="attention" tip={src.reason || `${src.id} is unavailable, so this trigger can't fire`}>source unavailable</StatusTag>
+                  : null
+              })()}
               <StatusTag tone="neutral" tip={(t.mode ?? 'agent') === 'rule'
                 ? 'rule: runs the runnables it names, no assistant involved'
                 : 'agent: the assistant reads the event and decides what to run'}>{String(t.mode ?? 'agent')}</StatusTag>
-              <Switch size="small" aria-label={`Enable trigger ${String(t.name)}`} checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)} />
+              <Switch aria-label={`Enable trigger ${String(t.name)}`} checked={t.enabled !== false} onChange={v => toggle(String(t.name), v)}
+                style={sources.some(x => x.id === t.source && !x.available) ? { opacity: 0.5 } : undefined} />
               {/* Labelled like every other list: Test and Edit, the rest under More. */}
               <RowActions
                 testId={`trigger-actions-${String(t.name)}`}
                 secondary={[
-                  { key: 'test', label: 'Test', ariaLabel: `Trigger ${String(t.name)} now`, icon: <PlayCircleOutlined />, onClick: () => setTestName(String(t.name)), disabled: editing, tip: 'Fire it with a test event' },
+                  { key: 'test', label: 'Test', ariaLabel: `Test ${String(t.name)}`, icon: <PlayCircleOutlined />, onClick: () => setTestName(String(t.name)), disabled: editing, tip: 'Fire it now with a test event; its action runs for real' },
                   { key: 'edit', label: 'Edit', ariaLabel: `Edit ${String(t.name)}`, icon: <EditOutlined />, onClick: () => startEdit(t), disabled: editing },
                 ]}
                 more={[

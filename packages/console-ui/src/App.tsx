@@ -1827,7 +1827,7 @@ export default function App() {
                     ? 'No connected hosts to manage'
                     : `Denylist (kill switch) for the ${connectedRemote.length} connected host${connectedRemote.length === 1 ? '' : 's'}`
                 return (
-                  <Tooltip title={tip} placement="topLeft">
+                  <Tooltip key={denylistOpen ? 'open' : 'closed'} title={tip} placement="topLeft">
                     <Button
                       type="text"
                       icon={sweeping ? <LoadingOutlined aria-hidden /> : <StopOutlined aria-hidden />}
@@ -1844,7 +1844,7 @@ export default function App() {
               {(() => {
                 const sweeping = !discovery.ready || refreshingHosts
                 return (
-                  <Tooltip title={sweeping ? 'Waiting for the fleet to finish connecting…' : 'Env files: edit .runspec_env (runnables) and .runspec_scheduler_env (shared schedules) in local and connected venvs'} placement="topLeft">
+                  <Tooltip key={envFilesOpen ? 'open' : 'closed'} title={sweeping ? 'Waiting for the fleet to finish connecting…' : 'Env files: edit .runspec_env (runnables) and .runspec_scheduler_env (shared schedules) in local and connected venvs'} placement="topLeft">
                     <Button
                       type="text"
                       icon={sweeping ? <LoadingOutlined aria-hidden /> : <CodeOutlined aria-hidden />}
@@ -2307,7 +2307,8 @@ export default function App() {
                 <div
                   role="button"
                   tabIndex={0}
-                  aria-label="Refresh hosts and runnables"
+                  // The name starts with what it shows, then what it does (label in name).
+                  aria-label={`${catalogue.distinct} runnable${catalogue.distinct === 1 ? '' : 's'}${catalogue.venvCount > 0 ? ` · ${catalogue.venvCount} venv${catalogue.venvCount === 1 ? '' : 's'}` : ''}, refresh hosts and runnables`}
                   aria-busy={refreshingHosts}
                   onClick={() => { if (!refreshingHosts) refreshHosts() }}
                   onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && !refreshingHosts) { e.preventDefault(); refreshHosts() } }}

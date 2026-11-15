@@ -105,10 +105,10 @@ describe('scopeCounts + inScope', () => {
       ],
     )
     const n = scopeCounts(c)
-    expect(n.console).toEqual({ schedules: 1, problems: 0 })
-    expect(n.cron).toEqual({ schedules: 2, problems: 2 })    // not installed + can't read
-    expect(n.daemon).toEqual({ schedules: 1, problems: 2 })  // stopped + can't read
-    expect(n.all).toEqual({ schedules: 4, problems: 3 })
+    expect(n.console).toEqual({ schedules: 1, problems: 0, shared: 0 })
+    expect(n.cron).toEqual({ schedules: 2, problems: 2, shared: 1 })    // not installed + can't read (shared)
+    expect(n.daemon).toEqual({ schedules: 1, problems: 2, shared: 1 })  // stopped + can't read (shared)
+    expect(n.all).toEqual({ schedules: 4, problems: 3, shared: 0 })
     expect(inScope('unknown', 'console')).toBe(false)
   })
 })

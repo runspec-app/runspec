@@ -9,6 +9,56 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.452.0] — 2026-11-15
+
+### Changed
+
+- **Session chips land on whole chips.** When the row scrolls to show a chip
+  (a new chat, a resize, a chat that starts waiting), it starts on a whole
+  chip and shows the target in full. Before, the leftmost chip could be cut by
+  up to 60px.
+- **Files.**
+  - Saved transfers follows the window: it opens above 1200px and closes
+    below, unless you chose. Below 1000px an open panel floats over the panes
+    instead of taking their room.
+  - Saved transfer rows have **Run…** and **Edit**, with Open in panes and
+    Delete under More. Every name uses the transfer's title.
+  - A narrow pane folds New folder, Rename and Delete into one **More** menu,
+    so Delete never wraps onto a line of its own.
+- **Schedules.**
+  - The filter line says "Showing 7 of 21 rows", since stale lines and venvs
+    that couldn't be read list too.
+  - A host card's problem count says how many it shares with the other host
+    card ("6 problems (1 shared)"), so the cards and All add up.
+  - The row actions are pinned to the right, so Run now and Edit stay on
+    screen when the table scrolls at 1024px.
+- **Triggers.**
+  - **Test** is named "Test <trigger>", and its window says the action runs
+    for real and that approvals still apply.
+  - A trigger whose event source is unavailable shows **source unavailable**,
+    and its switch is dimmed.
+- **History → Runs:** the Group column is gone. The runnable's name already
+  shows its group, and the Runnable filter now lists groups too. At 1024px the
+  table no longer scrolls sideways for it.
+- **Words.**
+  - The chat and webhook approval cards share one policy line ("Asks before
+    running").
+  - The footer's runnable count is named for what it shows ("15 runnables · 3
+    venvs, refresh hosts and runnables").
+  - Env files labels its second switch **File:**.
+  - Knowledge's inbox count is neutral; amber stays for approvals.
+  - Chat History settings name the **Past chats** button.
+- **Settings → Telemetry:** each section has a one-line summary, with the
+  detail under "How this works".
+
+### Fixed
+
+- **A footer tooltip no longer lingers** over the page after its Denylist or
+  Env files window closes.
+- **24px targets:** the Settings › Hosts group up/down buttons (24×18, touching),
+  the trigger and lock switches (were small), and default switches (44×22, now
+  a 24px hit area).
+
 ## [0.451.0] — 2026-11-15
 
 ### Changed
