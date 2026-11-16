@@ -12,7 +12,7 @@ import { UpdateVenvModal } from '../views/UpdateVenvModal'
 import type { DeprovisionTarget } from '../bridge'
 import { PathInput } from '../views/PathInput'
 import { NetworkTab } from './NetworkTab'
-import { credEnvNames, initialFormValues } from '../views/formsShared'
+import { credEnvNames, initialFormValues, parseListedText } from '../views/formsShared'
 import { runnableHidden } from '../toolVisibility'
 import {
   commandPathOptions, CredentialsSection, effectiveArgsForPath, RunnableArgsBlock,
@@ -5166,7 +5166,8 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
       profile: s.profile || undefined,
       // Fallback editors — used only while the runnable isn't discovered; the
       // rich seeding effect below takes over as soon as it resolves.
-      args: Object.entries(s.args ?? {}).map(([key, value]) => ({ key, value: String(value) })),
+      // A list (a multiple arg) shows as JSON so saving it back keeps the list.
+      args: Object.entries(s.args ?? {}).map(([key, value]) => ({ key, value: Array.isArray(value) ? JSON.stringify(value) : String(value) })),
       params: argsRawToRows(s.paramsRaw),
     })
     setTarget(s.profile ? 'profile' : s.group ? 'group' : s.selected_hosts?.length ? 'selected' : s.hosts?.length ? 'anyhost' : 'host')
@@ -5273,7 +5274,12 @@ export function SavedRunsTab({ editorOnly = false, request = null }: { editorOnl
       // Fallback path (runnable not discovered): raw key=value + manual params.
       args = {}
       for (const f of values.args ?? []) {
-        if (f?.key?.trim()) args[f.key.trim()] = String(f.value ?? '').trim()
+        if (!f?.key?.trim()) continue
+        const key = f.key.trim()
+        const text = String(f.value ?? '').trim()
+        // A value stored as a list stays a list (String() of it was "a,b").
+        const wasList = Array.isArray(editingEntry?.args?.[key])
+        args[key] = wasList ? (parseListedText(text) ?? text) : text
       }
       paramsRaw = rowsToArgsRaw(values.params)
     }

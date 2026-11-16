@@ -210,6 +210,9 @@ class InvokeMixin:
             k: v for k, v in args.items() if k in secret_names and v not in (None, "")
         }
         exec_args = {k: v for k, v in args.items() if k not in secret_names}
+        # A History rerun / older saved run may carry a multi-valued arg as the
+        # text of a list ("['Open']"); send the values, not the text.
+        utils_mod.repair_listed_args(cached, cp, exec_args)
         # The run dialog's "Debug logging" switch (or any caller's `debug`) rides
         # the env channel, never argv — see executor.DEBUG_ARG.
         dbg_env = utils_mod.pop_debug(cached, cp, exec_args)

@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.84.2] — 2026-11-16
+
+### Fixed
+
+- **A multi-valued arg is recorded as a list, so a rerun gets its values back.**
+  The run record's `invocation_args` wrote every value with `str()`, so a
+  `multiple = true` choice picked as `Open` was stored as `"['Open']"` (and
+  `Open` + `Closed` as `"['Open', 'Closed']"`). runspec-console's History
+  Rerun and Edit & rerun passed that string back as one value and the run
+  failed its choice check. A `multiple` or `rest` arg is now recorded as a
+  list of text (`["Open"]`); every other value stays text as before. SPEC →
+  "Value Resolution Order" says so.
+
+---
+
 ## [0.84.1] — 2026-11-13
 
 ### Fixed
