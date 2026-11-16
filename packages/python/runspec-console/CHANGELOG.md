@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.456.0] — 2026-11-16
+
+### Added
+
+- **Charts: Schedules in the Started by filter.** History → Charts could split
+  runs only into User and Agent, so a schedule's runs counted under whoever
+  its action was. Each chart bucket now carries `startedBy` (`user`, `llm` or
+  `schedule`): a fire of one of this console's schedules (trigger `schedule`)
+  or of a host's runspec-scheduler (`schedule:cron`, `schedule:daemon`, or an
+  older `sched:<id>` label) is `schedule`; a host schedule started by hand with
+  Run now stays `user`, as on History's Run by column. The filter gains
+  **Schedules**, and the "User vs agent" chart is now **Started by**, with a
+  schedule slice when any ran. `initiatedBy` is unchanged, and a console that
+  doesn't send `startedBy` still filters as before.
+
 ## [0.455.0] — 2026-11-16
 
 ### Changed

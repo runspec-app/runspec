@@ -9,7 +9,7 @@ import { bridge, type AnalyticsData, type AnalyticsBucket, type AnalyticsExcepti
 import { ThemeContext, chartPalette, statusText, useIsDark } from '../ThemeContext'
 import {
   filterBuckets, computeKpis, runsOverTime, successRateOverTime, listText, shortDay,
-  durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown,
+  durationTrend, topRunnables, operatorBreakdown, initiatedBreakdown, type InitiatedFilter,
 } from './analytics'
 import { EmptyState, StatusTag } from '../components/kit'
 import { When, fmtDayRange } from '../when'
@@ -74,7 +74,7 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
   const [groupFilter, setGroupFilter] = useState<string[]>([])
   const [operatorFilter, setOperatorFilter] = useState<string[]>([])
   const [runbookFilter, setRunbookFilter] = useState<string[]>([])
-  const [initiatedBy, setInitiatedBy] = useState<'all' | 'user' | 'llm'>('all')
+  const [initiatedBy, setInitiatedBy] = useState<InitiatedFilter>('all')
 
   const plotTheme = isDark ? 'classicDark' : 'classic'
 
@@ -208,13 +208,13 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
             maxTagCount="responsive"
           />
         )}
-        {/* Who started the runs, in History's Run by words. A schedule's runs
-            count under who its action is (the charts' data has no trigger). */}
+        {/* Who started the runs, in History's Run by words: a person, the
+            assistant, or a schedule (this console's or a host's). */}
         <Segmented
           aria-label="Started by"
-          options={[{ label: 'All', value: 'all' }, { label: 'User', value: 'user' }, { label: 'Agent', value: 'llm' }]}
+          options={[{ label: 'All', value: 'all' }, { label: 'User', value: 'user' }, { label: 'Agent', value: 'llm' }, { label: 'Schedules', value: 'schedule' }]}
           value={initiatedBy}
-          onChange={(v) => setInitiatedBy(v as 'all' | 'user' | 'llm')}
+          onChange={(v) => setInitiatedBy(v as InitiatedFilter)}
         />
         {loading && <Spin size="small" indicator={<ReloadOutlined spin />} />}
         <div style={{ flex: 1 }} />
@@ -338,13 +338,13 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
           </Card>
         </Col>
         <Col xs={24} lg={12}>
-          <Card size="small" title="User vs agent" style={cardStyle}>
+          <Card size="small" title="Started by" style={cardStyle}>
             {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
-              <div role="img" aria-label={`User vs agent: ${listText(initiated.map(o => ({ label: o.type, value: o.value })))}`}>
+              <div role="img" aria-label={`Started by: ${listText(initiated.map(o => ({ label: o.type, value: o.value })))}`}>
                 <Pie
                   data={initiated} angleField="value" colorField="type"
                   height={chartHeight} theme={plotTheme} innerRadius={0.5}
-                  scale={{ color: { domain: ['user', 'agent'], range: [PALETTE[0], PALETTE[1]] } }}
+                  scale={{ color: { domain: ['user', 'agent', 'schedule'], range: [PALETTE[0], PALETTE[1], PALETTE[2]] } }}
                   legend={{ color: { position: 'right' } }} label={{ text: 'value', position: 'inside' }}
                 />
               </div>

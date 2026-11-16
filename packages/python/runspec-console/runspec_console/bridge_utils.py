@@ -1859,6 +1859,26 @@ def _percentile(sorted_vals: list[float], pct: float) -> float:
     return float(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * frac)
 
 
+def _started_by(r: dict[str, Any]) -> str:
+    """Who or what started a run, for the Charts filter: ``schedule`` for a
+    fire of this console's schedules (trigger ``schedule``) or of a host's
+    runspec-scheduler (trigger ``schedule:cron`` / ``schedule:daemon``, or an
+    older fire's ``sched:<id>`` label), else ``llm`` / ``user`` as
+    ``initiatedBy`` says. A host schedule started by hand (``schedule:run-now``)
+    was a person. Mirrors the History tab's Run by column (console-ui runBy.ts)."""
+    trigger = str(r.get("trigger") or "")
+    label = str(r.get("label") or "")
+    if trigger == "schedule:run-now":
+        return "user"
+    if (
+        trigger == "schedule"
+        or trigger.startswith("schedule:")
+        or label.startswith("sched:")
+    ):
+        return "schedule"
+    return "llm" if r.get("initiatedBy") == "llm" else "user"
+
+
 def _aggregate_analytics(
     records: list[dict[str, Any]],
     since: str,
@@ -1891,6 +1911,7 @@ def _aggregate_analytics(
         run = r.get("runnable", "")
         operator = r.get("operator", "") or ""
         initiated = r.get("initiatedBy", "user")
+        started = _started_by(r)
         extra = r.get("extra", {}) or {}
         autonomy = extra.get("autonomy") or ""
         runbook = r.get("runbook", "") or extra.get("runbook", "") or ""
@@ -1916,7 +1937,7 @@ def _aggregate_analytics(
         d["failure"] += 0 if ok else 1
         d["durations"].append(dur)
 
-        bkey = (day, host, group, run, operator, initiated, autonomy, runbook)
+        bkey = (day, host, group, run, operator, initiated, started, autonomy, runbook)
         b = buckets.get(bkey)
         if b is None:
             b = {
@@ -1926,6 +1947,7 @@ def _aggregate_analytics(
                 "runnable": run,
                 "operator": operator,
                 "initiatedBy": initiated,
+                "startedBy": started,
                 "autonomy": autonomy,
                 "runbook": runbook,
                 "total": 0,
@@ -2026,6 +2048,7 @@ def _aggregate_analytics(
             "runnables": sorted(runnables_seen),
             "operators": sorted(operators_seen),
             "initiatedBy": ["user", "llm"],
+            "startedBy": ["user", "llm", "schedule"],
             "runbooks": sorted(runbooks_seen),
         },
         "partial": partial,
