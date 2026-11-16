@@ -25,6 +25,28 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   - a narrow table fills at least the old width but isn't stretched across a
     wide window.
 
+## [0.452.2] — 2026-11-16
+
+### Fixed
+
+- **Rerunning a run with a multi-choice arg no longer fails.** runspec core
+  before 0.84.2 recorded a `multiple` choice with Python's `str()`, so a run
+  of a saved run (or anything else) that picked `Open` showed in History as
+  `"['Open']"`. History's **Rerun** sent that text as the value and the run
+  failed its choice check; **Edit & rerun** opened the form with
+  `['Open']` as one odd pick. The console now turns such text back into the
+  picks before it runs (`bridge_utils.repair_listed_args`, on the Forms /
+  History / saved-run / schedule path and the agent's run path, before its
+  preflight) and when it fills the form (`formsShared.initialFormValues`). It
+  does this only for an arg the runnable declares `multiple` (or `rest`), or a
+  single `choice` whose value is a one-item list of one of its options, so a
+  plain text arg is never changed. History shows a list as `Open, Closed`.
+- The saved-run editor's fallback fields (used while the runnable isn't
+  discovered) no longer flatten a stored list to `Open,Closed` on save: a list
+  shows as JSON and saves back as a list.
+- runspec core 0.84.2 records multi-valued args as lists, so new runs are
+  right at the source; the repair covers hosts on older cores.
+
 ## [0.452.1] — 2026-11-15
 
 ### Fixed

@@ -239,9 +239,80 @@ export function initialFormValues(
   for (const [k, v] of Object.entries(prefill ?? {})) {
     const arg = args.find(a => a.name === k)
     if (!declared.has(k) || arg?.type === 'password') continue
-    values[k] = arg?.type === 'flag' ? flagValue(v) : v
+    values[k] = arg?.type === 'flag' ? flagValue(v) : arg ? listedValue(arg, v) : v
   }
   return values
+}
+
+// runspec core before 0.84.2 recorded a run's args with Python's str(), so a
+// `multiple` choice picked as Open came back from History as "['Open']" — the
+// form showed that text as one (invalid) pick and the rerun failed. A
+// multi-valued arg's listed text becomes the list again; a single choice that
+// isn't one of its options but is a one-item list of one becomes that option.
+function listedValue(arg: ArgDef, v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  const items = parseListedText(v)
+  if (!items) return v
+  if (arg.multiple || arg.type === 'rest') return items
+  if (arg.type === 'choice' && arg.options && !arg.options.includes(v)
+      && items.length === 1 && arg.options.includes(items[0])) return items[0]
+  return v
+}
+
+/**
+ * The items of a list written as text — Python's str() of a list
+ * (`['Open', "it's"]`) or JSON (`["Open"]`) — or null when the text isn't one.
+ * Items are quoted strings or bare scalars (numbers, True/False). Exported for
+ * unit tests.
+ */
+export function parseListedText(text: string): string[] | null {
+  const s = text.trim()
+  if (!s.startsWith('[') || !s.endsWith(']')) return null
+  const items: string[] = []
+  let i = 1
+  const end = s.length - 1
+  const skipSpace = () => { while (i < end && /\s/.test(s[i])) i++ }
+  skipSpace()
+  if (i === end) return items
+  for (;;) {
+    skipSpace()
+    if (i >= end) return null
+    const q = s[i]
+    if (q === "'" || q === '"') {
+      let out = ''
+      i++
+      for (;;) {
+        if (i >= end) return null
+        const c = s[i]
+        if (c === q) { i++; break }
+        if (c === '\\') {
+          const n = s[i + 1]
+          const simple: Record<string, string> = { n: '\n', t: '\t', r: '\r', '\\': '\\', "'": "'", '"': '"' }
+          if (n in simple) { out += simple[n]; i += 2; continue }
+          const hex = n === 'x' ? 2 : n === 'u' ? 4 : n === 'U' ? 8 : 0
+          const code = hex ? s.slice(i + 2, i + 2 + hex) : ''
+          if (hex && new RegExp(`^[0-9a-fA-F]{${hex}}$`).test(code)) {
+            out += String.fromCodePoint(parseInt(code, 16)); i += 2 + hex; continue
+          }
+          return null
+        }
+        out += c
+        i++
+      }
+      items.push(out)
+    } else {
+      const m = /^[-+\w.]+/.exec(s.slice(i, end))
+      if (!m) return null
+      items.push(m[0])
+      i += m[0].length
+    }
+    skipSpace()
+    if (i === end) return items
+    if (s[i] !== ',') return null
+    i++
+    skipSpace()
+    if (i === end) return items  // trailing comma
+  }
 }
 
 // A History record stores every arg as text — a flag reads "True" / "False" —

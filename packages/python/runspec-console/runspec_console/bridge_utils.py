@@ -2327,3 +2327,70 @@ def pop_debug(
     if not value:
         return {}
     return executor.debug_env(str(cached.get("name") or ""))
+
+
+def _listed_text(value: str) -> list[str] | None:
+    """The items of a list written as text — ``"['Open', 'Closed']"`` (Python's
+    ``str()`` of a list) or ``'["Open"]'`` — or None when ``value`` isn't one.
+    Only plain scalars count, so nothing but a literal is ever evaluated."""
+    import ast
+
+    text = value.strip()
+    if not (text.startswith("[") and text.endswith("]")):
+        return None
+    try:
+        parsed = ast.literal_eval(text)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return None
+    if not isinstance(parsed, (list, tuple)):
+        return None
+    if not all(isinstance(v, (str, int, float, bool)) for v in parsed):
+        return None
+    return [str(v) for v in parsed]
+
+
+def repair_listed_args(
+    cached: dict[str, Any] | None,
+    command_path: list[str],
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Undo a multi-valued arg written as text, in place; returns ``args``.
+
+    runspec core before 0.84.2 recorded every run arg with ``str()``, so a
+    ``multiple`` choice picked as ``Open`` came back from History as
+    ``"['Open']"`` — and a rerun (or a saved run built from one) sent that
+    string as the value, which fails the choice check. For an arg the runnable
+    declares ``multiple`` (or ``type = "rest"``), such a string becomes the
+    list again. For a single ``choice`` whose value isn't one of its options, a
+    one-item list of an option becomes that option. Anything else is left as
+    is, and so is everything when the runnable's spec isn't known."""
+    if not cached or not args:
+        return args
+
+    def norm(name: Any) -> str:
+        return str(name).replace("-", "_")
+
+    declared: dict[str, dict[str, Any]] = {}
+    node: dict[str, Any] = cached
+    for a in node.get("args") or []:
+        if isinstance(a, dict) and a.get("name"):
+            declared[norm(a["name"])] = a
+    for seg in command_path:
+        node = (node.get("commands") or {}).get(seg) or {}
+        for a in node.get("args") or []:
+            if isinstance(a, dict) and a.get("name"):
+                declared[norm(a["name"])] = a  # the command's own wins
+    for key, value in list(args.items()):
+        spec = declared.get(norm(key))
+        if spec is None or not isinstance(value, str):
+            continue
+        items = _listed_text(value)
+        if items is None:
+            continue
+        if spec.get("multiple") or spec.get("type") == "rest":
+            args[key] = items
+        elif spec.get("type") == "choice":
+            options = [str(o) for o in spec.get("options") or []]
+            if value not in options and len(items) == 1 and items[0] in options:
+                args[key] = items[0]
+    return args

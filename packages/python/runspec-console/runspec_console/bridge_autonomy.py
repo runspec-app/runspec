@@ -1027,6 +1027,8 @@ class AutonomyMixin:
         command_path = _command_path(ti)
         # A misplaced `debug` (inside args) is the debug switch, as at dispatch.
         utils_mod.pop_debug(cached_r, command_path, call_args)
+        # Checked as it will be sent: a listed-as-text value becomes its list.
+        utils_mod.repair_listed_args(cached_r, command_path, call_args)
         problem = self._preflight_validate(cached_r, command_path, call_args)
         if problem:
             return problem
@@ -1868,6 +1870,7 @@ class AutonomyMixin:
                 dbg_env = utils_mod.pop_debug(
                     cached_r, command_path, {"debug": ti["debug"]}
                 )
+            utils_mod.repair_listed_args(cached_r, command_path, call_args)
             preflight = self._preflight_validate(cached_r, command_path, call_args)
             if preflight:
                 return preflight
@@ -1944,6 +1947,9 @@ class AutonomyMixin:
             if k in secret_names and v not in (None, "")
         }
         exec_args = {k: v for k, v in call_args.items() if k not in secret_names}
+        # Args copied from a History record may carry a multi-valued arg as the
+        # text of a list ("['Open']"); send the values, not the text.
+        utils_mod.repair_listed_args(cached_r, command_path, exec_args)
         # Fill bound credential values into args from secure storage (the agent
         # keeps arg-binding: in-scope credentials auto-apply, credential_id
         # overrides). Unlike the human/form path, the agent may inject into args.
