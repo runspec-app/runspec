@@ -63,3 +63,57 @@ function fmtRun(r: { from: string; to: string; hours: string }): string {
   const days = r.from === r.to ? DAY_SHORT[r.from] : `${DAY_SHORT[r.from]}–${DAY_SHORT[r.to]}`
   return `${days} ${r.hours}`
 }
+
+// ── does a cron schedule ever fire inside working hours? ─────────────────────
+
+const CRON_MACROS: Record<string, string> = {
+  '@yearly': '0 0 1 1 *', '@annually': '0 0 1 1 *', '@monthly': '0 0 1 * *',
+  '@weekly': '0 0 * * 0', '@daily': '0 0 * * *', '@midnight': '0 0 * * *', '@hourly': '0 * * * *',
+}
+const DOW_NAMES: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
+
+/** The values a cron field allows within [lo, hi], or null when it can't be
+ *  read. Handles `*`, `*\/n`, `a`, `a-b`, `a-b/n`, lists, and day names. */
+function cronField(field: string, lo: number, hi: number, names: Record<string, number> = {}): Set<number> | null {
+  const out = new Set<number>()
+  const num = (t: string): number => {
+    const n = names[t.toLowerCase()]
+    return n !== undefined ? n : /^\d+$/.test(t) ? Number(t) : NaN
+  }
+  for (const part of field.split(',')) {
+    const [range, stepText] = part.split('/')
+    const step = stepText === undefined ? 1 : Number(stepText)
+    if (!Number.isInteger(step) || step < 1) return null
+    let a: number, b: number
+    if (range === '*') { a = lo; b = hi }
+    else if (range.includes('-')) { const [x, y] = range.split('-'); a = num(x); b = num(y) }
+    else { a = num(range); b = stepText === undefined ? a : hi }
+    if (Number.isNaN(a) || Number.isNaN(b)) return null
+    for (let v = a; v <= b; v += step) out.add(v)
+  }
+  return out
+}
+
+/** Whether a cron schedule ever fires inside working hours: true / false, or
+ *  null when the hours don't gate or the expression can't be read. Checks every
+ *  minute of a week (day-of-month and month only pick dates, so they count as
+ *  any day). A "false" schedule never runs while working hours are on. */
+export function cronEverInRota(rota: Rota | null | undefined, cron: string): boolean | null {
+  if (!rota || !rotaGates(rota)) return null
+  const expr = CRON_MACROS[cron.trim().toLowerCase()] ?? cron.trim()
+  const f = expr.split(/\s+/)
+  if (f.length !== 5) return null
+  const mins = cronField(f[0], 0, 59)
+  const hours = cronField(f[1], 0, 23)
+  const dows = f[4] === '*' ? new Set([0, 1, 2, 3, 4, 5, 6]) : cronField(f[4], 0, 7, DOW_NAMES)
+  if (!mins || !hours || !dows) return null
+  if (dows.has(7)) dows.add(0)
+  // 2026-11-15 is a Sunday: day offset = day of week.
+  for (const d of dows) {
+    if (d > 6) continue
+    for (const h of hours) for (const m of mins) {
+      if (rotaAllows(rota, new Date(2026, 10, 15 + d, h, m))) return true
+    }
+  }
+  return false
+}

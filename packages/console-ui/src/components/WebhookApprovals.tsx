@@ -59,6 +59,7 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
   const fields = fields0
   const due = d.expires ? Date.parse(d.expires) - now : NaN
   const soon = Number.isFinite(due) && due < 2 * 60_000
+  const expired = Number.isFinite(due) && due <= 0
 
   const decide = async (verdict: 'approve' | 'deny') => {
     setBusy(verdict)
@@ -107,7 +108,7 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
           {Number.isFinite(due) && (
             <span style={{ fontSize: 12, color: soon ? textWarning(isDark) : textMuted(isDark) }}>
-              {due > 0 ? `expires ${relTime(d.expires, now)}, then it won't run` : "expiring: it won't run"}
+              {due > 0 ? `expires ${relTime(d.expires, now)}, then it won't run` : "expired: it won't run"}
             </span>
           )}
           <QueueMark {...queue} />
@@ -148,6 +149,14 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
         </div>
       )}
 
+      {expired ? (
+        // Past its expiry the host has already dropped it: approving would do
+        // nothing, so the only thing left is to clear it away.
+        <div data-testid="webhook-expired" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: textSecondary(isDark) }}>It expired before anyone answered, so it won't run.</span>
+          <Button shape="round" onClick={() => { void dismiss() }}>Hide</Button>
+        </div>
+      ) : (
       <div>
         <ApprovalActions
           verb={line ? 'run' : 'continue'}
@@ -160,6 +169,7 @@ export function WebhookCard({ venv, d, now = Date.now() }: { venv: WebhookVenv; 
           extra={<RowActions testId="webhook-card-more" more={[{ key: 'hide', label: 'Hide on this console', onClick: () => { void dismiss() } }]} />}
         />
       </div>
+      )}
     </section>
   )
 }

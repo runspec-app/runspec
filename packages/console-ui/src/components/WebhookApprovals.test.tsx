@@ -102,4 +102,13 @@ describe('WebhookPointer', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Review →' }))
     expect(onReview).toHaveBeenCalled()
   })
+
+  it('an expired approval can only be hidden: it says so and offers no Approve', async () => {
+    dismiss.mockResolvedValue({ ok: true })
+    render(<WebhookApprovals status={status([d(7, { expires: new Date(Date.now() - 60_000).toISOString() })])} />)
+    expect(screen.getByTestId('webhook-expired').textContent).toMatch(/expired before anyone answered/)
+    expect(screen.queryByRole('button', { name: /Approve/ })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Hide' }))
+    await waitFor(() => expect(dismiss).toHaveBeenCalled())
+  })
 })

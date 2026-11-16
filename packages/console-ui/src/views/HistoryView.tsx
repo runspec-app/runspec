@@ -10,7 +10,7 @@ import type { FilterValue } from 'antd/es/table/interface'
 import { bridge, type HistoryRecord, type HistoryLogLine, type HistorySyncState, type LogViewResult, type RunningRun } from '../bridge'
 import { LogStream } from '../components/LogStream'
 import { MONO_FONT, RADIUS, statusText, textColor, useAccent, useIsDark, withAlpha } from '../ThemeContext'
-import { EmptyState, IconAction, OnceHint, PageToolbar, RowActions, StatusTag, type RowAction, type StatusTone } from '../components/kit'
+import { EmptyState, IconAction, OnceHint, PageToolbar, RowActions, StatusTag, type RowAction, type StatusTone, useKeyboardTableFilters } from '../components/kit'
 import { When, fmtClock, fmtDay, fullWhen, plural } from '../when'
 
 // History shows real runnable runs only, with who initiated each (operator vs the
@@ -837,6 +837,10 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
     } as ColumnType<HistoryRecord>] : []),
   ], [runnableNames, groups, runbooks, labels, hosts, operators, runAsUsers, colFilters, activeScope, accent])
 
+  // The column filter funnels, reachable from the keyboard (kit).
+  const tableRef = useRef<HTMLDivElement>(null)
+  useKeyboardTableFilters(tableRef)
+
   return (
     <div>
       <OnceHint id="history.rows">
@@ -937,6 +941,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           </div>
         )
       })()}
+      <div ref={tableRef}>
       <Table
         dataSource={filtered}
         columns={columns}
@@ -1025,6 +1030,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]),
         }}
       />
+      </div>
       <RunLogDrawer record={fullLogRecord} onClose={() => setFullLogRecord(null)} />
     </div>
   )

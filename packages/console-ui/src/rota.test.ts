@@ -36,3 +36,21 @@ describe('rotaSummary()', () => {
     expect(rotaSummary(WEEK)).toBe('Mon–Thu 09:00–17:30, Fri 09:00–16:00')
   })
 })
+
+describe('cronEverInRota()', () => {
+  it('says a 02:00 or 06:15 daily job never runs inside Mon–Fri day hours', async () => {
+    const { cronEverInRota } = await import('./rota')
+    expect(cronEverInRota(WEEK, '0 2 * * *')).toBe(false)
+    expect(cronEverInRota(WEEK, '15 6 * * *')).toBe(false)
+    expect(cronEverInRota(WEEK, '0 3 * * sun')).toBe(false)
+    expect(cronEverInRota(WEEK, '@daily')).toBe(false)
+  })
+  it('finds a fire inside the hours, and says nothing it cannot read', async () => {
+    const { cronEverInRota } = await import('./rota')
+    expect(cronEverInRota(WEEK, '0 * * * *')).toBe(true)
+    expect(cronEverInRota(WEEK, '*/15 8-10 * * 1-5')).toBe(true)
+    expect(cronEverInRota(WEEK, '0 12 * * 6,0')).toBe(false)
+    expect(cronEverInRota(WEEK, 'not a cron')).toBeNull()
+    expect(cronEverInRota({ ...WEEK, enabled: false }, '0 2 * * *')).toBeNull()
+  })
+})

@@ -217,7 +217,12 @@ describe('KnowledgeView', () => {
     render(<KnowledgeView active aiEnabled />)
     fireEvent.click(screen.getByText('Fact graph'))  // Tools is the default tab
     await waitFor(() => expect(screen.getByTestId('node-runnable:gone')).toBeTruthy())
-    expect(screen.getByTestId('node-runnable:gone').getAttribute('opacity')).toBe('0.4')
+    // Faded by its circle (dashed, faint fill); the label stays readable.
+    const gone = screen.getByTestId('node-runnable:gone')
+    expect(gone.getAttribute('opacity')).toBe('1')
+    expect(gone.querySelector('circle')!.getAttribute('fill-opacity')).toBe('0.35')
+    expect(gone.getAttribute('aria-label')).toMatch(/not installed on any connected host/)
+    expect(gone.getAttribute('tabindex')).toBe('0')
     expect(screen.getByTestId('node-host:web-01').getAttribute('opacity')).toBe('1')
     expect(screen.getByLabelText('Zoom in')).toBeTruthy()
     expect(screen.getByLabelText('Fit to view')).toBeTruthy()

@@ -117,6 +117,15 @@ const DAYS: [string, string][] = [
   ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday'],
 ]
 
+interface RotaFields {
+  enabled: boolean; source: string; marker: string; hold: boolean; lockSuspend: boolean
+  days: Record<string, RotaDay>
+}
+/** An unsaved working-hours edit, kept while the tab is closed (this window only). */
+let rotaDraft: { base: string; fields: RotaFields } | null = null
+/** For tests: forget any kept draft. */
+export function _resetRotaDraft(): void { rotaDraft = null }
+
 // Working-hours rota editor: a master switch + a row per weekday (off / start /
 // end). Triggers and schedules only run inside these windows, so a human is
 // around for confirms. Off by default — when disabled, automation runs anytime.
@@ -128,24 +137,39 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
     const d = rota[k]
     return (d && typeof d === 'object' ? d : {}) as RotaDay
   }
-  const [enabled, setEnabled] = useState<boolean>(!!rota.enabled)
-  const [source, setSource] = useState<string>(rota.source === 'outlook' ? 'outlook' : 'console')
-  const [marker, setMarker] = useState<string>(rota.shift_marker || 'shift')
-  const [hold, setHold] = useState<boolean>(!!rota.hold_during_meetings)
-  // Lock auto-suspend defaults ON (absent ⇒ true); independent of working hours.
-  const [lockSuspend, setLockSuspend] = useState<boolean>(rota.lock_suspend !== false)
-  const [days, setDays] = useState<Record<string, RotaDay>>(() =>
-    Object.fromEntries(DAYS.map(([k]) => {
+  // What's saved, as the editor's fields.
+  const [base] = useState<RotaFields>(() => ({
+    enabled: !!rota.enabled,
+    source: rota.source === 'outlook' ? 'outlook' : 'console',
+    marker: rota.shift_marker || 'shift',
+    hold: !!rota.hold_during_meetings,
+    // Lock auto-suspend defaults ON (absent ⇒ true); independent of working hours.
+    lockSuspend: rota.lock_suspend !== false,
+    days: Object.fromEntries(DAYS.map(([k]) => {
       const d = dayOf(k)
       return [k, { on: d.on ?? false, start: d.start ?? '09:00', end: d.end ?? '17:00' }]
     })),
-  )
+  }))
+  // An unsaved edit survives leaving the tab: it comes back as long as what's
+  // saved hasn't changed underneath it.
+  const [start] = useState<RotaFields>(() =>
+    rotaDraft && rotaDraft.base === JSON.stringify(base) ? rotaDraft.fields : base)
+  const [enabled, setEnabled] = useState<boolean>(start.enabled)
+  const [source, setSource] = useState<string>(start.source)
+  const [marker, setMarker] = useState<string>(start.marker)
+  const [hold, setHold] = useState<boolean>(start.hold)
+  const [lockSuspend, setLockSuspend] = useState<boolean>(start.lockSuspend)
+  const [days, setDays] = useState<Record<string, RotaDay>>(start.days)
   const [saving, setSaving] = useState(false)
   // These switches only take effect on Save, so the editor says when something
   // is unsaved and Save is live only then.
-  const snapshot = JSON.stringify({ enabled, source, marker, hold, lockSuspend, days })
-  const [saved] = useState(snapshot)
+  const fields: RotaFields = { enabled, source, marker, hold, lockSuspend, days }
+  const snapshot = JSON.stringify(fields)
+  const saved = JSON.stringify(base)
   const dirty = snapshot !== saved
+  useEffect(() => {
+    rotaDraft = dirty ? { base: saved, fields: JSON.parse(snapshot) as RotaFields } : null
+  }, [dirty, saved, snapshot])
 
   const setDay = (k: string, patch: Partial<RotaDay>) =>
     setDays(prev => ({ ...prev, [k]: { ...prev[k], ...patch } }))
@@ -157,6 +181,7 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
         enabled, source, shift_marker: marker, hold_during_meetings: hold,
         lock_suspend: lockSuspend, ...days,
       })
+      rotaDraft = null
       onSaved()
     } finally {
       setSaving(false)
@@ -255,8 +280,8 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
         </Button>
         {dirty ? (
           <>
-            <StatusTag tone="attention" testId="rota-unsaved">unsaved changes</StatusTag>
-            <Button size="small" onClick={onSaved} disabled={saving}>Discard</Button>
+            <span role="status"><StatusTag tone="attention" testId="rota-unsaved">unsaved changes</StatusTag></span>
+            <Button size="small" onClick={() => { rotaDraft = null; onSaved() }} disabled={saving}>Discard</Button>
           </>
         ) : (
           <span style={{ color: dim, fontSize: 13 }}>Saved. Changes here take effect when you click Save.</span>

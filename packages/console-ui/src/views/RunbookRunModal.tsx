@@ -89,7 +89,7 @@ export function ParamRow({ arg, hostNames, value, error, onChange }: {
   return (
     <ArgField header={<ArgFieldHeader arg={arg} prefix="" />} description={arg.description}>
       <RunbookField arg={arg} hostNames={hostNames} value={value} error={error} onChange={onChange} />
-      <ArgError text={error} />
+      <ArgError text={error} name={arg.name} />
     </ArgField>
   )
 }

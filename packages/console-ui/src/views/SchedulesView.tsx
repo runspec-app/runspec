@@ -14,7 +14,7 @@ import { RunbookField } from './RunbookRunModal'
 import { AllSchedulesView, LastRunCell, WhenCell } from './AllSchedulesView'
 import { useScheduleAcks } from './scheduleAcks'
 import { rotaAllows, rotaGates, rotaSummary } from '../rota'
-import { EmptyState, IconAction, StatusTag } from '../components/kit'
+import { EmptyState, IconAction, StatusTag, expandHit } from '../components/kit'
 import { ScheduleScopeCards } from './ScheduleScopeCards'
 import { useWebhooks } from '../webhooks'
 import { collectRows, scopeCounts, type ScheduleScope } from './allSchedules'
@@ -1141,8 +1141,8 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
   )
   const [acks, setAck] = useScheduleAcks()
   const collected = useMemo(
-    () => collectRows(schedules, hostVenvs, { cards: Object.values(cards), hostGroups, acks }),
-    [schedules, hostVenvs, cards, hostGroups, acks],
+    () => collectRows(schedules, hostVenvs, { cards: Object.values(cards), hostGroups, acks, rota }),
+    [schedules, hostVenvs, cards, hostGroups, acks, rota],
   )
   // This console's rows by schedule id, for its own table's Last run cell.
   const consoleRows = useMemo(
@@ -1168,41 +1168,11 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
         <>
           {s.name && <div style={{ fontWeight: 600, marginBottom: 2 }}>{s.name}</div>}
           {actionCell(s)}
+          {/* Its args under it (the full set is in the expanded row), so the
+              status columns sit next to the action instead of off-screen. */}
+          {Object.keys(detailFor(s)).length > 0 && <div style={{ marginTop: 2 }}>{detailSummary(s)}</div>}
         </>
       ),
-    },
-    {
-      title: 'Where',
-      key: 'where',
-      render: (_: unknown, s: Schedule) =>
-        s.action === 'runnable'
-          ? (s.group
-              ? <span style={whereStyle}><span style={{ color: dimCol }}>group </span>{s.group}</span>
-              : (s.hosts?.length
-                  ? <span style={whereStyle}><span style={{ color: dimCol }}>first up of </span>{s.hosts.join(', ')}</span>
-                  : (s.host ? <span style={whereStyle}>{s.host}</span> : <span style={{ color: dimCol }}>—</span>)))
-          : (s.action === 'prompt' || s.action === 'runbook' || s.action === 'eval')
-          ? <span style={{ color: dimCol, fontSize: 13 }}>the assistant</span>
-          : s.action === 'saved_run'
-          ? <span style={{ color: dimCol, fontSize: 13 }}>the saved run's target</span>
-          : s.action === 'saved_transfer'
-          ? <span style={{ color: dimCol, fontSize: 13 }}>the transfer's source</span>
-          : <span style={{ color: dimCol }}>—</span>,
-    },
-        {
-      title: 'Schedule',
-      key: 'schedule',
-      render: (_: unknown, s: Schedule) => s.when.every
-        ? <code style={{ fontSize: 13 }}>{whenText(s.when)}</code>
-        : <span>
-            <WhenCell when={s.when.cron ?? ''} />
-            {s.when.timezone && <span style={{ fontSize: 12, color: dimCol }}> ({s.when.timezone})</span>}
-          </span>,
-    },
-    {
-      title: 'Details',
-      key: 'detail',
-      render: (_: unknown, s: Schedule) => detailSummary(s),
     },
     {
       // What the last run did; a failure can be acknowledged here once seen.
@@ -1235,6 +1205,34 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
           </Tooltip>
         )
       },
+    },
+    {
+      title: 'Where',
+      key: 'where',
+      render: (_: unknown, s: Schedule) =>
+        s.action === 'runnable'
+          ? (s.group
+              ? <span style={whereStyle}><span style={{ color: dimCol }}>group </span>{s.group}</span>
+              : (s.hosts?.length
+                  ? <span style={whereStyle}><span style={{ color: dimCol }}>first up of </span>{s.hosts.join(', ')}</span>
+                  : (s.host ? <span style={whereStyle}>{s.host}</span> : <span style={{ color: dimCol }}>—</span>)))
+          : (s.action === 'prompt' || s.action === 'runbook' || s.action === 'eval')
+          ? <span style={{ color: dimCol, fontSize: 13 }}>the assistant</span>
+          : s.action === 'saved_run'
+          ? <span style={{ color: dimCol, fontSize: 13 }}>the saved run's target</span>
+          : s.action === 'saved_transfer'
+          ? <span style={{ color: dimCol, fontSize: 13 }}>the transfer's source</span>
+          : <span style={{ color: dimCol }}>—</span>,
+    },
+        {
+      title: 'Schedule',
+      key: 'schedule',
+      render: (_: unknown, s: Schedule) => s.when.every
+        ? <code style={{ fontSize: 13 }}>{whenText(s.when)}</code>
+        : <span>
+            <WhenCell when={s.when.cron ?? ''} />
+            {s.when.timezone && <span style={{ fontSize: 12, color: dimCol }}> ({s.when.timezone})</span>}
+          </span>,
     },
     {
       title: '',
@@ -1272,6 +1270,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       // A failed run you haven't acknowledged tints its row, as on All.
       rowClassName={s => [s.enabled === false ? 'rs-schedule-disabled' : '', consoleRows.get(s.id)?.problem ? 'rs-row-problem' : ''].join(' ').trim()}
       expandable={{
+        expandIcon: expandHit<Schedule>(s => s.name || scheduleSummary(s)),
         rowExpandable: s => Object.keys(detailFor(s)).length > 0,
         expandedRowRender: s => (
           <div style={{ paddingLeft: 24, fontFamily: MONO_FONT, fontSize: 13, color: dimCol }}>
@@ -1319,6 +1318,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
           webhooks={webhooks.status}
           onOpenWebhooks={onOpenWebhooks}
           onAck={setAck}
+          rota={rota}
         />
       </div>
     )

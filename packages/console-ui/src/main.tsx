@@ -6,6 +6,11 @@ import { SendBarApp } from './views/SendBar'
 import { installDispatchTap } from './devbus'
 import { installDiagramRenderer } from './diagramRender'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { installAntdRender } from './antdRender'
+
+// Before anything renders: antd's toasts and notifications need React 19's
+// createRoot to appear at all (see antdRender.ts).
+installAntdRender()
 
 // The Send to terminals bar is a second, small window on the same page
 // (bridge_termsend.open_send_bar): it renders only the bar, none of the app.

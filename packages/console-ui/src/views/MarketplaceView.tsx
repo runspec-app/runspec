@@ -1086,7 +1086,7 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <Tooltip title="Matches name, summary and keywords. host:<name> or group:<name> limits the install state, counts and Installed / Updates to those hosts' venvs (part of a name is enough).">
-          <Input prefix={<SearchOutlined />} placeholder="Search packages, or host:<name>…" value={search} onChange={e => setSearch(e.target.value)} allowClear style={{ maxWidth: 320 }} />
+          <Input prefix={<SearchOutlined />} aria-label="Search packages" placeholder="Search packages, or host:<name>…" value={search} onChange={e => setSearch(e.target.value)} allowClear style={{ maxWidth: 320 }} />
         </Tooltip>
         <Select aria-label="Package index" value={repo} onChange={setRepo} style={{ minWidth: 160 }}
           options={[{ value: '', label: 'All repos' }, ...(catalog?.repos ?? []).map(r => ({ value: r.id, label: `${r.name} (${r.count})` }))]} />
@@ -1109,7 +1109,23 @@ export function MarketplaceView({ hosts, onOpenSettings, activeProfile }: { host
             {r.name} · {r.count} · {r.error ? (r.stale ? 'stale' : 'unreachable') : `read ${ago(r.fetched_at)}`}
           </StatusTag>
         ))}
-        {installed && <span>venvs probed {ago(installed.probed_at)} · {installed.targets.filter(t => t.ok).length}/{installed.targets.length} venvs reachable</span>}
+        {installed && (() => {
+          // Name the venvs that didn't answer, so "3/4" says which one.
+          const down = installed.targets.filter(t => !t.ok)
+          return (
+            <span>
+              venvs probed {ago(installed.probed_at)} · {installed.targets.length - down.length}/{installed.targets.length} venvs reachable
+              {down.length > 0 && (
+                <Tooltip title={down.map(t => `${t.host}/${t.venv}${t.error ? `: ${t.error}` : ''}`).join(', ')}>
+                  <span data-testid="marketplace-unreachable">
+                    {' '}· not reached: <span style={{ fontFamily: MONO_FONT }}>{down.slice(0, 2).map(t => `${t.host}/${t.venv}`).join(', ')}</span>
+                    {down.length > 2 ? ` and ${down.length - 2} more` : ''}
+                  </span>
+                </Tooltip>
+              )}
+            </span>
+          )
+        })()}
         {matchedVenvs && (
           <Tooltip title={matchedVenvs.length ? matchedVenvs.map(t => `${t.host}/${t.venv}`).join(', ') : 'No probed venv is on a matching host. Hosts outside the active profile, or not connected, are not probed.'}>
             <Tag color={matchedVenvs.length ? 'blue' : 'red'} closable onClose={() => setSearch(parsed.text)} style={{ fontSize: 11, margin: 0 }}>

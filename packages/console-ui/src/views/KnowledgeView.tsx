@@ -36,7 +36,7 @@ import { KnowledgeTools } from './KnowledgeTools'
 import { pageTargetFor } from './KnowledgeEdits'
 import type { SyncResult } from '../components/MemorySyncTab'
 import { When, plural } from '../when'
-import { PageToolbar, SectionSwitch, FilterChip } from '../components/kit'
+import { PageToolbar, SectionSwitch, FilterChip, pressable } from '../components/kit'
 import { AskFirst } from '../components/risk'
 
 const RANGE_OPTIONS = [
@@ -339,6 +339,7 @@ export function KnowledgeView({ active, aiEnabled, onOpenSettings, runnables = [
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <Input.Search
                 allowClear
+                aria-label="Search facts"
                 placeholder="Search facts — hosts, files, jargon, tools…"
                 style={{ maxWidth: 360 }}
                 onSearch={runSearch}
@@ -543,7 +544,16 @@ export function GraphCanvas({ nodes, edges, selected, onSelect, onClear, isStale
             const showLabel = isSel || n.id === hover || (near ? near.has(n.id) : n.weight >= maxW * 0.25 || nodes.length <= 60)
             return (
               <g key={n.id} data-testid={`node-${n.id}`} transform={`translate(${p.x} ${p.y})`} style={{ cursor: 'pointer' }}
-                opacity={dim ? 0.18 : stale ? 0.4 : 1}
+                // A stale node is told by its dashed, faint circle; its label
+                // stays readable (dimming the whole node took it to 2.8:1).
+                opacity={dim ? 0.18 : 1}
+                // Each node is a button to the keyboard: Tab through them,
+                // Enter selects (focus shows its label, like hover).
+                tabIndex={0} role="button" aria-pressed={isSel}
+                aria-label={`${n.id}, ${plural(n.facts, 'fact')}${stale ? ', not installed on any connected host' : ''}`}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(n.id) } }}
+                onFocus={() => setHover(n.id)}
+                onBlur={() => setHover('')}
                 onMouseDown={e => e.stopPropagation()}
                 onMouseEnter={() => setHover(n.id)}
                 onMouseLeave={() => setHover('')}
@@ -622,7 +632,7 @@ function SidePanel({ query, results, page, onEntity, onEdit, onRetire, onOpenWik
           <Text style={{ color: textMuted(isDark) }}>{page.type}</Text>
           {isStale?.(page.entity) && <Tag style={{ marginInlineEnd: 0 }}>not installed</Tag>}
           {onOpenWikiPage && /^(runnable|service|term|topic|team|runbook|host):/.test(page.entity) && (
-            <a role="button" onClick={() => onOpenWikiPage(page.entity)} style={{ marginLeft: 'auto', fontSize: 12 }}>Open wiki page</a>
+            <a {...pressable(() => onOpenWikiPage(page.entity))} style={{ marginLeft: 'auto', fontSize: 12 }}>Open wiki page</a>
           )}
         </div>
         <div style={{ fontSize: 18, fontWeight: 600, fontFamily: MONO_FONT, color: textColor(isDark), wordBreak: 'break-all', margin: '2px 0 8px' }}>
@@ -682,7 +692,7 @@ function EntityTag({ entity, onClick }: { entity: string; onClick?: (e: string) 
     <Tag
       color={withAlpha(typeColor(type), 0.18)}
       style={{ color: textColor(isDark), cursor: onClick ? 'pointer' : 'default', fontFamily: MONO_FONT, borderColor: withAlpha(typeColor(type), 0.6), marginInlineEnd: 0 }}
-      onClick={() => onClick?.(entity)}
+      {...(onClick ? pressable(() => onClick(entity), { label: `Show ${entity}` }) : {})}
     >
       {type}:{name}
     </Tag>
