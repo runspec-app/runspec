@@ -88,6 +88,19 @@ describe('collectRows', () => {
     expect(c.rows[0]).toMatchObject({ state: 'last run failed', problem: true, lastRun: { status: 'failed', exitCode: 3 } })
   })
 
+  it('an acknowledged failure stops counting as a problem until another run fails', () => {
+    const card = (id: string, column: string, created_at: number): RunCard => ({
+      card_id: id, trigger: 't', source: 'schedule', event_type: 'runnable', summary: '', column, created_at,
+      detail: { schedule_id: 'rs-1', exit_code: 3 },
+    })
+    const seen = collectRows([consoleSched()], [], { cards: [card('b', 'failed', 200)], acks: { 'rs-1': 'b' } })
+    expect(seen.rows[0]).toMatchObject({ state: 'acknowledged', problem: false, lastRun: { status: 'failed', cardId: 'b' } })
+    expect(scopeCounts(seen).console.problems).toBe(0)
+    // A newer failed run is a new problem; the old acknowledgement doesn't cover it.
+    const again = collectRows([consoleSched()], [], { cards: [card('b', 'failed', 200), card('c', 'failed', 300)], acks: { 'rs-1': 'b' } })
+    expect(again.rows[0]).toMatchObject({ state: 'last run failed', problem: true })
+  })
+
   it('a disabled console schedule has no next fire', () => {
     const c = collectRows([consoleSched({ enabled: false })], [])
     expect(c.rows[0]).toMatchObject({ state: 'disabled', nextRun: null })

@@ -20,12 +20,14 @@ export type RowKind = 'schedule' | 'stale' | 'unreadable'
 export type RowState =
   | 'ok' | 'disabled' | 'last run failed' | 'running' | 'not installed' | 'not installable'
   | 'stale line' | 'scheduler stopped' | 'scheduler stale' | "can't read" | 'unknown' | 'legacy line'
-  | 'being handled' | 'dealt with' | 'offered' | 'needs daemon'
+  | 'being handled' | 'dealt with' | 'offered' | 'needs daemon' | 'acknowledged'
 
 export interface RowLastRun {
   ts: string
   status: string            // completed / failed / crashed / skipped / running
   exitCode: number | null
+  /** The run card it came from (console schedules), so a failure can be acknowledged. */
+  cardId?: string
   durationMs?: number | null
 }
 
@@ -134,6 +136,7 @@ export const STATE_TONE: Record<RowState, StatusTone> = {
   'dealt with': 'info',
   'offered': 'info',
   'needs daemon': 'attention',
+  'acknowledged': 'neutral',
 }
 
 /** A claim with no newer note for this long shows as stale: the failure counts
@@ -283,13 +286,18 @@ function lastConsoleRun(id: string, cards: RunCard[]): RowLastRun | null {
   const detail = (best.detail ?? {}) as Record<string, unknown>
   const status = best.column === 'done' ? 'completed' : best.column === 'failed' ? 'failed' : best.column === 'running' ? 'running' : String(best.column)
   const ec = detail.exit_code
-  return { ts: new Date((best.created_at ?? 0) * 1000).toISOString(), status, exitCode: typeof ec === 'number' ? ec : null }
+  return { ts: new Date((best.created_at ?? 0) * 1000).toISOString(), status, exitCode: typeof ec === 'number' ? ec : null, cardId: best.card_id }
 }
 
 export function collectRows(
   consoleSchedules: Schedule[],
   venvs: SharedSchedulesVenv[],
-  opts: { cards?: RunCard[]; hostGroups?: Record<string, string> } = {},
+  opts: {
+    cards?: RunCard[]
+    hostGroups?: Record<string, string>
+    /** Console schedule id → the failed run (card id) its operator acknowledged. */
+    acks?: Record<string, string>
+  } = {},
 ): Collected {
   const groups = opts.hostGroups ?? {}
   const rows: ScheduleRow[] = []
@@ -303,7 +311,9 @@ export function collectRows(
     const enabled = s.enabled !== false
     const lastRun = lastConsoleRun(s.id, opts.cards ?? [])
     const failed = enabled && !!lastRun && FAILED.has(lastRun.status)
-    const state: RowState = !enabled ? 'disabled' : failed ? 'last run failed' : lastRun?.status === 'running' ? 'running' : 'ok'
+    // Acknowledged covers this one failed run: the next failure counts again.
+    const acked = failed && !!lastRun?.cardId && opts.acks?.[s.id] === lastRun.cardId
+    const state: RowState = !enabled ? 'disabled' : acked ? 'acknowledged' : failed ? 'last run failed' : lastRun?.status === 'running' ? 'running' : 'ok'
     const detail = s.action === 'event' ? s.fields : s.action === 'runnable' ? s.args : s.values
     rows.push({
       key: `console::${s.id}`,
@@ -320,8 +330,11 @@ export function collectRows(
       nextRun: enabled ? (s.nextRun ?? null) : null,
       lastRun,
       state,
-      stateTip: !enabled ? 'Disabled — won’t fire.' : failed ? 'The last run from this console failed.' : 'Fires from this console while it is open.',
-      problem: failed,
+      stateTip: !enabled ? 'Disabled — won’t fire.'
+        : acked ? 'You acknowledged this failed run, so it no longer counts as a problem. If the next run fails too, it counts again.'
+        : failed ? 'The last run from this console failed. Its output is in Schedule runs below; acknowledge it once you have seen it.'
+        : 'Fires from this console while it is open.',
+      problem: failed && !acked,
       enabled,
       owner: '',
       runAs: '',

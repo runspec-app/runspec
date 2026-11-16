@@ -9,9 +9,9 @@
  * Waiting approvals are decided on the Console tab's cards; here a strip only
  * counts them.
  */
-import { useState } from 'react'
-import { Button, Dropdown, Tag, Tooltip, message } from 'antd'
-import { DownOutlined, RightOutlined, ApiOutlined, BellOutlined, PoweroffOutlined, SettingOutlined } from '@ant-design/icons'
+import { useState, type ReactNode } from 'react'
+import { Button, Dropdown, Input, Select, Switch, Tag, Tooltip, message } from 'antd'
+import { DownOutlined, RightOutlined, ApiOutlined, BellOutlined, PlusOutlined, PoweroffOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
 import type { WebhookVenv, WebhooksStatus } from '../bridge'
 import { useIsDark, textColor, textMuted, textSecondary, textWarning, MONO_FONT, RADIUS } from '../ThemeContext'
@@ -373,53 +373,169 @@ function QuietHosts({ hosts, ...actions }: { hosts: QuietHost[] } & QuietActions
   )
 }
 
-/** One host this console doesn't follow: each venv's webhook state, a way to
- *  set them up, and Follow (works before any hook exists). */
-function HostOfferRow({ offer, editable, busy, turning, onFollow, onEdit, onTurnOn }: {
-  offer: HostOffer; editable: boolean; busy: string; turning: string
+/** Which venvs of unfollowed hosts to list. */
+export type OfferState = 'all' | VenvHookState
+export interface OfferFilters { q: string; state: OfferState; followable: boolean }
+export const NO_OFFER_FILTERS: OfferFilters = { q: '', state: 'all', followable: false }
+
+/** Narrow the unfollowed hosts: every word of `q` must appear in the host, its
+ *  group or the venv (a host or group hit keeps all its venvs), `state` keeps
+ *  venvs in that webhook state, `followable` keeps hosts Follow would work on.
+ *  A host with no venv left drops out. */
+export function filterOffers(offers: HostOffer[], f: OfferFilters): HostOffer[] {
+  const words = f.q.toLowerCase().split(/\s+/).filter(Boolean)
+  const out: HostOffer[] = []
+  for (const o of offers) {
+    if (f.followable && !o.canFollow) continue
+    const venvs = o.venvs.filter(v => {
+      if (f.state !== 'all' && venvHookState(v) !== f.state) return false
+      const hay = `${v.host} ${v.hostGroup} ${v.venv}`.toLowerCase()
+      return words.every(w => hay.includes(w))
+    })
+    if (venvs.length) out.push({ ...o, venvs })
+  }
+  return out
+}
+
+const OFFER_STATE_LABEL: Record<'off' | 'empty' | 'on' | 'old', string> = {
+  off: 'Webhooks off',
+  empty: 'On, no hooks yet',
+  on: 'On, with hooks',
+  old: 'Needs runspec-scheduler 0.11.0',
+}
+
+/** Host, venv, webhook state, then each venv action (Turn on or Add a hook,
+ *  Hooks, Settings) and Follow in a column of its own, so every button sits
+ *  in the same place on every line however many hosts and venvs there are. */
+const OFFER_COLUMNS = 'minmax(120px, max-content) minmax(90px, max-content) minmax(160px, max-content) repeat(3, max-content) minmax(max-content, 1fr)'
+
+type OfferRowProps = {
+  editable: boolean; busy: string; turning: string
   onFollow: (host: string) => void; onEdit: (t: { host: string; venv: string; tab: ModalTab }) => void
   onTurnOn: (v: SchedulerVenv) => void
-}) {
+}
+
+/** One host this console doesn't follow: a line per venv (its webhook state
+ *  and a way to set it up), and Follow, which works before any hook exists. */
+function HostOfferRow({ offer, editable, busy, turning, onFollow, onEdit, onTurnOn }: { offer: HostOffer } & OfferRowProps) {
   const isDark = useIsDark()
   const { host, venvs, canFollow } = offer
+  const span = `span ${venvs.length}`
+  const group = venvs[0]?.hostGroup
   return (
-    <div data-testid="webhook-host-offer" style={{
-      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '4px 10px',
-      border: '1px dashed var(--rs-border)', borderRadius: RADIUS.sm, fontSize: 12,
+    <div data-testid="webhook-host-offer" role="row" style={{
+      gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'subgrid', alignItems: 'center',
+      columnGap: 12, rowGap: 2, padding: '5px 10px', borderTop: '1px solid var(--rs-border)', fontSize: 12,
     }}>
-      <StatusTag tone="neutral">not followed</StatusTag>
-      <span style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark) }}>{host}</span>
-      {venvs.map(v => {
+      <div role="rowheader" style={{ gridColumn: 1, gridRow: `1 / ${span}`, alignSelf: 'start', minWidth: 0, paddingTop: 2 }}>
+        <div style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{host}</div>
+        {group && <div style={{ color: textMuted(isDark) }}>{group}</div>}
+      </div>
+      {venvs.map((v, i) => {
         const st = venvHookState(v)
-        const action = st === 'empty' ? { label: 'Add a hook…', tab: 'hooks' as const }
-          : st === 'on' ? { label: 'Hooks…', tab: 'hooks' as const } : null
-        return (
-          <span key={v.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: st === 'old' ? textMuted(isDark) : textSecondary(isDark) }}>
-            <span style={{ fontFamily: MONO_FONT }}>{v.venv}</span>
-            <span>{hookStateText(v)}</span>
-            {editable && st === 'off' && (
-              <VenvButtons host={host} venv={v.venv} busy={turning === v.key} disabled={!!turning}
-                onTurnOn={() => onTurnOn(v)} onOpen={tab => onEdit({ host, venv: v.venv, tab })} />
-            )}
-            {editable && action && (
-              <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12 }}
-                aria-label={`${action.label.replace('…', '')} on ${host} / ${v.venv}`}
-                onClick={() => onEdit({ host, venv: v.venv, tab: action.tab })}>
-                {action.label}
-              </Button>
-            )}
-          </span>
+        const row = i + 1
+        const where = `${host} / ${v.venv}`
+        const quiet = { color: 'var(--rs-text-secondary)' }
+        const cell = (col: number, key: string, node: ReactNode) => (
+          <span key={`${v.key}:${key}`} role="cell" style={{ gridColumn: col, gridRow: row, minHeight: 24, display: 'flex', alignItems: 'center' }}>{node}</span>
         )
+        const canSet = editable && st !== 'old'
+        return [
+          <span key={`${v.key}:v`} role="cell" style={{ gridColumn: 2, gridRow: row, fontFamily: MONO_FONT, color: textSecondary(isDark) }}>{v.venv}</span>,
+          <span key={`${v.key}:s`} role="cell" style={{ gridColumn: 3, gridRow: row, color: st === 'old' ? textMuted(isDark) : textSecondary(isDark) }}>{hookStateText(v)}</span>,
+          cell(4, 'first', editable && (st === 'off'
+            ? <Button size="small" icon={<PoweroffOutlined />} loading={turning === v.key} disabled={!!turning && turning !== v.key}
+                aria-label={`Turn on webhooks on ${where}`} onClick={() => onTurnOn(v)}>Turn on</Button>
+            : st === 'empty'
+              ? <Button size="small" type="text" icon={<PlusOutlined />} style={quiet}
+                  aria-label={`Add a hook on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'hooks' })}>Add a hook…</Button>
+              : null)),
+          cell(5, 'hooks', canSet && st !== 'empty' && (
+            <Button size="small" type="text" icon={<ApiOutlined />} style={quiet}
+              aria-label={`Hooks on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'hooks' })}>Hooks…</Button>
+          )),
+          cell(6, 'settings', canSet && (
+            <Button size="small" type="text" icon={<SettingOutlined />} style={quiet}
+              aria-label={`Listener settings on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'settings' })}>Settings…</Button>
+          )),
+        ]
       })}
-      {editable && (
-        <Tooltip title={canFollow
-          ? 'Show its webhook deliveries and approvals on this console. Works before any hook is made.'
-          : 'Needs runspec-scheduler 0.11.0 or later in one of its venvs (Update venv… upgrades it).'}>
-          <Button size="small" style={{ marginLeft: 'auto' }} disabled={!canFollow || !!busy} loading={busy === host}
-            onClick={() => onFollow(host)} aria-label={`Follow webhooks on ${host}`}>
-            Follow
-          </Button>
-        </Tooltip>
+      <div role="cell" style={{ gridColumn: 7, gridRow: `1 / ${span}`, alignSelf: 'start', justifySelf: 'end' }}>
+        {editable && (
+          <Tooltip title={canFollow
+            ? 'Show its webhook deliveries and approvals on this console. Works before any hook is made.'
+            : 'Needs runspec-scheduler 0.11.0 or later in one of its venvs (Update venv… upgrades it).'}>
+            <Button size="small" disabled={!canFollow || !!busy} loading={busy === host}
+              onClick={() => onFollow(host)} aria-label={`Follow webhooks on ${host}`}>
+              Follow
+            </Button>
+          </Tooltip>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Unfollowed hosts are filterable once there are more than this many. */
+export const OFFER_FILTER_AT = 5
+
+/** The unfollowed hosts as one aligned grid, with filters when there are many. */
+function HostOffers({ offers, ...row }: { offers: HostOffer[] } & OfferRowProps) {
+  const isDark = useIsDark()
+  const [f, setF] = useState<OfferFilters>(NO_OFFER_FILTERS)
+  const shown = filterOffers(offers, f)
+  const filtered = f.q !== '' || f.state !== 'all' || f.followable
+  const venvs = offers.flatMap(o => o.venvs)
+  const stateOptions = (Object.keys(OFFER_STATE_LABEL) as (keyof typeof OFFER_STATE_LABEL)[])
+    .map(k => ({ k, n: venvs.filter(v => venvHookState(v) === k).length }))
+    .filter(o => o.n > 0)
+  const someCantFollow = offers.some(o => !o.canFollow)
+  const head = { fontSize: 12, color: textMuted(isDark), fontWeight: 500 }
+  return (
+    <div data-testid="webhook-offers" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {offers.length > OFFER_FILTER_AT && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Input size="small" allowClear prefix={<SearchOutlined style={{ color: textMuted(isDark) }} />}
+            placeholder="Host, venv or group" aria-label="Filter hosts by host, venv or group"
+            value={f.q} onChange={e => setF({ ...f, q: e.target.value })} style={{ width: 220 }} />
+          <Select size="small" aria-label="Filter by webhook state" value={f.state} style={{ minWidth: 200 }} popupMatchSelectWidth={false}
+            onChange={(state: OfferState) => setF({ ...f, state })}
+            options={[
+              { value: 'all', label: 'Any webhook state' },
+              ...stateOptions.map(o => ({ value: o.k, label: `${OFFER_STATE_LABEL[o.k]} (${o.n})` })),
+            ]} />
+          {someCantFollow && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: textSecondary(isDark) }}>
+              <Switch size="small" checked={f.followable} aria-label="Only hosts that can be followed"
+                onChange={followable => setF({ ...f, followable })} />
+              Only hosts that can be followed
+            </label>
+          )}
+          <span style={{ fontSize: 12, color: textMuted(isDark) }} aria-live="polite">
+            {filtered ? `Showing ${shown.length} of ${offers.length} hosts` : `${offers.length} hosts, ${venvs.length} venvs`}
+          </span>
+          {filtered && (
+            <Button size="small" type="link" style={{ padding: 0, height: 'auto', fontSize: 12 }}
+              onClick={() => setF(NO_OFFER_FILTERS)}>Clear filters</Button>
+          )}
+        </div>
+      )}
+      {shown.length > 0 ? (
+        <div role="table" aria-label="Hosts not followed here" style={{
+          display: 'grid', gridTemplateColumns: OFFER_COLUMNS, overflowX: 'auto',
+          border: '1px dashed var(--rs-border)', borderRadius: RADIUS.sm,
+        }}>
+          <div role="row" style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'subgrid', columnGap: 12, padding: '4px 10px' }}>
+            <span role="columnheader" style={head}>Host</span>
+            <span role="columnheader" style={head}>Venv</span>
+            <span role="columnheader" style={head}>Webhooks</span>
+            <span role="columnheader" style={{ ...head, gridColumn: '4 / span 3' }}><span className="rs-visually-hidden">Venv actions</span></span>
+            <span role="columnheader" style={head}><span className="rs-visually-hidden">Follow</span></span>
+          </div>
+          {shown.map(o => <HostOfferRow key={o.host} offer={o} {...row} />)}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: textSecondary(isDark) }}>No host matches these filters.</div>
       )}
     </div>
   )
@@ -486,11 +602,11 @@ export function WebhooksSection({ status, venvs, editable, onChanged }: {
           )}
         </h3>
       )}
-      {showOffers && offers.map(o => (
-        <HostOfferRow key={o.host} offer={o} editable={editable} busy={following} turning={turning}
+      {showOffers && (
+        <HostOffers offers={offers} editable={editable} busy={following} turning={turning}
           onFollow={h => { void follow(h) }} onEdit={setEditing}
           onTurnOn={v => { void turnOn(v.key, v.host, v.venv, v.webhooks?.port) }} />
-      ))}
+      )}
       {editing && <WebhookHooksModal target={{ host: editing.host, venv: editing.venv }} startTab={editing.tab}
         takenPorts={portsOnHost(status, venvs, editing.host, editing.venv)} onClose={() => { setEditing(null); onChanged?.() }} />}
     </section>

@@ -18,7 +18,7 @@ vi.mock('../bridge', () => ({
   bridge: new Proxy({}, { get: (_t, p) => (fns as Record<string, unknown>)[p as string] ?? vi.fn() }),
 }))
 
-import { WebhooksSection, WebhooksSummary, followsText, hookStateText, hostOffers, isOffQuietly, portsOnHost, quietCount, quietHosts, stripHint, venvHookState, webhookCounts } from './WebhooksSection'
+import { WebhooksSection, WebhooksSummary, NO_OFFER_FILTERS, filterOffers, followsText, hookStateText, hostOffers, isOffQuietly, portsOnHost, quietCount, quietHosts, stripHint, venvHookState, webhookCounts } from './WebhooksSection'
 import { changed, hasUsername, tomlName, NEW_HOOK_TOML, suggestPort, portHint, DEFAULT_WEBHOOK_PORT } from './WebhookHooksModal'
 
 const strip = (patch: Partial<WebhookVenv> = {}): WebhookVenv => ({
@@ -221,6 +221,37 @@ describe('WebhooksSection', () => {
     expect(lines).toEqual(['ops-root (root-owned)', 'legacy (needs runspec-scheduler 0.11.0)'])
     expect(screen.queryByText(/A venv takes webhooks once/)).toBeNull()
     expect(screen.queryByRole('button', { name: /Turn on/ })).toBeNull()
+  })
+
+  it('filters unfollowed hosts by host, venv or group words, webhook state and followability', () => {
+    const offers = hostOffers([
+      { ...sv('app-001', 'ops', true), hostGroup: 'prod' }, { ...sv('app-001', 'reporting', false), hostGroup: 'prod' },
+      { ...sv('app-002', 'ops', false), hostGroup: 'uat' }, sv('app-003', 'legacy', null),
+    ], status([], {}))
+    const hosts = (f: Partial<typeof NO_OFFER_FILTERS>) => filterOffers(offers, { ...NO_OFFER_FILTERS, ...f })
+      .map(o => `${o.host}:${o.venvs.map(v => v.venv).join(',')}`)
+    expect(hosts({})).toEqual(['app-001:ops,reporting', 'app-002:ops', 'app-003:legacy'])
+    expect(hosts({ q: 'reporting' })).toEqual(['app-001:reporting'])
+    expect(hosts({ q: 'PROD' })).toEqual(['app-001:ops,reporting'])   // a group hit keeps the host's venvs
+    expect(hosts({ q: '001 ops' })).toEqual(['app-001:ops'])           // every word must match
+    expect(hosts({ state: 'off' })).toEqual(['app-001:reporting', 'app-002:ops'])
+    expect(hosts({ followable: true })).toEqual(['app-001:ops,reporting', 'app-002:ops'])
+  })
+
+  it('lines unfollowed hosts up in columns, with a filter once there are many', async () => {
+    const venvs = 'abcdef'.split('').flatMap(h => [sv(`host-${h}`, 'ops', false), sv(`host-${h}`, 'batch', true)])
+    render(<WebhooksSection editable venvs={venvs} status={status([], {})} />)
+    expect(screen.getByRole('table', { name: 'Hosts not followed here' })).toBeTruthy()
+    // Every Turn on sits in one column, every Hooks… in the next, Follow last.
+    const cols = (name: RegExp) => [...new Set(screen.getAllByRole('button', { name }).map(b => (b.closest('[role=cell]') as HTMLElement).style.gridColumn))]
+    expect(cols(/^Turn on webhooks/)).toEqual(['4'])
+    expect(cols(/^Hooks on/)).toEqual(['5'])
+    expect(cols(/^Follow webhooks/)).toEqual(['7'])
+    await userEvent.type(screen.getByLabelText('Filter hosts by host, venv or group'), 'host-c batch')
+    expect(screen.getAllByTestId('webhook-host-offer')).toHaveLength(1)
+    expect(screen.getByText('Showing 1 of 6 hosts')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getAllByTestId('webhook-host-offer')).toHaveLength(6)
   })
 
   it('folds many unfollowed hosts behind one toggle', async () => {
