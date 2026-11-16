@@ -13,6 +13,9 @@ import { MONO_FONT } from '../ThemeContext'
 // Margins are squeezed so a one-line answer doesn't get block spacing, and the
 // element set is constrained to what an LLM actually produces in chat.
 
+/** The longest line prose may run to. */
+export const PROSE_MEASURE = '75ch'
+
 interface MarkdownProps {
   children: string
   color?: string
@@ -25,15 +28,18 @@ interface MarkdownProps {
 function components(color: string): Components {
   const border = '#3a3a3a'
   const codeBg = 'rgba(127,127,127,0.18)'
-  const tight: CSSProperties = { margin: '0 0 6px' }
+  // Prose keeps a readable line however wide the card is; tables and code
+  // blocks are left uncapped so wide data uses the room.
+  const measure = PROSE_MEASURE
+  const tight: CSSProperties = { margin: '0 0 6px', maxWidth: measure }
   return {
     p: ({ children }) => <p style={{ ...tight, color }}>{children}</p>,
-    h1: ({ children }) => <h1 style={{ margin: '6px 0 4px', fontSize: '1.3em', color }}>{children}</h1>,
-    h2: ({ children }) => <h2 style={{ margin: '6px 0 4px', fontSize: '1.2em', color }}>{children}</h2>,
-    h3: ({ children }) => <h3 style={{ margin: '6px 0 4px', fontSize: '1.1em', color }}>{children}</h3>,
-    h4: ({ children }) => <h4 style={{ margin: '6px 0 4px', fontSize: '1em', fontWeight: 700, color }}>{children}</h4>,
-    ul: ({ children }) => <ul style={{ margin: '0 0 6px', paddingLeft: 22, color }}>{children}</ul>,
-    ol: ({ children }) => <ol style={{ margin: '0 0 6px', paddingLeft: 22, color }}>{children}</ol>,
+    h1: ({ children }) => <h1 style={{ margin: '6px 0 4px', fontSize: '1.3em', maxWidth: measure, color }}>{children}</h1>,
+    h2: ({ children }) => <h2 style={{ margin: '6px 0 4px', fontSize: '1.2em', maxWidth: measure, color }}>{children}</h2>,
+    h3: ({ children }) => <h3 style={{ margin: '6px 0 4px', fontSize: '1.1em', maxWidth: measure, color }}>{children}</h3>,
+    h4: ({ children }) => <h4 style={{ margin: '6px 0 4px', fontSize: '1em', fontWeight: 700, maxWidth: measure, color }}>{children}</h4>,
+    ul: ({ children }) => <ul style={{ margin: '0 0 6px', paddingLeft: 22, maxWidth: measure, color }}>{children}</ul>,
+    ol: ({ children }) => <ol style={{ margin: '0 0 6px', paddingLeft: 22, maxWidth: measure, color }}>{children}</ol>,
     li: ({ children }) => <li style={{ margin: '1px 0', color }}>{children}</li>,
     a: ({ children, href }) => (
       <a href={href} target="_blank" rel="noreferrer" style={{ color: '#4ea1ff' }}>{children}</a>
@@ -42,7 +48,7 @@ function components(color: string): Components {
     em: ({ children }) => <em style={{ color }}>{children}</em>,
     hr: () => <hr style={{ border: 'none', borderTop: `1px solid ${border}`, margin: '8px 0' }} />,
     blockquote: ({ children }) => (
-      <blockquote style={{ margin: '0 0 6px', paddingLeft: 10, borderLeft: `3px solid ${border}`, opacity: 0.85 }}>
+      <blockquote style={{ margin: '0 0 6px', paddingLeft: 10, maxWidth: measure, borderLeft: `3px solid ${border}`, opacity: 0.85 }}>
         {children}
       </blockquote>
     ),

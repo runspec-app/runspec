@@ -9,6 +9,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.453.0] — 2026-11-16
+
+### Changed
+
+- **Console cards fill the window.** The card column was capped at 1000px, so
+  on a wide or ultrawide screen a wide table or log scrolled sideways inside a
+  narrow card. Cards now use the whole width:
+  - tables, code and run output take the full card;
+  - prose (paragraphs, lists, headings, quotes) still stops at 75 characters,
+    so a reply never becomes one long line;
+  - a collapsed tool row stays at the old width, so in a long turn each row's
+    status and time sit beside its name; opening it gives its output the
+    whole card;
+  - a narrow table fills at least the old width but isn't stretched across a
+    wide window.
+
 ## [0.452.1] — 2026-11-15
 
 ### Fixed

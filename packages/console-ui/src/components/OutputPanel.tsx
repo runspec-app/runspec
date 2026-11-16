@@ -35,6 +35,9 @@ const STREAM_MAX_LINES = 500
 // the card even after the stream completes. Each "show more" reveals up to
 // TABLE_ROW_STEP additional rows (appended, so existing rows aren't re-rendered).
 const TABLE_ROW_CAP = 200
+// A collapsed tool row's widest: about the card column's width before cards
+// filled the window.
+const TOOL_ROW_MAX = 952
 const TABLE_ROW_STEP = 2000
 
 // A completed run whose output exceeds this many chars renders behind a brief
@@ -500,8 +503,10 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
   const hidden = rows.length - shown.length
   return (
     <div style={{ overflowX: 'auto', padding: '8px 14px' }}>
+      {/* At least the old column's width, but a narrow table isn't stretched
+          across a wide window (its columns would drift apart). */}
       <table style={{
-        width: '100%', borderCollapse: 'collapse',
+        minWidth: 'min(100%, 900px)', borderCollapse: 'collapse',
         fontFamily: MONO_FONT, fontSize: 13, color: c.mono,
       }}>
         <thead>
@@ -1292,7 +1297,11 @@ export function OutputPanel({ blocks, onRerun, onAskLlm, onToggleContext, allBlo
         onScroll={handleScroll}
         style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}
       >
-        <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1000, width: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
+        {/* No width cap: cards fill the window, so a wide table or log uses an
+            ultrawide screen instead of scrolling sideways. Prose keeps its own
+            measure (Markdown caps paragraphs at 75ch) and a collapsed tool row
+            keeps TOOL_ROW_MAX, so neither turns into one long line. */}
+        <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 18, width: '100%', boxSizing: 'border-box' }}>
           {blocks.map(block => (
             <BlockCard
               key={block.id}
@@ -1518,6 +1527,9 @@ function ToolCallBlock({
   return (
     <div ref={gateRef} data-rs-confirm-gate={awaiting ? '' : undefined} style={{
       margin: '2px 0',
+      // Collapsed, a row stays near the old column width so its status and
+      // time sit beside its name; open, its output gets the whole card.
+      maxWidth: expanded ? undefined : TOOL_ROW_MAX,
       border: `1px solid ${awaiting ? AWAIT_BORDER : c.toolBorder}`,
       borderRadius: awaiting ? 16 : 12, overflow: 'hidden',
       background: awaiting ? AWAIT_BG : c.cardBg,
