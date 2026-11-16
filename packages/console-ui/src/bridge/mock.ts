@@ -1647,6 +1647,16 @@ export const mockApi: BridgeApi = {
       `[${cmd}] processing step 3 of 3`,
       `[${cmd}] done.`,
     ]
+    // get-alerts prints a wide JSON list, which the card shows as a table.
+    if (runnable === 'get-alerts') {
+      lines.splice(0, lines.length, JSON.stringify(Array.from({ length: 12 }, (_, i) => ({
+        alert_id: `ALR-${4100 + i}`, severity: ['critical', 'warning', 'info'][i % 3], host: `web-${String(i + 1).padStart(2, '0')}`,
+        service: ['nginx', 'postgres', 'redis', 'node-exporter'][i % 4], summary: 'Root filesystem above 85% for 15 minutes on the primary volume',
+        first_seen: `2026-11-16T0${i % 9}:12:44Z`, last_seen: '2026-11-16T09:41:02Z', occurrences: 3 + i * 2,
+        acknowledged_by: i % 2 ? 'ops-oncall' : '', runbook_url: `https://wiki.example.internal/runbooks/disk-pressure#${i}`,
+        datacenter: i < 6 ? 'lon-east-2' : 'ams-west-1',
+      }))))
+    }
     lines.forEach((line, i) => {
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('runspec:output', { detail: { id, line, stream: 'stdout' } }))
@@ -2550,6 +2560,50 @@ export const mockApi: BridgeApi = {
       _activeChats.delete(id)
       const cur = _sessions.get(session)
       if (cur) _patchSession(session, { state: 'idle', turn: '', turns: cur.turns + 1 })
+    }
+
+    // Dev demo: "inventory" runs a long turn — 25 tool calls, the last one
+    // returning a wide table, then a reply with prose and a wide markdown
+    // table. Exercises how cards use a wide (ultrawide) window.
+    if (/inventory/i.test(message)) {
+      ;(async () => {
+        await delay(10)
+        for (const ch of 'Collecting the inventory from every web host.') {
+          dispatch('runspec:token', { id, token: ch })
+          await delay(4)
+        }
+        const hosts = Array.from({ length: 24 }, (_, i) => `web-${String(i + 1).padStart(2, '0')}`)
+        for (const h of hosts) {
+          const call_id = `toolu-${id}-${h}`
+          const tool_name = `${h}__system-info`
+          dispatch('runspec:tool_start', { id, call_id, tool_name, tool_input: { detail: 'summary' } })
+          await delay(30)
+          dispatch('runspec:tool_end', { id, call_id, tool_name, output: JSON.stringify({ host: h, os: 'Ubuntu 24.04.2 LTS', kernel: '6.8.0-51-generic', uptime_days: 40 + hosts.indexOf(h) }) })
+        }
+        const rows = hosts.map((h, i) => ({
+          host: h, ip_address: `10.20.${Math.floor(i / 8)}.${10 + i}`, os: 'Ubuntu 24.04.2 LTS', kernel: '6.8.0-51-generic',
+          cpu_model: 'Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz', cores: 16, memory_gb: 64, memory_used_pct: 38 + (i * 7) % 50,
+          disk_root_gb: 200, disk_root_used_pct: 22 + (i * 11) % 70, load_avg_15m: (0.4 + (i % 5) * 0.37).toFixed(2),
+          uptime_days: 40 + i, nginx_version: '1.24.0', openssl_version: 'OpenSSL 3.0.13 30 Jan 2024',
+          last_patch: `2026-11-${String(1 + (i % 14)).padStart(2, '0')}`, datacenter: i < 12 ? 'lon-east-2' : 'ams-west-1',
+        }))
+        const call_id = `toolu-${id}-inv`
+        dispatch('runspec:tool_start', { id, call_id, tool_name: 'local__fleet-inventory', tool_input: { group: 'web', format: 'json' } })
+        await delay(60)
+        dispatch('runspec:tool_end', { id, call_id, tool_name: 'local__fleet-inventory', output: JSON.stringify(rows) })
+        const table = [
+          '| host | ip address | os | kernel | memory used | disk used | load (15m) | uptime | nginx | openssl | last patch | datacenter |',
+          '|---|---|---|---|---|---|---|---|---|---|---|---|',
+          ...rows.slice(0, 8).map(r => `| ${r.host} | ${r.ip_address} | ${r.os} | ${r.kernel} | ${r.memory_used_pct}% | ${r.disk_root_used_pct}% | ${r.load_avg_15m} | ${r.uptime_days} days | ${r.nginx_version} | ${r.openssl_version} | ${r.last_patch} | ${r.datacenter} |`),
+        ].join('\n')
+        const reply = `\n\nAll 24 web hosts answered. They run the same OS, kernel and nginx build, so the fleet is consistent; the differences are in load and disk. Three hosts are above 80% disk on the root volume and should be cleaned up before the next patch window, and web-05 has the highest 15-minute load average of the group, which is worth a look if it stays that way through the evening peak.\n\nThe busiest hosts:\n\n${table}\n\nWant me to clear old logs on the hosts above 80% disk?`
+        for (let i = 0; i < reply.length; i += 12) {
+          dispatch('runspec:token', { id, token: reply.slice(i, i + 12) })
+          await delay(5)
+        }
+        finish(0, 4200)
+      })()
+      return id
     }
 
     ;(async () => {

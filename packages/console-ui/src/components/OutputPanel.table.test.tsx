@@ -67,7 +67,8 @@ describe('JsonObject wide sub-table', () => {
     await user.click(screen.getByText(/\[3\]/))
     const table = screen.getByRole('table')
     expect((table.parentElement as HTMLElement).style.overflowX).toBe('auto')
-    const valueCell = table.closest('[style*="min-width"]') as HTMLElement
+    // From above the table: the table carries its own min-width now.
+    const valueCell = table.parentElement!.closest('[style*="min-width"]') as HTMLElement
     expect(['0', '0px']).toContain(valueCell?.style.minWidth)
   })
 })
