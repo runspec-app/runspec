@@ -157,6 +157,24 @@ describe('breakdowns', () => {
     ])
     expect(out).toEqual([{ type: 'user', value: 3 }, { type: 'agent', value: 2 }])
   })
+
+  it('initiatedBreakdown counts schedule runs on their own when the data says so', () => {
+    const out = initiatedBreakdown([
+      bucket({ initiatedBy: 'user', startedBy: 'user', total: 3 }),
+      bucket({ initiatedBy: 'llm', startedBy: 'schedule', total: 4 }),
+      bucket({ initiatedBy: 'llm', total: 2 }),
+    ])
+    expect(out).toEqual([{ type: 'user', value: 3 }, { type: 'agent', value: 2 }, { type: 'schedule', value: 4 }])
+  })
+
+  it('filterBuckets picks schedule runs by startedBy, and falls back to initiatedBy', () => {
+    const bs = [
+      bucket({ initiatedBy: 'llm', startedBy: 'schedule', total: 4 }),
+      bucket({ initiatedBy: 'llm', total: 2 }),
+    ]
+    expect(filterBuckets(bs, [], [], 'schedule').map(b => b.total)).toEqual([4])
+    expect(filterBuckets(bs, [], [], 'llm').map(b => b.total)).toEqual([2])
+  })
 })
 
 // Black-box check of the browser mock's aggregator — guards the data contract

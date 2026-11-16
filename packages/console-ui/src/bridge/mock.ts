@@ -568,10 +568,12 @@ function _aggregateMock(runs: SyntheticRun[], sinceDays: number): AnalyticsData 
     d.total++; r.ok ? d.success++ : d.failure++; d.durs.push(r.durationMs)
     dailyMap.set(day, d)
 
-    const bkey = [day, r.host, r.group, r.runnable, r.operator, r.initiatedBy, r.autonomy].join('|')
+    // The mock's scheduled runs are the ones its scheduler account made.
+    const startedBy = r.operator === 'Scheduled Task' ? 'schedule' as const : r.initiatedBy
+    const bkey = [day, r.host, r.group, r.runnable, r.operator, r.initiatedBy, startedBy, r.autonomy].join('|')
     const b = bucketMap.get(bkey) ?? {
       date: day, host: r.host, group: r.group, runnable: r.runnable, operator: r.operator,
-      initiatedBy: r.initiatedBy, autonomy: r.autonomy, runbook: '',
+      initiatedBy: r.initiatedBy, startedBy, autonomy: r.autonomy, runbook: '',
       total: 0, success: 0, failure: 0, durationMsSum: 0,
       events: { DEBUG: 0, INFO: 0, WARNING: 0, ERROR: 0, CRITICAL: 0 } as Record<string, number>,
     }

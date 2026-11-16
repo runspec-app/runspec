@@ -6,7 +6,7 @@
 
 import type { AnalyticsBucket, AnalyticsDaily } from '../bridge'
 
-export type InitiatedFilter = 'all' | 'user' | 'llm'
+export type InitiatedFilter = 'all' | 'user' | 'llm' | 'schedule'
 
 /** Client-side drill: keep buckets matching the active filter selection. */
 export function filterBuckets(
@@ -19,7 +19,7 @@ export function filterBuckets(
   return buckets.filter(b =>
     (groups.length === 0 || groups.includes(b.group)) &&
     (operators.length === 0 || operators.includes(b.operator)) &&
-    (initiatedBy === 'all' || b.initiatedBy === initiatedBy) &&
+    (initiatedBy === 'all' || (b.startedBy ?? b.initiatedBy) === initiatedBy) &&
     (runbooks.length === 0 || runbooks.includes(b.runbook))
   )
 }
@@ -120,8 +120,16 @@ export function operatorBreakdown(buckets: AnalyticsBucket[]): CategoryValue[] {
   return [...m.entries()].map(([type, value]) => ({ type, value })).sort((a, b) => b.value - a.value)
 }
 
+/** Runs by who started them: user and agent always, schedule when any ran
+ *  (consoles before 0.456.0 don't send `startedBy`, so it stays two-way). */
 export function initiatedBreakdown(buckets: AnalyticsBucket[]): CategoryValue[] {
-  let user = 0, llm = 0
-  for (const b of buckets) b.initiatedBy === 'llm' ? (llm += b.total) : (user += b.total)
-  return [{ type: 'user', value: user }, { type: 'agent', value: llm }]
+  let user = 0, llm = 0, schedule = 0
+  for (const b of buckets) {
+    const by = b.startedBy ?? b.initiatedBy
+    if (by === 'schedule') schedule += b.total
+    else if (by === 'llm') llm += b.total
+    else user += b.total
+  }
+  const out = [{ type: 'user', value: user }, { type: 'agent', value: llm }]
+  return schedule ? [...out, { type: 'schedule', value: schedule }] : out
 }

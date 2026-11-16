@@ -297,6 +297,37 @@ class TestAggregate(unittest.TestCase):
         self.assertEqual(out["dimensions"]["runnables"], ["backup"])
         self.assertEqual(out["dimensions"]["initiatedBy"], ["user", "llm"])
 
+    def test_started_by_splits_out_schedule_fires(self) -> None:
+        def rec(trigger: str = "", label: str = "", initiated: str = "user") -> dict:
+            r = _rec("2026-06-01T10:00:00Z", initiated=initiated)
+            r["trigger"], r["label"] = trigger, label
+            return r
+
+        records = [
+            rec(),  # a person
+            rec(initiated="llm"),  # the assistant
+            rec(
+                trigger="schedule", initiated="llm"
+            ),  # this console's schedule running a prompt
+            rec(trigger="schedule:cron"),
+            rec(trigger="schedule:daemon"),
+            rec(label="sched:nightly"),  # older runspec-scheduler fire
+            rec(trigger="schedule:run-now"),  # a host schedule started by hand
+        ]
+        out = _aggregate_analytics(records, "2026-06-01", "2026-06-01")
+        by: dict[str, int] = {}
+        for b in out["buckets"]:
+            by[b["startedBy"]] = by.get(b["startedBy"], 0) + b["total"]
+        self.assertEqual(by, {"user": 2, "llm": 1, "schedule": 4})
+        self.assertEqual(out["dimensions"]["startedBy"], ["user", "llm", "schedule"])
+        # initiatedBy is unchanged, for older consoles reading the same data.
+        self.assertEqual(
+            sorted(
+                b["initiatedBy"] for b in out["buckets"] if b["startedBy"] == "schedule"
+            ),
+            ["llm", "user"],
+        )
+
     def test_runbook_dimension_and_bucket(self) -> None:
         # Runs driven by a runbook split into their own bucket and the runbook name
         # surfaces in the dimensions so the Analytics tab can filter by it.

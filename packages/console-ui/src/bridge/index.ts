@@ -1486,6 +1486,9 @@ export interface AnalyticsBucket {
   runnable: string
   operator: string
   initiatedBy: 'user' | 'llm'
+  // Who or what started the run: a person, the assistant, or a schedule (this
+  // console's or a host's runspec-scheduler). Absent from consoles before 0.456.0.
+  startedBy?: 'user' | 'llm' | 'schedule'
   autonomy: string
   runbook: string                     // saved runbook that drove the run, "" = not a runbook run
   total: number
@@ -1509,6 +1512,7 @@ export interface AnalyticsDimensions {
   runnables: string[]
   operators: string[]
   initiatedBy: string[]
+  startedBy?: string[]
   runbooks: string[]
 }
 
