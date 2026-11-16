@@ -1942,6 +1942,27 @@ export const mockApi: BridgeApi = {
       const venvs = await mockApi.shared_schedules(h)
       out.push(...venvs.map(v => ({ ...v, host: h, owner: v.available ? 'svc-ops' : undefined })))
     }
+    // Dev: localStorage rs.mock.fleet = "1" adds 90 hosts with two venvs each,
+    // to check how host lists hold up on a big fleet.
+    let fleet = false
+    try { fleet = localStorage.getItem('rs.mock.fleet') === '1' } catch { /* no storage */ }
+    if (fleet) {
+      for (let i = 1; i <= 90; i++) {
+        const host = `app-${String(i).padStart(3, '0')}`
+        for (const venv of ['ops', i % 3 ? 'batch-jobs' : 'reporting']) {
+          const enabled = (i + venv.length) % 4 !== 0
+          const hooks = i % 5 === 0 ? [] : venv === 'ops' ? ['deploys', 'alerts'] : ['nightly']
+          const old = i % 11 === 0 && venv !== 'ops'
+          out.push({
+            host, group: venv, available: true, ok: true, owner: 'svc-ops',
+            status: {
+              ok: true, venv, config: `/opt/venvs/${venv}/runspec_scheduler.toml`, backend: 'cron', stale: [], errors: [], schedules: [],
+              ...(old ? {} : { hooks: { settings: { enabled, port: 8700 + (i % 7) }, hooks: hooks.map(name => ({ name })) } }),
+            },
+          } as unknown as SharedSchedulesVenv)
+        }
+      }
+    }
     const ago = (m: number) => new Date(Date.now() - m * 60_000).toISOString()
     if (hosts.some(h => h !== 'local')) {
       out.push({
@@ -2911,10 +2932,18 @@ export const mockApi: BridgeApi = {
     { id: 'e5', source: 'outlook', type: 'new_mail', summary: 're: Outage on web01', matched: [], skipped: [], deduped: ['vip-outage-triage'], ts: Date.now() / 1000 - 30 },
   ],
   get_schedule_board: async () => [
+    // A failed fire of a console schedule: a problem on This console until acknowledged.
+    {
+      card_id: 'sched-demo0', trigger: 'rs-backup-daily', source: 'schedule',
+      event_type: 'runnable', summary: '/backup on local',
+      column: 'failed', detail: { host: 'local', runnable: 'backup', exit_code: 2, schedule_id: 'rs-backup-daily', result: 'pg_dump: connection refused' },
+      created_at: Date.now() / 1000 - 3 * 3600,
+      timeline: [{ ts: Date.now() / 1000 - 3 * 3600, text: 'running' }, { ts: Date.now() / 1000 - 3 * 3600 + 4, text: 'failed (exit 2)' }],
+    },
     {
       card_id: 'sched-demo1', trigger: 'nightly-backup', source: 'schedule',
       event_type: 'runnable', summary: '/backup-db on db01',
-      column: 'done', detail: { host: 'db01', runnable: 'backup-db', exit_code: 0, result: 'Backed up 3 databases (1.2 GB) in 42s.' },
+      column: 'done', detail: { host: 'db01', runnable: 'backup-db', exit_code: 0, result: 'Backed up 3 databases (1.2 GB) in 42s.', schedule_id: 'rs-nightly-report' },
       created_at: Date.now() / 1000 - 600,
       timeline: [
         { ts: Date.now() / 1000 - 600, text: 'running' },

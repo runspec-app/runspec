@@ -99,6 +99,23 @@ describe('Schedules option cards', () => {
     expect(await screen.findByText('New schedule')).toBeTruthy()
   })
 
+  it('This console: a failed run can be acknowledged, which clears its problem, and undone', async () => {
+    api.get_schedule_board = vi.fn(() => Promise.resolve([{
+      card_id: 'c-1', trigger: 'rs-1', source: 'schedule', event_type: 'runnable', summary: '', column: 'failed',
+      created_at: Date.now() / 1000 - 60, detail: { schedule_id: 'rs-1', exit_code: 2 },
+    }]))
+    await renderView()
+    fireEvent.click(card('console'))
+    const ack = await screen.findByRole('button', { name: 'Acknowledge the failed run of rs-1' })
+    expect(within(card('console')).getByLabelText('1 problem')).toBeTruthy()
+    fireEvent.click(ack)
+    expect(within(card('console')).queryByLabelText(/problem/)).toBeNull()
+    expect(screen.getByText('exit 2')).toBeTruthy()  // it still says the run failed
+    expect(JSON.parse(localStorage.getItem('rs.scheduleAcks') || '{}')).toEqual({ 'rs-1': 'c-1' })
+    fireEvent.click(screen.getByRole('button', { name: 'Undo acknowledging rs-1' }))
+    expect(within(card('console')).getByLabelText('1 problem')).toBeTruthy()
+  })
+
   it('Only problems narrows the list, shown as a removable chip', async () => {
     await renderView()
     expect(screen.queryByTestId('filter-chips')).toBeNull()

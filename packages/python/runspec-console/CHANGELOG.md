@@ -9,6 +9,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.454.0] — 2026-11-16
+
+### Added
+
+- **Acknowledge a failed schedule run on This console.** A failed fire of one
+  of this console's own schedules counted as a problem until the schedule next
+  succeeded, with no way to clear it, and This console's table didn't say
+  which schedule had failed. The table now has a **Last run** column, and a
+  failed run's row is tinted, with **Acknowledge** next to the result. Once
+  acknowledged it stops counting as a problem (the cell still says the run
+  failed, with **Undo**); if the next run fails too, it counts again. The same
+  control is on This console's rows under All. Acknowledgements are kept on
+  this machine. Host schedules keep their shared "I'm on it" / "Dealt with"
+  notes.
+- **Webhooks: filters for hosts not followed here.** With more than 5 hosts,
+  the list has a search over host, venv and group (every word must match), a
+  webhook-state filter with counts, an "only hosts that can be followed"
+  switch, and a "Showing N of M hosts" count.
+
+### Changed
+
+- **Webhooks: hosts not followed here line up.** The list is now one grid with
+  a line per venv: host and group, venv, webhook state, then **Turn on** or
+  **Add a hook…**, **Hooks…**, **Settings…** and **Follow**, each in its own
+  column. Before, each host was one wrapping line, so with many hosts and two
+  venvs each the buttons landed in different places on every line. A venv
+  with webhooks on now also offers **Settings…**.
+
 ## [0.453.0] — 2026-11-16
 
 ### Changed

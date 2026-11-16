@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Collapse, Typography, message } from 'antd'
+import { Table, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Collapse, Typography, message, theme } from 'antd'
 import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
 import { bridge, type SharedSchedulesVenv, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
-import { useIsDark, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
+import { useIsDark, textMuted, textSecondary, withAlpha, MONO_FONT } from '../ThemeContext'
 import { AskFirst, askRemembered, consentKey, useRiskConfirm } from '../components/risk'
 import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
@@ -11,7 +11,8 @@ import { SoundSelect } from '../components/SoundSelect'
 import { ModelSelect } from '../components/ModelSelect'
 import { initialFormValues, validateArgs } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
-import { AllSchedulesView, WhenCell } from './AllSchedulesView'
+import { AllSchedulesView, LastRunCell, WhenCell } from './AllSchedulesView'
+import { useScheduleAcks } from './scheduleAcks'
 import { EmptyState, IconAction, StatusTag } from '../components/kit'
 import { ScheduleScopeCards } from './ScheduleScopeCards'
 import { useWebhooks } from '../webhooks'
@@ -970,6 +971,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
 
   const { hostVenvs, hostsLoaded, hostsUpdatedAt, hostsLoading, readHosts, targets } = useHostSchedulerReads(hosts)
   const isDark = useIsDark()
+  const { token } = theme.useToken()
   const [askRisk, riskHolder] = useRiskConfirm()
 
   const reload = () => bridge.get_schedules().then(setSchedules)
@@ -1129,6 +1131,21 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
           ? <Space size={6}>{kind('evals')}<code>{s.eval_fixture}</code></Space>
           : <Space size={6}>{kind('run')}<code>/{s.runnable}{s.command?.length ? ` ${s.command.join(' ')}` : ''}</code></Space>
 
+  const hostGroups = useMemo(
+    () => Object.fromEntries(hosts.map(h => [h.name, h.group ?? ''])) as Record<string, string>,
+    [hosts],
+  )
+  const [acks, setAck] = useScheduleAcks()
+  const collected = useMemo(
+    () => collectRows(schedules, hostVenvs, { cards: Object.values(cards), hostGroups, acks }),
+    [schedules, hostVenvs, cards, hostGroups, acks],
+  )
+  // This console's rows by schedule id, for its own table's Last run cell.
+  const consoleRows = useMemo(
+    () => new Map(collected.rows.filter(r => r.source === 'console').map(r => [r.id, r])),
+    [collected.rows],
+  )
+
   const columns = [
     {
       title: '',
@@ -1184,6 +1201,15 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       render: (_: unknown, s: Schedule) => detailSummary(s),
     },
     {
+      // What the last run did; a failure can be acknowledged here once seen.
+      title: 'Last run',
+      key: 'lastRun',
+      render: (_: unknown, s: Schedule) => {
+        const row = consoleRows.get(s.id)
+        return row ? <LastRunCell row={row} onOpenHistory={onOpenHistory} onAck={setAck} /> : null
+      },
+    },
+    {
       title: 'Next run',
       dataIndex: 'nextRun',
       key: 'nextRun',
@@ -1227,6 +1253,8 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       pagination={false}
       locale={{ emptyText: <EmptyState message="No schedules on this console yet." action={{ label: 'New schedule', icon: <PlusOutlined />, onClick: openNew }} /> }}
       rowClassName={s => (s.enabled === false ? 'rs-schedule-disabled' : '')}
+      // A failed run you haven't acknowledged tints its row, as on All.
+      onRow={s => (consoleRows.get(s.id)?.problem ? { style: { background: withAlpha(token.colorWarning, isDark ? 0.07 : 0.08) } } : {})}
       expandable={{
         rowExpandable: s => Object.keys(detailFor(s)).length > 0,
         expandedRowRender: s => (
@@ -1244,14 +1272,6 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
     />
   )
 
-  const hostGroups = useMemo(
-    () => Object.fromEntries(hosts.map(h => [h.name, h.group ?? ''])) as Record<string, string>,
-    [hosts],
-  )
-  const collected = useMemo(
-    () => collectRows(schedules, hostVenvs, { cards: Object.values(cards), hostGroups }),
-    [schedules, hostVenvs, cards, hostGroups],
-  )
   const counts = useMemo(() => scopeCounts(collected), [collected])
   const webhooks = useWebhooks()
 
@@ -1282,6 +1302,7 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
           runnables={runnables}
           webhooks={webhooks.status}
           onOpenWebhooks={onOpenWebhooks}
+          onAck={setAck}
         />
       </div>
     )

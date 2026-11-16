@@ -16,7 +16,7 @@ import { Table, Tag, Typography, Button, Tooltip, Alert, Dropdown, Empty, Input,
 import {
   ReloadOutlined, HistoryOutlined, InfoCircleOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   PauseCircleOutlined, PlayCircleOutlined, SyncOutlined, SettingOutlined, RightOutlined, DownOutlined, ThunderboltOutlined,
-  FilterOutlined, CloseOutlined,
+  FilterOutlined, CloseOutlined, CheckOutlined,
 } from '@ant-design/icons'
 import { When, fmtWhen, fullWhen } from '../when'
 import type { ColumnType } from 'antd/es/table'
@@ -107,7 +107,7 @@ const SOURCE_LABEL: Record<RowSource, string> = {
 const ALL_STATES: RowState[] = [
   'ok', 'running', 'last run failed', 'not installed', 'not installable', 'stale line',
   'scheduler stopped', 'scheduler stale', "can't read", 'disabled', 'unknown', 'legacy line',
-  'being handled', 'dealt with',
+  'being handled', 'dealt with', 'acknowledged',
 ]
 
 const NOTE_WORDS: Record<NoteVerb, { button: string; title: string; done: string; placeholder: string }> = {
@@ -360,6 +360,49 @@ interface AllSchedulesViewProps {
   webhooks?: WebhooksStatus
   /** Opens the Webhooks card. */
   onOpenWebhooks?: () => void
+  /** Acknowledge a console schedule's failed run (its card id), or undo with null. */
+  onAck?: (scheduleId: string, cardId: string | null) => void
+}
+
+/** A schedule's last run: its result and when, and for this console's own
+ *  schedules a way to acknowledge a failure once you've seen it. Host
+ *  schedules use the shared "I'm on it" / "Dealt with" notes instead. */
+export function LastRunCell({ row, onOpenHistory, onAck }: {
+  row: ScheduleRow
+  onOpenHistory?: (search: string) => void
+  onAck?: (scheduleId: string, cardId: string | null) => void
+}) {
+  const isDark = useIsDark()
+  const secondary = textSecondary(isDark)
+  const l = row.lastRun
+  if (!l) return <span style={{ color: textMuted(isDark) }}>—</span>
+  const label = (l.status === 'failed' || l.status === 'crashed') && l.exitCode != null ? `exit ${l.exitCode}` : l.status
+  const canAck = !!onAck && row.source === 'console' && !!l.cardId
+  return (
+    <Space size={4} wrap>
+      <StatusTag tone={RUN_TONE[l.status] ?? 'neutral'}>{label}</StatusTag>
+      <Tooltip title={`${fullWhen(l.ts)}${l.durationMs != null ? ` · ${(l.durationMs / 1000).toFixed(1)}s` : ''}`}>
+        <span style={{ color: secondary, fontSize: 13 }}>{fmtWhen(l.ts)}</span>
+      </Tooltip>
+      {onOpenHistory && row.historySearch && (
+        <IconAction label="Open in History" tip={`Open in History (search “${row.historySearch}”)`} icon={<HistoryOutlined />}
+          onClick={() => onOpenHistory(row.historySearch)} />
+      )}
+      {canAck && row.state === 'last run failed' && (
+        <Tooltip title="You've seen this failure: it stops counting as a problem. If the next run fails too, it counts again.">
+          <Button size="small" icon={<CheckOutlined />} aria-label={`Acknowledge the failed run of ${row.name || row.id}`}
+            onClick={() => onAck!(row.id, l.cardId!)}>Acknowledge</Button>
+        </Tooltip>
+      )}
+      {canAck && row.state === 'acknowledged' && (
+        <span style={{ fontSize: 12, color: secondary }}>
+          acknowledged{' · '}
+          <Button type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }}
+            aria-label={`Undo acknowledging ${row.name || row.id}`} onClick={() => onAck!(row.id, null)}>Undo</Button>
+        </span>
+      )}
+    </Space>
+  )
 }
 
 /** A save payload that keeps a host schedule as it is, bar `enabled`. */
@@ -389,7 +432,7 @@ function report(what: string, res: HostScheduleResult) {
   for (const w of res.warnings ?? []) message.warning(w, 8)
 }
 
-export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory, runnables, webhooks = EMPTY_WEBHOOKS, onOpenWebhooks }: AllSchedulesViewProps) {
+export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory, runnables, webhooks = EMPTY_WEBHOOKS, onOpenWebhooks, onAck }: AllSchedulesViewProps) {
   const isDark = useIsDark()
   const { token } = theme.useToken()
   const [filters, setFiltersState] = useState<RowFilters>(readFilters)
@@ -630,23 +673,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
     {
       title: 'Last run',
       key: 'last',
-      render: (_: unknown, r) => {
-        const l = r.lastRun
-        if (!l) return <span style={{ color: muted }}>—</span>
-        const label = (l.status === 'failed' || l.status === 'crashed') && l.exitCode != null ? `exit ${l.exitCode}` : l.status
-        return (
-          <Space size={4}>
-            <StatusTag tone={RUN_TONE[l.status] ?? 'neutral'}>{label}</StatusTag>
-            <Tooltip title={`${fullWhen(l.ts)}${l.durationMs != null ? ` · ${(l.durationMs / 1000).toFixed(1)}s` : ''}`}>
-              <span style={{ color: secondary, fontSize: 13 }}>{fmtWhen(l.ts)}</span>
-            </Tooltip>
-            {onOpenHistory && r.historySearch && (
-              <IconAction label="Open in History" tip={`Open in History (search “${r.historySearch}”)`} icon={<HistoryOutlined />}
-                onClick={() => onOpenHistory(r.historySearch)} />
-            )}
-          </Space>
-        )
-      },
+      render: (_: unknown, r) => <LastRunCell row={r} onOpenHistory={onOpenHistory} onAck={onAck} />,
     },
     {
       title: 'Where',
