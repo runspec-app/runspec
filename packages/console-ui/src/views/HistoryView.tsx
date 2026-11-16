@@ -185,7 +185,7 @@ function ExpandedRun({ record, logLines, logsLoading, onRerun, onAskLlm, onViewF
             {Object.entries(args).map(([k, v]) => (
               <span key={k} style={{ display: 'inline-flex', alignItems: 'center' }}>
                 <Text type="secondary" style={{ fontSize: 13 }}>--{k}=</Text>
-                <Text code style={{ fontSize: 13 }}>{String(v)}</Text>
+                <Text code style={{ fontSize: 13 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
                 <ArgSourceBadge source={record.argSources?.[k]} />
               </span>
             ))}

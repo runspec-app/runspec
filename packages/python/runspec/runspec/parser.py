@@ -350,7 +350,10 @@ def _parse_impl(
     # Excludes the auto-injected --debug flag and password args — a secret must
     # never be written to the audit log.
     _auto_args = {"debug"}
-    invocation_args = {k: {"value": str(arg.value), "source": arg.source} for k, arg in runspec_obj._args.items() if arg.value is not None and k not in _auto_args and arg.type != "password"}
+    # Values are recorded as text; a multi-valued arg (``multiple``, ``rest``)
+    # as a list of text — ``str()`` of the list wrote "['Open']", which a
+    # History rerun then passed back as one value and failed validation.
+    invocation_args = {k: {"value": _record_value(arg.value), "source": arg.source} for k, arg in runspec_obj._args.items() if arg.value is not None and k not in _auto_args and arg.type != "password"}
 
     try:
         configure_logging(
@@ -1139,6 +1142,14 @@ def _build_runspec(
         runspec._set_arg(arg_name, arg)
 
     return runspec
+
+
+def _record_value(value: Any) -> str | list[str]:
+    """An arg value as the run record keeps it: text, or a list of text for a
+    multi-valued arg (so a rerun gets the values back, not their ``repr``)."""
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    return str(value)
 
 
 def _run_as_name(value: Any) -> str:
