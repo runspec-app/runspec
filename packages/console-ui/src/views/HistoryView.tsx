@@ -345,7 +345,7 @@ function RunningNowStrip({ rows, accent }: { rows: RunningRun[]; accent: string 
               {isScheduled(r.trigger) && <ClockCircleOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />}
               {runBy(r).kind === 'agent'
                 ? <RobotOutlined style={{ color: accent, fontSize: 12 }} />
-                : <UserOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} />}
+                : runBy(r).kind === 'user' ? <UserOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 12 }} /> : null}
               <span>
                 {r.group && <span style={{ color: 'var(--rs-text-muted)' }}>{r.group}/</span>}
                 {r.runnable}
@@ -840,7 +840,7 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
   return (
     <div>
       <OnceHint id="history.rows">
-        Open a run (its arrow, or Enter on the row) to see its arguments and log, and to rerun it. In the search, <span style={{ fontFamily: MONO_FONT }}>-name</span> leaves a runnable out.
+        Open a run (the + at the start of its row, or Enter on the row) to see its arguments and log, and to rerun it. In the search, <span style={{ fontFamily: MONO_FONT }}>-name</span> leaves a runnable out.
       </OnceHint>
       <PageToolbar actions={onOpenAnalytics && (
         <Tooltip title="Charts over these runs: success rate, durations, top runnables">
@@ -1009,13 +1009,16 @@ export function HistoryView({ search, onSearchChange, onRerun, onAskLlm, activeS
           rowExpandable: () => true,
           // Each expander says whose run it opens (antd's are all "Expand row").
           expandIcon: ({ expanded, onExpand, record }) => (
+            // A 24px target around antd's 16px +/− mark.
             <button
               type="button"
-              className={`ant-table-row-expand-icon ${expanded ? 'ant-table-row-expand-icon-expanded' : 'ant-table-row-expand-icon-collapsed'}`}
+              className="rs-expand-hit"
               aria-label={`${expanded ? 'Hide' : 'Show'} details: ${record.runnable} on ${record.host}, ${fullWhen(record.ts)}`}
               aria-expanded={expanded}
               onClick={e => onExpand(record, e)}
-            />
+            >
+              <span aria-hidden className={`ant-table-row-expand-icon ${expanded ? 'ant-table-row-expand-icon-expanded' : 'ant-table-row-expand-icon-collapsed'}`} />
+            </button>
           ),
           expandedRowKeys: expandedKeys,
           onExpand: (expanded, record) => { if (expanded) fetchDetail(record) },

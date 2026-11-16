@@ -72,3 +72,23 @@ describe('JsonObject wide sub-table', () => {
     expect(['0', '0px']).toContain(valueCell?.style.minWidth)
   })
 })
+
+describe('wide tables', () => {
+  it('keeps the first column in place and cuts a long value, with all of it in the tooltip', () => {
+    const long = 'Disk usage on / has been above 90 percent for more than thirty minutes'
+    render(<StructuredOutput text={JSON.stringify([{ alert: 'A-1', summary: long }, { alert: 'A-2', summary: 'short' }])} />)
+    const first = screen.getByText('A-1').closest('td') as HTMLElement
+    expect(first.style.position).toBe('sticky')
+    const cut = screen.getByTitle(long)
+    expect(cut.style.textOverflow).toBe('ellipsis')
+    expect(screen.getByText('short').getAttribute('title')).toBeNull()
+  })
+
+  it('reaches "show more" from the keyboard', async () => {
+    render(<StructuredOutput text={bigTable(300)} />)
+    const more = screen.getByRole('button', { name: /showing 200 of 300 rows/ })
+    more.focus()
+    await act(async () => { await userEvent.setup().keyboard('{Enter}') })
+    expect(dataRows()).toHaveLength(300)
+  })
+})

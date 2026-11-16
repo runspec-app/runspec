@@ -795,7 +795,7 @@ function RunnableCard({ entry, hosts, onPick }: {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span role="img" aria-label={connected ? 'connected' : 'not connected'} title={connected ? 'Connected' : 'Not connected'}
-          style={{ fontSize: 9, color: connected ? 'var(--rs-ok)' : 'var(--rs-text-faint)', flexShrink: 0 }}>●</span>
+          style={{ fontSize: 9, color: connected ? 'var(--rs-ok)' : 'var(--rs-text-muted)', flexShrink: 0 }}>●</span>
         <Text style={{ fontFamily: MONO_FONT, fontSize: 14, fontWeight: 600 }}>{runnable.name}</Text>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           {isInstant && (

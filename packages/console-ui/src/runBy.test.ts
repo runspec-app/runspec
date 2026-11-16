@@ -10,9 +10,14 @@ describe('runBy', () => {
     expect(runBy({ initiatedBy: 'llm', trigger: 'schedule', label: 'sched:nightly' }).kind).toBe('host-schedule')
   })
 
+  it("shows this console's own schedules as a schedule, not the operator or the assistant", () => {
+    expect(runBy({ initiatedBy: 'llm', trigger: 'schedule', label: 'console' }).kind).toBe('schedule')
+    expect(runBy({ initiatedBy: 'user', trigger: 'schedule', label: 'console' }).kind).toBe('schedule')
+  })
+
   it('keeps agent and user for everything else', () => {
-    expect(runBy({ initiatedBy: 'llm', trigger: 'schedule', label: 'console' }).kind).toBe('agent')
-    expect(runBy({ initiatedBy: 'user', trigger: 'schedule', label: 'console' }).kind).toBe('user')
+    expect(runBy({ initiatedBy: 'llm', label: 'console' }).kind).toBe('agent')
+    expect(runBy({ initiatedBy: 'user', trigger: 'mail', label: 'console' }).kind).toBe('user')
     expect(runBy({}).kind).toBe('user')
   })
 

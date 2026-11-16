@@ -423,7 +423,7 @@ function TestTriggerModal({ name, trigger, onClose }: { name: string | null; tri
     try {
       const res = await bridge.test_trigger(name as string, v.body || '', fields)
       if (res.ok) {
-        message.success(`Fired ${name} — see the run inbox below`)
+        message.success(`Tested ${name}: see the run inbox below`)
         onClose()
       } else {
         message.error(res.error || 'Could not fire the trigger.')
@@ -436,23 +436,18 @@ function TestTriggerModal({ name, trigger, onClose }: { name: string | null; tri
   return (
     <Modal
       open={name !== null}
-      title={`Trigger now — ${name ?? ''}`}
+      title={`Test ${name ?? ''}`}
       width={560}
       onCancel={onClose}
       onOk={fire}
-      okText="Fire"
+      okText="Run test"
       confirmLoading={firing}
       okButtonProps={{ icon: <PlayCircleOutlined /> }}
       destroyOnClose
     >
       <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>
-        Fires this trigger immediately with a synthetic event — bypassing the match
-        rules and the working-hours rota — so you can test it without waiting for a
-        real event. <strong>Its action runs for real</strong>; anything that asks
-        first still waits for your approval. The message lands under the <code>body</code> field. For an
-        Outlook trigger the <code>folder</code>/<code>mailbox</code> below are
-        pre-filled from its match so the run has the same location a real email
-        would; a real arriving email carries these automatically.
+        Runs it now with this message as the event, skipping its match rules and
+        working hours. <strong>Its action runs for real</strong>; anything that asks first still waits for you.
       </Text>
       <Form form={form} layout="vertical" size="small" initialValues={{ body: '', fields: seedFields() }}>
         <Form.Item name="body" label="Message">
@@ -932,7 +927,7 @@ export function TriggersEditor({
               <RowActions
                 testId={`trigger-actions-${String(t.name)}`}
                 secondary={[
-                  { key: 'test', label: 'Test', ariaLabel: `Test ${String(t.name)}`, icon: <PlayCircleOutlined />, onClick: () => setTestName(String(t.name)), disabled: editing, tip: 'Fire it now with a test event; its action runs for real' },
+                  { key: 'test', label: 'Test', ariaLabel: `Test ${String(t.name)}`, icon: <PlayCircleOutlined />, onClick: () => setTestName(String(t.name)), disabled: editing, tip: 'Run it now with a test message; its action runs for real' },
                   { key: 'edit', label: 'Edit', ariaLabel: `Edit ${String(t.name)}`, icon: <EditOutlined />, onClick: () => startEdit(t), disabled: editing },
                 ]}
                 more={[

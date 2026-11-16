@@ -122,6 +122,21 @@ describe('DenylistModal', () => {
     expect(manageDenylist.mock.calls[0][0]).toMatchObject({ action: 'all', targets: SCOPE })
   })
 
+  it("Disable all uses its own reason, never the one typed for a specific rule", async () => {
+    render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
+    await screen.findByText('Disable all runnables')
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.type(screen.getByRole('textbox', { name: 'Reason' }), 'old rule reason')
+      await user.type(screen.getByRole('textbox', { name: 'Reason for disabling all' }), 'INC-42')
+      await user.click(screen.getByRole('button', { name: /Disable all runnables/ }))
+    })
+    expect((await screen.findByTestId('risk-action')).textContent).toContain('reason: INC-42')
+    await act(async () => { await user.click(screen.getByTestId('risk-ok')) })
+    await waitFor(() => expect(manageDenylist).toHaveBeenCalledTimes(1))
+    expect(manageDenylist.mock.calls[0][0]).toMatchObject({ action: 'all', reason: 'INC-42' })
+  })
+
   it('turning the mode off asks first; Cancel changes nothing', async () => {
     render(<DenylistModal open onClose={() => {}} hosts={CONNECTED} />)
     await screen.findByText('Disable all runnables')

@@ -124,6 +124,7 @@ body {
    The selected row sets an inline background, which wins over this rule. */
 .rs-host-row, .rs-group-header { transition: background var(--rs-motion), border-color var(--rs-motion); }
 .rs-host-row:hover { background: var(--rs-hover); }
+.rs-inbox-row:hover { background: var(--rs-hover); }
 .rs-group-header:hover { background: var(--rs-hover); }
 /* Console session chips (SessionStrip): accent-neutral hover, no re-render. */
 .rs-session-chip { transition: background var(--rs-motion), border-color var(--rs-motion); }
@@ -182,9 +183,10 @@ body {
   .rs-file-grid > :nth-child(3) { display: none; }
 }
 /* The pane's file actions: three labelled buttons, or one More menu when
-   the pane is too narrow for them beside the filter. */
+   the pane is too narrow for them beside the filter (they need about 420px:
+   at 381px, a 1024px window's pane, Delete wrapped onto a line of its own). */
 .rs-pane-compact { display: none !important; }
-@container (max-width: 380px) {
+@container (max-width: 440px) {
   .rs-pane-full { display: none !important; }
   .rs-pane-compact { display: inline-flex !important; }
 }
@@ -516,3 +518,23 @@ a.ant-typography:not(.ant-typography-disabled),
 /* Inline code: the secondary text on its own tint (muted text measured 4.2:1
    on the dark dialogs). */
 .ant-typography code { color: var(--rs-text-secondary); }
+
+/* Schedules: a row whose last run failed and isn't acknowledged. The wash goes
+   on the cells (antd paints each cell's own background over a tinted <tr>),
+   layered over the table surface so a pinned (sticky) cell stays opaque. */
+.rs-row-problem > td.ant-table-cell {
+  background: linear-gradient(color-mix(in srgb, var(--rs-warn) 13%, transparent), color-mix(in srgb, var(--rs-warn) 13%, transparent)), var(--rs-table-bg, var(--rs-surface-raised)) !important;
+}
+.rs-row-problem:hover > td.ant-table-cell {
+  background: linear-gradient(color-mix(in srgb, var(--rs-warn) 19%, transparent), color-mix(in srgb, var(--rs-warn) 19%, transparent)), var(--rs-table-bg, var(--rs-surface-raised)) !important;
+}
+
+/* History: a 24px button around antd's 16px row-expand mark (the mark alone
+   was under the 24px target size, and close to the status bar). */
+.rs-expand-hit {
+  width: 24px; height: 24px; margin: -4px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; cursor: pointer; border-radius: 4px;
+  vertical-align: middle;
+}
+.rs-expand-hit > .ant-table-row-expand-icon { pointer-events: none; float: none; margin: 0; }

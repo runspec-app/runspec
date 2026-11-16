@@ -3,7 +3,7 @@
  * Stop run stops it.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { RunInbox } from './RunInbox'
@@ -28,5 +28,15 @@ describe('RunInbox', () => {
     await act(async () => { await user.click(screen.getByRole('button', { name: /Stop/ })) })
     await act(async () => { await user.click(await screen.findByRole('button', { name: 'Stop run' })) })
     await waitFor(() => expect(onStop).toHaveBeenCalledWith('c1'))
+  })
+
+  it('opens a run from the keyboard', () => {
+    const onSelect = vi.fn()
+    render(<RunInbox cards={{ c1: CARD }} selected={null} onSelect={onSelect} />)
+    const row = document.querySelector('.rs-inbox-row') as HTMLElement
+    expect(row.getAttribute('role')).toBe('button')
+    expect(row.tabIndex).toBe(0)
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onSelect).toHaveBeenCalledWith('c1')
   })
 })

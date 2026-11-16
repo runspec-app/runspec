@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { message } from 'antd'
 
 import { SchedulesView, _resetHostReadCache } from './SchedulesView'
 import type { Host, Schedule, SharedSchedule, SharedSchedulesVenv } from '../bridge'
@@ -106,14 +107,19 @@ describe('Schedules option cards', () => {
     }]))
     await renderView()
     fireEvent.click(card('console'))
+    const toast = vi.spyOn(message, 'open')
     const ack = await screen.findByRole('button', { name: 'Acknowledge the failed run of rs-1' })
     expect(within(card('console')).getByLabelText('1 problem')).toBeTruthy()
     fireEvent.click(ack)
     expect(within(card('console')).queryByLabelText(/problem/)).toBeNull()
     expect(screen.getByText('exit 2')).toBeTruthy()  // it still says the run failed
     expect(JSON.parse(localStorage.getItem('rs.scheduleAcks') || '{}')).toEqual({ 'rs-1': 'c-1' })
+    // Focus moves to the Undo that replaced the button, and a toast offers it too.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Undo acknowledging rs-1' })))
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ key: 'rs-ack-rs-1', duration: 8 }))
     fireEvent.click(screen.getByRole('button', { name: 'Undo acknowledging rs-1' }))
     expect(within(card('console')).getByLabelText('1 problem')).toBeTruthy()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Acknowledge the failed run of rs-1' })))
   })
 
   it('Only problems narrows the list, shown as a removable chip', async () => {
@@ -251,5 +257,32 @@ describe('Restart all schedulers', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Restart/ }))
     expect((await screen.findByTestId('restart-denylist-warning')).textContent).toMatch(/blocking the scheduler on this venv/)
     expect(api.host_scheduler_restart).not.toHaveBeenCalled()
+  })
+})
+
+describe('working hours on This console', () => {
+  const ROTA = {
+    enabled: true, source: 'console',
+    mon: { on: true, start: '09:00', end: '17:30' }, tue: { on: true, start: '09:00', end: '17:30' },
+    wed: { on: true, start: '09:00', end: '17:30' }, thu: { on: true, start: '09:00', end: '17:30' },
+    fri: { on: true, start: '09:00', end: '17:30' }, sat: { on: false }, sun: { on: false },
+  }
+  it('says a run outside working hours will be skipped, and that the hours are on', async () => {
+    const twoAm = new Date(); twoAm.setDate(twoAm.getDate() + 1); twoAm.setHours(2, 0, 0, 0)
+    api.get_schedules = vi.fn(() => Promise.resolve([{ ...CONSOLE[0], nextRun: twoAm.toISOString() }]))
+    api.list_triggers = vi.fn(() => Promise.resolve({ triggers: [], errors: [], sources: [], rota: ROTA, running: true }))
+    await renderView()
+    fireEvent.click(card('console'))
+    expect((await screen.findByTestId('next-run-skipped')).textContent).toMatch(/skipped, outside working hours/)
+    expect(screen.getByTestId('schedules-rota-note').textContent).toContain('Mon–Fri 09:00–17:30')
+  })
+
+  it('says nothing when working hours are off', async () => {
+    api.list_triggers = vi.fn(() => Promise.resolve({ triggers: [], errors: [], sources: [], rota: { ...ROTA, enabled: false }, running: true }))
+    await renderView()
+    fireEvent.click(card('console'))
+    await screen.findByRole('button', { name: /^Run \/disk-usage/ })
+    expect(screen.queryByTestId('schedules-rota-note')).toBeNull()
+    expect(screen.queryByTestId('next-run-skipped')).toBeNull()
   })
 })

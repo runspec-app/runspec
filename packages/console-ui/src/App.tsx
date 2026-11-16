@@ -1395,6 +1395,9 @@ export default function App() {
             // via explicit fontFamily where it earns its keep.
             fontFamily: UI_FONT,
             fontFamilyCode: MONO_FONT,  // <Text code>, Typography code blocks
+            // Ant's back-out easing makes badge counts overshoot and bounce;
+            // a plain ease-out settles them like the rest of the app's motion.
+            motionEaseOutBack: 'cubic-bezier(0.22, 1, 0.36, 1)',
             // One radius scale (ThemeContext.RADIUS) for every Ant control.
             borderRadius: RADIUS.md,
             borderRadiusSM: RADIUS.sm,
@@ -1677,7 +1680,7 @@ export default function App() {
                       }}
                     >
                       <span role="img" aria-label={h.connected ? 'connected' : 'not connected'} title={h.connected ? 'Connected' : 'Not connected'}
-                        style={{ fontSize: 9, lineHeight: 1, color: h.connected ? 'var(--rs-ok)' : textFaint(isDark) }}>{h.connected ? '●' : '○'}</span>
+                        style={{ fontSize: 9, lineHeight: 1, color: h.connected ? 'var(--rs-ok)' : textMuted(isDark) }}>{h.connected ? '●' : '○'}</span>
                       <span style={{
                         fontSize: 14, color: textCol, flex: 1, fontFamily: MONO_FONT,
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -2104,11 +2107,13 @@ export default function App() {
             </div>
 
             {/* Command bar — the composer floats on the content background; the
-                selected host's venv scope is a menu in its toolbar. */}
-            <div style={{
+                selected host's venv scope is a menu in its toolbar. It sits on
+                the transcript's left edge, the same width as a tool row, so on a
+                wide window the prompt and the replies share one axis. */}
+            <div data-testid="command-bar" style={{
               padding: '4px 24px 14px',
               background: contentBg, flexShrink: 0,
-              width: '100%', maxWidth: 1000, margin: '0 auto', boxSizing: 'border-box',
+              width: '100%', maxWidth: 1000, margin: 0, boxSizing: 'border-box',
             }}>
               {!discovery.ready && discovery.total > 0 && (
                 <div style={{

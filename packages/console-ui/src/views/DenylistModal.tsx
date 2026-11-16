@@ -64,6 +64,9 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
   const [userGlobs, setUserGlobs] = useState<string[]>([])
   const [hostGlobs, setHostGlobs] = useState<string[]>([])
   const [reason, setReason] = useState('')
+  // The kill switch's own reason: it sits beside Disable all, so it never
+  // borrows one typed for a specific rule further down.
+  const [allReason, setAllReason] = useState('')
   const [mode, setMode] = useState<'enforce' | 'warn' | 'off'>('enforce')
   const [result, setResult] = useState('')
   const [busy, setBusy] = useState('')
@@ -165,10 +168,10 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
     Promise.resolve(bridge.denylist_pending()).then(p => setPending(Array.isArray(p) ? p : [])).catch(() => {})
   }, [open])
 
-  const disableAll = async () => {
+  const disableAll = async (why: string = allReason) => {
     const a = await askRisk({
       level: 'fleet', title: `Block every runnable on ${scope}?`,
-      action: `Disable all runnables${reason ? ` (reason: ${reason})` : ''}`, targets: effectiveTargets,
+      action: `Disable all runnables${why ? ` (reason: ${why})` : ''}`, targets: effectiveTargets,
       consequence: (
         <>
           Agent and manual runs are refused until you re-enable them here.
@@ -184,10 +187,10 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
       okText: 'Disable all',
     })
     if (!a.ok) return
-    await run({ action: 'all', reason }, 'all')
+    await run({ action: 'all', reason: why }, 'all')
     // The hosts it couldn't reach get the same block when they reconnect.
     if (queueFor.length) {
-      try { setPending(await bridge.denylist_pending_add(queueFor, reason)) } catch { /* shown on next open */ }
+      try { setPending(await bridge.denylist_pending_add(queueFor, why)) } catch { /* shown on next open */ }
     }
   }
 
@@ -313,7 +316,9 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
         />
       </div>
       <div data-testid="kill-switch" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-        <Button type="primary" danger icon={<StopOutlined />} loading={busy === 'all'} onClick={disableAll}>
+        <Input size="small" aria-label="Reason for disabling all" placeholder="Reason (optional), e.g. INC-1234"
+          value={allReason} onChange={e => setAllReason(e.target.value)} style={{ width: 240 }} />
+        <Button type="primary" danger icon={<StopOutlined />} loading={busy === 'all'} onClick={() => { void disableAll() }}>
           Disable all runnables
         </Button>
         <Text style={{ fontSize: 13 }}>on <strong>{scope}</strong></Text>
@@ -432,7 +437,7 @@ export function DenylistModal({ open, onClose, hosts, unreachable = [] }: Denyli
           onClick={() => {
             // A rule with every field empty matches everything: the same as
             // Disable all, so it asks the same way.
-            if (!runnableGlobs.length && !userGlobs.length && !hostGlobs.length) { void disableAll(); return }
+            if (!runnableGlobs.length && !userGlobs.length && !hostGlobs.length) { void disableAll(reason); return }
             void run({ action: 'add', runnable: runnableGlobs, user: userGlobs, host: hostGlobs, reason }, 'add')
           }}
         >

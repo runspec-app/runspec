@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { Modal, Tooltip } from 'antd'
 
-import { antTone, EmptyState, IconAction, pressable, SectionSwitch, withLabel, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
+import { antTone, EmptyState, FilterChip, IconAction, pressable, SectionSwitch, withLabel, OnceHint, PageHeader, PageToolbar, RowActions, StatusTag, hintSeen, statusTone, type StatusTone } from './kit'
 import { contrastRatio, readableAccent, surfaces, DEFAULT_ACCENT, ThemeContext } from '../ThemeContext'
 import { CopyOutlined, DeleteOutlined } from '@ant-design/icons'
 
@@ -230,5 +230,18 @@ describe('SectionSwitch', () => {
     expect(screen.getByText('2 waiting').getAttribute('data-tone')).toBe('waiting')
     fireEvent.click(screen.getByText('Working hours'))
     expect(go).toHaveBeenCalledWith('rota')
+  })
+})
+
+describe('FilterChip', () => {
+  it('is a toggle button the keyboard can reach and flip', () => {
+    const onChange = vi.fn()
+    render(<FilterChip checked={false} onChange={onChange}>No page yet</FilterChip>)
+    const chip = screen.getByRole('button', { name: 'No page yet' })
+    expect(chip.getAttribute('tabindex')).toBe('0')
+    expect(chip.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.keyDown(chip, { key: 'Enter' })
+    fireEvent.keyDown(chip, { key: ' ' })
+    expect(onChange.mock.calls).toEqual([[true], [true]])
   })
 })

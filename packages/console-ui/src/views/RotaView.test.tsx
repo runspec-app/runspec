@@ -80,9 +80,26 @@ describe('RotaView Take a break', () => {
     const toggle = await screen.findByRole('switch', { name: /Pause reactive triggers while my screen is locked/ })
     expect((toggle as HTMLElement).getAttribute('aria-checked')).toBe('true')  // default on
     const save = await screen.findByRole('button', { name: /Save working hours/ })
+    // Save is live only once something changed.
+    expect((save as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => { await userEvent.setup().click(screen.getByRole('switch', { name: 'Work on Saturday' })) })
+    expect(screen.getByTestId('rota-unsaved')).toBeTruthy()
     await act(async () => { await userEvent.setup().click(save) })
     await waitFor(() => expect(saveRota).toHaveBeenCalled())
     expect(saveRota.mock.calls[0][0]).toMatchObject({ lock_suspend: true })
+  })
+
+  it('says when a change is unsaved, and Discard reloads what is saved', async () => {
+    render(<RotaView />)
+    const lock = await screen.findByRole('switch', { name: /Pause reactive triggers while my screen is locked/ })
+    expect(screen.queryByTestId('rota-unsaved')).toBeNull()
+    await act(async () => { await userEvent.setup().click(lock) })
+    expect(screen.getByTestId('rota-unsaved')).toBeTruthy()
+    const calls = listTriggers.mock.calls.length
+    await act(async () => { await userEvent.setup().click(screen.getByRole('button', { name: 'Discard' })) })
+    await waitFor(() => expect(listTriggers.mock.calls.length).toBeGreaterThan(calls))
+    await waitFor(() => expect(screen.queryByTestId('rota-unsaved')).toBeNull())
+    expect(saveRota).not.toHaveBeenCalled()
   })
 
   it('shows a live lock indicator from screen_state', async () => {

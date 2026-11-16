@@ -128,6 +128,20 @@ describe('WebhooksSection', () => {
     const row = screen.getByTestId('webhook-host-offer')
     expect(row.textContent).toContain('needs runspec-scheduler 0.11.0')
     expect((within(row).getByRole('button', { name: 'Follow webhooks on old-01' }) as HTMLButtonElement).disabled).toBe(true)
+    // The way out is on the line itself.
+    expect(within(row).getByRole('button', { name: 'Update venv old-01 / ops' })).toBeTruthy()
+  })
+
+  it('gives each venv a row of its own that names its host, with as many cells as headers', () => {
+    render(<WebhooksSection editable venvs={[sv('db-01', 'ops', false), sv('db-01', 'jobs', false)]} status={status([], {})} />)
+    const table = screen.getByRole('table', { name: 'Hosts not followed here' })
+    const headers = within(table).getAllByRole('columnheader')
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows).toHaveLength(2)
+    for (const r of rows) {
+      expect(within(r).getAllByRole('rowheader')[0].textContent).toContain('db-01')
+      expect(within(r).getAllByRole('rowheader').length + within(r).getAllByRole('cell').length).toBe(headers.length)
+    }
   })
 
   it('turns a venv on an unfollowed host on in one save, or opens its settings', async () => {
