@@ -245,3 +245,26 @@ describe('FilterChip', () => {
     expect(onChange.mock.calls).toEqual([[true], [true]])
   })
 })
+
+describe('useKeyboardTableFilters', () => {
+  it("makes antd's filter funnels named, focusable buttons that Enter opens", async () => {
+    const { useKeyboardTableFilters } = await import('./kit')
+    const { useRef } = await import('react')
+    const onClick = vi.fn()
+    function T() {
+      const ref = useRef<HTMLDivElement>(null)
+      useKeyboardTableFilters(ref)
+      return (
+        <div ref={ref}><table><thead><tr><th>
+          <span className="ant-table-column-title">Status</span>
+          <span className="ant-table-filter-trigger" role="button" tabIndex={-1} onClick={onClick} />
+        </th></tr></thead></table></div>
+      )
+    }
+    render(<T />)
+    const trigger = screen.getByRole('button', { name: 'Filter Status' })
+    expect(trigger.tabIndex).toBe(0)
+    fireEvent.keyDown(trigger, { key: 'Enter' })
+    expect(onClick).toHaveBeenCalled()
+  })
+})

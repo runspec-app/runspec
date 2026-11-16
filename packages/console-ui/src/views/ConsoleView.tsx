@@ -530,6 +530,8 @@ export function ConsoleView({ inFlight, pendingChat, onChatSent, waitingTotal, w
   const handleNewChat = async () => {
     await newChat()
     setViewing(null)
+    // A new chat is for typing into: put the cursor there, not on "+ New".
+    window.dispatchEvent(new CustomEvent('runspec:focus_composer', { detail: { slash: false } }))
   }
 
   // Keyboard shortcuts (shortcuts.ts, dispatched from App): Alt+N opens a new

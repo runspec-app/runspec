@@ -2601,7 +2601,12 @@ export const mockApi: BridgeApi = {
           const tool_name = `${h}__system-info`
           dispatch('runspec:tool_start', { id, call_id, tool_name, tool_input: { detail: 'summary' } })
           await delay(30)
-          dispatch('runspec:tool_end', { id, call_id, tool_name, output: JSON.stringify({ host: h, os: 'Ubuntu 24.04.2 LTS', kernel: '6.8.0-51-generic', uptime_days: 40 + hosts.indexOf(h) }) })
+          // Two hosts don't answer, so the fan-out row shows failures.
+          const output = h === 'web-07' || h === 'web-19'
+            ? `[exit 255]
+ssh: connect to host ${h} port 22: Connection timed out`
+            : JSON.stringify({ host: h, os: 'Ubuntu 24.04.2 LTS', kernel: '6.8.0-51-generic', uptime_days: 40 + hosts.indexOf(h) })
+          dispatch('runspec:tool_end', { id, call_id, tool_name, output })
         }
         const rows = hosts.map((h, i) => ({
           host: h, ip_address: `10.20.${Math.floor(i / 8)}.${10 + i}`, os: 'Ubuntu 24.04.2 LTS', kernel: '6.8.0-51-generic',
@@ -2619,7 +2624,7 @@ export const mockApi: BridgeApi = {
           '|---|---|---|---|---|---|---|---|---|---|---|---|',
           ...rows.slice(0, 8).map(r => `| ${r.host} | ${r.ip_address} | ${r.os} | ${r.kernel} | ${r.memory_used_pct}% | ${r.disk_root_used_pct}% | ${r.load_avg_15m} | ${r.uptime_days} days | ${r.nginx_version} | ${r.openssl_version} | ${r.last_patch} | ${r.datacenter} |`),
         ].join('\n')
-        const reply = `\n\nAll 24 web hosts answered. They run the same OS, kernel and nginx build, so the fleet is consistent; the differences are in load and disk. Three hosts are above 80% disk on the root volume and should be cleaned up before the next patch window, and web-05 has the highest 15-minute load average of the group, which is worth a look if it stays that way through the evening peak.\n\nThe busiest hosts:\n\n${table}\n\nWant me to clear old logs on the hosts above 80% disk?`
+        const reply = `\n\n22 of the 24 web hosts answered (web-07 and web-19 timed out on SSH). They run the same OS, kernel and nginx build, so the fleet is consistent; the differences are in load and disk. Three hosts are above 80% disk on the root volume and should be cleaned up before the next patch window, and web-05 has the highest 15-minute load average of the group, which is worth a look if it stays that way through the evening peak.\n\nThe busiest hosts:\n\n${table}\n\nWant me to clear old logs on the hosts above 80% disk?`
         for (let i = 0; i < reply.length; i += 12) {
           dispatch('runspec:token', { id, token: reply.slice(i, i + 12) })
           await delay(5)

@@ -523,11 +523,16 @@ a.ant-typography:not(.ant-typography-disabled),
    on the cells (antd paints each cell's own background over a tinted <tr>),
    layered over the table surface so a pinned (sticky) cell stays opaque. */
 .rs-row-problem > td.ant-table-cell {
-  background: linear-gradient(color-mix(in srgb, var(--rs-warn) 13%, transparent), color-mix(in srgb, var(--rs-warn) 13%, transparent)), var(--rs-table-bg, var(--rs-surface-raised)) !important;
+  --rs-problem-wash: color-mix(in srgb, var(--rs-warn) 8%, transparent);
+  background: linear-gradient(var(--rs-problem-wash), var(--rs-problem-wash)), var(--rs-table-bg, var(--rs-surface-raised)) !important;
 }
 .rs-row-problem:hover > td.ant-table-cell {
-  background: linear-gradient(color-mix(in srgb, var(--rs-warn) 19%, transparent), color-mix(in srgb, var(--rs-warn) 19%, transparent)), var(--rs-table-bg, var(--rs-surface-raised)) !important;
+  --rs-problem-wash: color-mix(in srgb, var(--rs-warn) 11%, transparent);
 }
+/* Light takes a stronger wash before muted text drops under 4.5:1; dark's
+   lighter warn colour reaches that sooner (13% left muted text at 4.45:1). */
+html[data-theme='light'] .rs-row-problem > td.ant-table-cell { --rs-problem-wash: color-mix(in srgb, var(--rs-warn) 13%, transparent); }
+html[data-theme='light'] .rs-row-problem:hover > td.ant-table-cell { --rs-problem-wash: color-mix(in srgb, var(--rs-warn) 19%, transparent); }
 
 /* History: a 24px button around antd's 16px row-expand mark (the mark alone
    was under the 24px target size, and close to the status bar). */
@@ -538,3 +543,16 @@ a.ant-typography:not(.ant-typography-disabled),
   vertical-align: middle;
 }
 .rs-expand-hit > .ant-table-row-expand-icon { pointer-events: none; float: none; margin: 0; }
+
+/* Tables in the assistant's replies (Console cards): the first column (usually the host or
+   the id) stays in place while the rest scrolls sideways. Opaque, over the
+   card surface. */
+[data-testid="output-scroll"] .rs-md-table tr > :first-child {
+  position: sticky; left: 0; z-index: 1;
+  background: var(--rs-surface-raised);
+}
+
+/* Small controls get a 24px hit area without changing how they look: the
+   small switch track is 16px tall, an alert's close mark 12px. */
+.ant-switch::after { content: ''; position: absolute; inset: -4px -2px; }
+.ant-alert .ant-alert-close-icon { padding: 6px; margin: -6px -6px -6px 2px; }

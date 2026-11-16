@@ -9,6 +9,57 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.457.0] — 2026-11-16
+
+### Fixed
+
+- **Pop-up messages show again.** antd's toasts, notifications and static
+  confirms mount with the legacy `ReactDOM.render`, which React 19 removed, so
+  every "Saved", every error toast and every toast-borne Undo has been
+  invisible (antd only logged "antd v5 support React is 16 ~ 18"). The console
+  now gives antd a `createRoot` render at startup (`antdRender.ts`), antd's own
+  React 19 hook; no new dependency.
+- **A failed tool call looks failed.** A runnable that exited non-zero
+  (`[exit N]`) or a call the console couldn't make (`✗ …`) shows a red mark
+  and "exit N" on its row, instead of a green tick. A fan-out row leads with
+  its failures: "2 of 24 failed · 22 ok".
+- **Tables in the assistant's replies keep words whole.** They scroll sideways
+  instead of splitting "web-01" or "10.20.0.10" across lines; short values stay
+  on one line, and the first column stays in place in Console cards.
+- **An expired webhook approval can't be approved.** Past its expiry the card
+  says it expired and offers only Hide.
+- Keyboard and screen readers: History's column filter funnels and the Fact
+  graph's nodes and entity tags can be reached and opened from the keyboard;
+  the Marketplace and fact searches have names; a Forms field with an error
+  is marked invalid and points at its message, and the first one gets focus.
+
+### Changed
+
+- **The prompt box is centred in the window again**, at a readable width,
+  while the Console cards keep filling the window.
+- **Schedules: a schedule that never fires inside working hours is a
+  problem.** With working hours on, a This console schedule whose every fire
+  falls outside them (a 02:00 backup under Mon–Fri 09:00–17:30) reads "outside
+  working hours" and counts as a problem, even after its failed run is
+  acknowledged. You can still save it. The All view's next run also says when
+  it will be skipped.
+- **This console's table leads with status:** Last run and Next run sit right
+  after Action, and the args move under the action (the full set is in the
+  expanded row), so Next run and Acknowledge aren't hidden under the pinned
+  buttons.
+- **Charts say what the filters can't reach.** With a filter on, the duration
+  cards and trend say "all runs, not filtered", and Top exceptions keeps only
+  the runnables and hosts in view. The Started by pie uses hues of its own (it
+  shared them with the operators' pie), and the filter says "Schedule".
+- **Working hours keep an unsaved edit** when you leave the tab and come back.
+- **+ New puts the cursor in the composer.**
+- Marketplace names the venvs it couldn't reach; Settings → SSH's button reads
+  "Save SSH settings"; schedule tables have 24px row expanders; small switches
+  and alert close marks have 24px hit areas; the failed-row wash is lighter in
+  dark so muted text keeps 4.5:1; long cells in run tables are cut at a fifth
+  of the window (at least 48 characters); Charts no longer scroll sideways by
+  8px; a stale Fact graph node keeps a readable label.
+
 ## [0.456.0] — 2026-11-16
 
 ### Added

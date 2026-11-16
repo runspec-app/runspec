@@ -1503,8 +1503,10 @@ export function SshTab({ onKeyChanged, connectedHosts = [], allRemoteHosts = [],
         </div>
       </SettingsColumns>
 
+      {/* Named for what it saves: the connection settings, not Quick connect
+          (which only opens PuTTY) or the key (which saves as you act on it). */}
       <SaveBar hint={<>Saved to <code>{configDir || '%APPDATA%/runspec-console'}</code></>}>
-        <Button type="primary" loading={saving} onClick={handleSave}>Save</Button>
+        <Button type="primary" loading={saving} onClick={handleSave}>Save SSH settings</Button>
         {saved && <Text type="success" style={{ fontSize: 13 }}>Saved</Text>}
       </SaveBar>
 

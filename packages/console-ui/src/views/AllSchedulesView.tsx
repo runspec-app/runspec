@@ -20,7 +20,8 @@ import {
 } from '@ant-design/icons'
 import { When, fmtWhen, fullWhen } from '../when'
 import type { ColumnType } from 'antd/es/table'
-import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, type SharedSchedule } from '../bridge'
+import { rotaAllows } from '../rota'
+import { bridge, type Rota, type HostScheduleResult, type HostScheduleSave, type Runnable, type SharedSchedule } from '../bridge'
 import { HostScheduleModal, timeoutText, type HostScheduleEditing } from './HostScheduleModal'
 import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary } from '../ThemeContext'
 import {
@@ -31,7 +32,7 @@ import { WebhooksSummary } from './WebhooksSection'
 import { EMPTY_WEBHOOKS } from '../webhooks'
 import type { WebhooksStatus } from '../bridge'
 import { RUN_TONE, ScheduleDetail, relTime } from './sharedSchedules'
-import { EmptyState, IconAction, StatusTag, type StatusTone } from '../components/kit'
+import { EmptyState, IconAction, StatusTag, type StatusTone, expandHit } from '../components/kit'
 import { describeCron } from '../cronText'
 import { AskFirst, targetList, useRiskConfirm } from '../components/risk'
 import { schedulerBlocked } from '../denylistPending'
@@ -107,7 +108,7 @@ const SOURCE_LABEL: Record<RowSource, string> = {
 const ALL_STATES: RowState[] = [
   'ok', 'running', 'last run failed', 'not installed', 'not installable', 'stale line',
   'scheduler stopped', 'scheduler stale', "can't read", 'disabled', 'unknown', 'legacy line',
-  'being handled', 'dealt with', 'acknowledged',
+  'being handled', 'dealt with', 'acknowledged', 'outside working hours',
 ]
 
 const NOTE_WORDS: Record<NoteVerb, { button: string; title: string; done: string; placeholder: string }> = {
@@ -362,6 +363,8 @@ interface AllSchedulesViewProps {
   onOpenWebhooks?: () => void
   /** Acknowledge a console schedule's failed run (its card id), or undo with null. */
   onAck?: (scheduleId: string, cardId: string | null) => void
+  /** Working hours, which skip this console's own fires outside them. */
+  rota?: Rota | null
 }
 
 /** A schedule's last run: its result and when, and for this console's own
@@ -459,7 +462,7 @@ function report(what: string, res: HostScheduleResult) {
   for (const w of res.warnings ?? []) message.warning(w, 8)
 }
 
-export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory, runnables, webhooks = EMPTY_WEBHOOKS, onOpenWebhooks, onAck }: AllSchedulesViewProps) {
+export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt, hostCount, activeProfile, onRefresh, onOpenHistory, runnables, webhooks = EMPTY_WEBHOOKS, onOpenWebhooks, onAck, rota }: AllSchedulesViewProps) {
   const isDark = useIsDark()
   const { token } = theme.useToken()
   const [filters, setFiltersState] = useState<RowFilters>(readFilters)
@@ -692,7 +695,11 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <WhenCell when={r.when} />
           {r.nextRun && (
-            <span style={{ fontSize: 12, color: secondary }}>next <When t={r.nextRun} /></span>
+            <span style={{ fontSize: 12, color: secondary }}>
+              next <When t={r.nextRun} />
+              {/* Working hours gate this console's own schedules, as on This console. */}
+              {r.source === 'console' && rota && rotaAllows(rota, new Date(r.nextRun)) === false && <>, <strong>skipped</strong> (outside working hours)</>}
+            </span>
           )}
         </div>
       ),
@@ -1016,7 +1023,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           scroll={{ x: 'max-content' }}
           rowClassName={r => [r.enabled ? '' : 'rs-schedule-disabled', r.problem ? 'rs-row-problem' : ''].join(' ').trim()}
           locale={{ emptyText: <EmptyState message={emptyText} /> }}
-          expandable={{ expandedRowRender: expanded, rowExpandable: r => r.kind !== 'schedule' || !!r.shared || !!r.argsText }}
+          expandable={{ expandIcon: expandHit<ScheduleRow>(r => r.name || r.id || r.runnable), expandedRowRender: expanded, rowExpandable: r => r.kind !== 'schedule' || !!r.shared || !!r.argsText }}
           rowSelection={editable && rows.some(noteable) ? {
             selectedRowKeys: selected,
             onChange: keys => setSelected(keys.map(String)),

@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { RotaView } from './RotaView'
+import { RotaView, _resetRotaDraft } from './RotaView'
 
 const { listTriggers, startBreak, cancelBreak, saveRota, screenState } = vi.hoisted(() => ({
   listTriggers: vi.fn(),
@@ -43,6 +43,7 @@ vi.mock('../ThemeContext', async (importOriginal) => ({
 const ENABLED_ROTA = { enabled: true, source: 'console', mon: { on: true, start: '09:00', end: '17:00' } }
 
 beforeEach(() => {
+  _resetRotaDraft()
   listTriggers.mockReset().mockResolvedValue({ triggers: [], errors: [], sources: [], rota: ENABLED_ROTA, running: true, break_until: null, screen_state: 'unlocked' })
   startBreak.mockReset().mockResolvedValue({ break_until: '2026-06-21T15:30:00', reminder_set: true })
   cancelBreak.mockReset().mockResolvedValue({ ok: true })
@@ -115,5 +116,16 @@ describe('RotaView Take a break', () => {
     const end = await screen.findByRole('button', { name: /End break now/ })
     await act(async () => { await userEvent.setup().click(end) })
     await waitFor(() => expect(cancelBreak).toHaveBeenCalled())
+  })
+
+  it('keeps an unsaved change when the tab is closed and opened again', async () => {
+    const { unmount } = render(<RotaView />)
+    const lock = await screen.findByRole('switch', { name: /Pause reactive triggers while my screen is locked/ })
+    await act(async () => { await userEvent.setup().click(lock) })
+    unmount()
+    render(<RotaView />)
+    expect(await screen.findByTestId('rota-unsaved')).toBeTruthy()
+    expect(screen.getByRole('switch', { name: /Pause reactive triggers while my screen is locked/ }).getAttribute('aria-checked')).toBe('false')
+    _resetRotaDraft()
   })
 })

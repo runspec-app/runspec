@@ -7,7 +7,8 @@
  *
  * Older schedulers (< 0.5.0) report no `backend` and no `daemon`: they are cron.
  */
-import type { PackageSchedulePolicy, RunCard, RunNote, Schedule, ScheduleAttention, SchedulerSettings, SharedSchedule, SharedSchedulesPackages, SharedSchedulesVenv } from '../bridge'
+import { cronEverInRota, rotaSummary } from '../rota'
+import type { Rota, PackageSchedulePolicy, RunCard, RunNote, Schedule, ScheduleAttention, SchedulerSettings, SharedSchedule, SharedSchedulesPackages, SharedSchedulesVenv } from '../bridge'
 import type { StatusTone } from '../components/kit'
 import { hostPasses, parseSearch } from '../searchTokens'
 
@@ -20,7 +21,7 @@ export type RowKind = 'schedule' | 'stale' | 'unreadable'
 export type RowState =
   | 'ok' | 'disabled' | 'last run failed' | 'running' | 'not installed' | 'not installable'
   | 'stale line' | 'scheduler stopped' | 'scheduler stale' | "can't read" | 'unknown' | 'legacy line'
-  | 'being handled' | 'dealt with' | 'offered' | 'needs daemon' | 'acknowledged'
+  | 'being handled' | 'dealt with' | 'offered' | 'needs daemon' | 'acknowledged' | 'outside working hours'
 
 export interface RowLastRun {
   ts: string
@@ -137,6 +138,7 @@ export const STATE_TONE: Record<RowState, StatusTone> = {
   'offered': 'info',
   'needs daemon': 'attention',
   'acknowledged': 'neutral',
+  'outside working hours': 'attention',
 }
 
 /** A claim with no newer note for this long shows as stale: the failure counts
@@ -297,6 +299,8 @@ export function collectRows(
     hostGroups?: Record<string, string>
     /** Console schedule id → the failed run (card id) its operator acknowledged. */
     acks?: Record<string, string>
+    /** Working hours: a console schedule that can never fire inside them is a problem. */
+    rota?: Rota | null
   } = {},
 ): Collected {
   const groups = opts.hostGroups ?? {}
@@ -313,7 +317,11 @@ export function collectRows(
     const failed = enabled && !!lastRun && FAILED.has(lastRun.status)
     // Acknowledged covers this one failed run: the next failure counts again.
     const acked = failed && !!lastRun?.cardId && opts.acks?.[s.id] === lastRun.cardId
-    const state: RowState = !enabled ? 'disabled' : acked ? 'acknowledged' : failed ? 'last run failed' : lastRun?.status === 'running' ? 'running' : 'ok'
+    // Working hours skip every fire outside them: a schedule whose every fire
+    // falls outside never runs at all while they're on.
+    // (Acknowledging a failed run doesn't clear this: it still won't run.)
+    const never = enabled && !!s.when.cron && cronEverInRota(opts.rota, s.when.cron) === false
+    const state: RowState = !enabled ? 'disabled' : acked ? 'acknowledged' : failed ? 'last run failed' : never ? 'outside working hours' : lastRun?.status === 'running' ? 'running' : 'ok'
     const detail = s.action === 'event' ? s.fields : s.action === 'runnable' ? s.args : s.values
     rows.push({
       key: `console::${s.id}`,
@@ -331,10 +339,11 @@ export function collectRows(
       lastRun,
       state,
       stateTip: !enabled ? 'Disabled — won’t fire.'
-        : acked ? 'You acknowledged this failed run, so it no longer counts as a problem. If the next run fails too, it counts again.'
+        : acked ? `You acknowledged this failed run, so it no longer counts as a problem. If the next run fails too, it counts again.${never ? ' It still never runs inside your working hours.' : ''}`
         : failed ? 'The last run from this console failed. Its output is in Schedule runs below; acknowledge it once you have seen it.'
+        : never ? `Every time it fires is outside your working hours (${rotaSummary(opts.rota!)}), so it never runs while they're on. Change its time, or the hours in Automation › Working hours.`
         : 'Fires from this console while it is open.',
-      problem: failed && !acked,
+      problem: (failed && !acked) || never,
       enabled,
       owner: '',
       runAs: '',

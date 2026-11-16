@@ -73,18 +73,35 @@ function components(color: string): Components {
         }}>{children}</code>
       )
     },
+    // A table scrolls sideways rather than squeezing: the prose's
+    // break-word let it split "web-01" and "10.20.0.10" mid-word. Short values
+    // (hosts, IPs, versions) stay on one line; only real sentences wrap, at
+    // spaces. The first column stays put while the rest scrolls (index.css).
     table: ({ children }) => (
-      <div style={{ overflowX: 'auto', margin: '0 0 6px' }}>
-        <table style={{ borderCollapse: 'collapse', fontSize: '0.95em' }}>{children}</table>
+      <div className="rs-md-table" style={{ overflowX: 'auto', margin: '0 0 6px' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: '0.95em', wordBreak: 'normal', overflowWrap: 'normal' }}>{children}</table>
       </div>
     ),
     th: ({ children }) => (
-      <th style={{ border: `1px solid ${border}`, padding: '3px 8px', textAlign: 'left', color }}>{children}</th>
+      <th style={{ border: `1px solid ${border}`, padding: '3px 8px', textAlign: 'left', color, whiteSpace: 'nowrap' }}>{children}</th>
     ),
     td: ({ children }) => (
-      <td style={{ border: `1px solid ${border}`, padding: '3px 8px', color }}>{children}</td>
+      <td style={{ border: `1px solid ${border}`, padding: '3px 8px', color, whiteSpace: keepOnOneLine(children) ? 'nowrap' : undefined, minWidth: keepOnOneLine(children) ? undefined : '20ch' }}>{children}</td>
     ),
   }
+}
+
+/** A cell's text: short or a single token (a host, an IP, a version) keeps
+ *  to one line. */
+function cellText(node: unknown): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(cellText).join('')
+  if (node && typeof node === 'object' && 'props' in node) return cellText((node as { props: { children?: unknown } }).props.children)
+  return ''
+}
+export function keepOnOneLine(children: unknown): boolean {
+  const t = cellText(children).trim()
+  return t.length <= 32 || !/\s/.test(t)
 }
 
 export function Markdown({ children, color = '#d4d4d4', fontSize = 13 }: MarkdownProps) {

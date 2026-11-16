@@ -42,6 +42,7 @@ import {
   initialFormValues,
   offerDebugSwitch,
   withDebugFlag,
+  focusFirstInvalid,
   partitionArgs,
   type ArgBinding,
   type ArgInputProps,
@@ -129,7 +130,7 @@ function ArgRow({ arg, host, runnable, runAs, group, value, error, onChange, bin
   return (
     <ArgField header={<ArgFieldHeader arg={arg} extra={bindingTag} />} description={arg.description}>
       <ArgInput arg={arg} host={host} runnable={runnable} runAs={runAs} group={group} value={value} error={error} onChange={onChange} binding={binding} />
-      <ArgError text={error} />
+      <ArgError text={error} name={arg.name} />
     </ArgField>
   )
 }
@@ -460,7 +461,7 @@ function RunModal({ state, hosts = [], onClose, onSubmit }: RunModalProps) {
       }
     }
     if (multiHost && targetHosts.length === 0) { message.warning('Pick at least one host to run on.'); return }
-    if (Object.keys(errs).length > 0) { setErrors(errs); return }
+    if (Object.keys(errs).length > 0) { setErrors(errs); focusFirstInvalid(); return }
     const cmd = `/${[rootRunnable.name, ...commandPath].join(' ')}`
     const args = withDebugFlag(values, debug, declaredArgNames)
     const creds = credentialIds.length ? credentialIds : undefined

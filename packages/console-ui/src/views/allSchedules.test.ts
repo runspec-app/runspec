@@ -333,3 +333,22 @@ describe('package schedules (runspec-scheduler 0.10.0)', () => {
     expect(venvSettingsChanges(old, { timezone: 'Asia/Tokyo' })).toBeNull()
   })
 })
+
+describe('console schedules and working hours', () => {
+  const ROTA = {
+    enabled: true, source: 'console',
+    mon: { on: true, start: '09:00', end: '17:30' }, tue: { on: true, start: '09:00', end: '17:30' },
+    wed: { on: true, start: '09:00', end: '17:30' }, thu: { on: true, start: '09:00', end: '17:30' },
+    fri: { on: true, start: '09:00', end: '17:30' }, sat: { on: false }, sun: { on: false },
+  }
+  it('marks a schedule that only ever fires outside working hours as a problem', () => {
+    const rows = collectRows([consoleSched({ when: { cron: '0 2 * * *' } })], [], { rota: ROTA }).rows
+    expect(rows[0]).toMatchObject({ state: 'outside working hours', problem: true })
+    expect(rows[0].stateTip).toMatch(/never runs/)
+  })
+  it('leaves one that fires inside them, a paused one, and one with the hours off alone', () => {
+    expect(collectRows([consoleSched({ when: { cron: '0 * * * *' } })], [], { rota: ROTA }).rows[0]).toMatchObject({ state: 'ok', problem: false })
+    expect(collectRows([consoleSched({ when: { cron: '0 2 * * *' }, enabled: false })], [], { rota: ROTA }).rows[0].state).toBe('disabled')
+    expect(collectRows([consoleSched({ when: { cron: '0 2 * * *' } })], [], { rota: { ...ROTA, enabled: false } }).rows[0].state).toBe('ok')
+  })
+})

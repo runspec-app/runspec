@@ -472,7 +472,8 @@ function JsonCell({ keyName, value }: { keyName: string; value: unknown }) {
     // column can't push the rest of the row off screen; the whole value is in
     // its tooltip and in Copy.
     if (t.length <= LONG_CELL_CHARS) return <>{t}</>
-    return <span title={t} style={{ display: 'inline-block', maxWidth: `${LONG_CELL_CHARS}ch`, overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'bottom' }}>{t}</span>
+    // At least 48 characters; on a wide window, a fifth of it.
+    return <span title={t} style={{ display: 'inline-block', maxWidth: `max(${LONG_CELL_CHARS}ch, 20vw)`, overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'bottom' }}>{t}</span>
   }
   return <JsonCellDisclosure value={value} />
 }
@@ -914,6 +915,17 @@ export function toolDisplay(entry: ToolCallEntry): { name: string; args: [string
   return { name: entry.name.replace(/^[^_]+__/, ''), args: Object.entries(input) }
 }
 
+/** Why a finished call failed, as its row says it: "exit 2" for a runnable
+ *  that exited non-zero (the backend prefixes its result `[exit N]`), "failed"
+ *  for a call the console couldn't make (`✗ …`); null when it succeeded, is
+ *  still running, or was denied (that has its own mark). */
+export function toolFailure(entry: ToolCallEntry): string | null {
+  if (entry.running || entry.operatorDecision === 'denied' || !entry.output) return null
+  const m = /^\[exit (-?\d+)\]/.exec(entry.output)
+  if (m) return `exit ${m[1]}`
+  return entry.output.startsWith('✗') ? 'failed' : null
+}
+
 /** The `<prefix>` of a prefixed tool name (`web-01__system-info` → `web-01`):
  *  the host in per_host mode, the venv/group in dedup mode; '' otherwise. */
 export function toolPrefix(name: string): string {
@@ -977,17 +989,21 @@ export function groupToolRuns(segments: BlockSegment[], pending?: PendingConfirm
 
 /** A folded run's one-line summary: how many calls, where, how they went. */
 export function toolGroupSummary(entries: ToolCallEntry[]): {
-  where: string; status: string; tone: 'running' | 'ok' | 'denied'; duration: string
+  where: string; status: string; tone: 'running' | 'ok' | 'denied' | 'failed'; duration: string
 } {
   const hosts = new Set(entries.map(toolRowHost).filter(Boolean))
   const n = entries.length
   const where = hosts.size === n ? `on ${n} hosts` : `× ${n}`
   const running = entries.filter(e => e.running).length
   const denied = entries.filter(e => !e.running && e.operatorDecision === 'denied').length
+  const failed = entries.filter(e => toolFailure(e) !== null).length
   const cut = entries.filter(e => !e.running && e.truncated).length
   const parts: string[] = []
+  // Failures lead: on a fan-out, the hosts that went wrong are the news.
+  if (failed) parts.push(`${failed} of ${n} failed`)
   if (running) parts.push(`${n - running} of ${n} done`)
   else if (denied === n) parts.push('all denied')
+  else if (failed) parts.push(`${n - failed - denied} ok`)
   else parts.push(denied ? `${n - denied} done` : 'all done')
   if (!running && denied && denied < n) parts.push(`${denied} denied`)
   if (cut) parts.push(`${cut} output cut`)
@@ -995,7 +1011,7 @@ export function toolGroupSummary(entries: ToolCallEntry[]): {
   const lo = ms.length ? Math.min(...ms) : 0
   const hi = ms.length ? Math.max(...ms) : 0
   const duration = !ms.length ? '' : lo === hi ? fmtDurationMs(lo) : `${fmtDurationMs(lo)}–${fmtDurationMs(hi)}`
-  return { where, status: parts.join(' · '), tone: running ? 'running' : denied === n ? 'denied' : 'ok', duration }
+  return { where, status: parts.join(' · '), tone: failed ? 'failed' : running ? 'running' : denied === n ? 'denied' : 'ok', duration }
 }
 
 /**
@@ -1562,6 +1578,7 @@ function ToolCallBlock({
   // The row's label: search-mode wrappers show the runnable / tool they ran.
   const display = toolDisplay(entry)
   const denied = entry.operatorDecision === 'denied'
+  const failure = toolFailure(entry)
   const rowHost = confirmHost(resolved?.input) || toolRowHost(entry)
   // Edit-and-rerun target when this call is a runnable invocation (search /
   // per_host / dedup); null for built-ins / MCP tools (no affordance).
@@ -1662,7 +1679,9 @@ function ToolCallBlock({
             ? <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 13 }} />
             : denied
               ? <StopOutlined aria-label="denied, did not run" style={{ color: 'var(--rs-text-muted)', fontSize: 13 }} />
-              : <CheckCircleOutlined aria-label="done" style={{ color: 'var(--rs-ok)', fontSize: 13 }} />}
+              : failure
+                ? <CloseCircleOutlined aria-label={`failed (${failure})`} style={{ color: 'var(--rs-danger)', fontSize: 13 }} />
+                : <CheckCircleOutlined aria-label="done" style={{ color: 'var(--rs-ok)', fontSize: 13 }} />}
         {display.via ? (
           <Tooltip title={`Run via ${display.via}`}>
             <Text code style={{ fontSize: 13, flexShrink: 0 }}>{display.name}</Text>
@@ -1685,6 +1704,9 @@ function ToolCallBlock({
               {entry.operatorDecision === 'denied' ? 'denied by you' : entry.operatorDecision === 'edited' ? 'edited and approved by you' : 'approved by you'}
             </Text>
           </Tooltip>
+        )}
+        {failure && (
+          <Text data-testid="tool-failure" style={{ fontSize: 12, color: 'var(--rs-danger)', fontWeight: 600, flexShrink: 0 }}>{failure}</Text>
         )}
         {/* Where it ran, when the call names a host. */}
         {!awaiting && rowHost && (
@@ -2011,7 +2033,9 @@ function ToolGroupRow({ entries, requester }: { entries: ToolCallEntry[]; reques
       <div className="rs-tool-row" style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', cursor: 'pointer', userSelect: 'none',
       }} {...pressable(() => setOpen(x => !x), { expanded: open, label })}>
-        {sum.tone === 'running'
+        {sum.tone === 'failed'
+          ? <CloseCircleOutlined aria-hidden style={{ color: 'var(--rs-danger)', fontSize: 13 }} />
+          : sum.tone === 'running'
           ? <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 13 }} />
           : sum.tone === 'denied'
             ? <StopOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13 }} />
@@ -2021,7 +2045,7 @@ function ToolGroupRow({ entries, requester }: { entries: ToolCallEntry[]; reques
         {argText && (
           <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 12 }}>{argText}</Text>
         )}
-        <Text data-testid="tool-group-status" style={{ fontSize: 12, color: c.dim, flexShrink: 0, marginLeft: argText ? 0 : 'auto' }}>{sum.status}</Text>
+        <Text data-testid="tool-group-status" style={{ fontSize: 12, color: sum.tone === 'failed' ? 'var(--rs-danger)' : c.dim, fontWeight: sum.tone === 'failed' ? 600 : undefined, flexShrink: 0, marginLeft: argText ? 0 : 'auto' }}>{sum.status}</Text>
         {sum.duration && (
           <Tooltip title="Fastest and slowest call">
             <Text style={{ color: c.dim, fontSize: 12, flexShrink: 0, fontFamily: MONO_FONT }}>{sum.duration}</Text>

@@ -128,6 +128,19 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
   const topRuns = useMemo(() => topRunnables(filteredBuckets), [filteredBuckets])
   const operators = useMemo(() => operatorBreakdown(filteredBuckets), [filteredBuckets])
   const initiated = useMemo(() => initiatedBreakdown(filteredBuckets), [filteredBuckets])
+  // Exceptions carry a runnable and host but not who started the run: with
+  // filters on, keep the ones from runnables and hosts still in view.
+  const exceptions = useMemo(() => {
+    if (!data) return []
+    if (!clientFiltersActive) return data.exceptions
+    const seen = new Set(filteredBuckets.map(b => `${b.runnable}|${b.host}`))
+    return data.exceptions.filter(e => seen.has(`${e.runnable}|${e.host}`))
+  }, [data, filteredBuckets, clientFiltersActive])
+  // Durations are percentiles over every run in range; the filters can't
+  // narrow them, so with filters on those cards say so where they're read.
+  const allRunsNote = clientFiltersActive
+    ? <Text type="secondary" data-testid="charts-unfiltered" style={{ fontSize: 12, fontWeight: 400 }}>all runs, not filtered</Text>
+    : null
 
   if (loading && !data) {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Spin size="large" /></div>
@@ -160,7 +173,9 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
   ]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    // The card rows' 16px gutters hang 8px past each side; clip them so the
+    // view doesn't scroll sideways by 8px.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, overflowX: 'clip' }}>
       {/* Filter bar */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
         <Tooltip title="Charts read the history cache, which keeps the last 30 days. For older runs, use History → Runs (90d or All).">
@@ -212,7 +227,7 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
             assistant, or a schedule (this console's or a host's). */}
         <Segmented
           aria-label="Started by"
-          options={[{ label: 'All', value: 'all' }, { label: 'User', value: 'user' }, { label: 'Agent', value: 'llm' }, { label: 'Schedules', value: 'schedule' }]}
+          options={[{ label: 'All', value: 'all' }, { label: 'User', value: 'user' }, { label: 'Agent', value: 'llm' }, { label: 'Schedule', value: 'schedule' }]}
           value={initiatedBy}
           onChange={(v) => setInitiatedBy(v as InitiatedFilter)}
         />
@@ -247,14 +262,10 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
           value={kpis.rate} formatter={v => `${Number(v).toFixed(1)}%`}
           valueStyle={{ color: kpis.rate >= 95 ? SUCCESS : kpis.rate >= 80 ? WARNING : FAILURE }} /></Card></Col>
         <Col xs={12} sm={6}>
-          <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/agent filters' : ''}>
-            <Card size="small" style={cardStyle}><Statistic title="Duration p50" value={(data.durationMs.p50 / 1000).toFixed(2)} suffix="s" /></Card>
-          </Tooltip>
+          <Card size="small" style={cardStyle}><Statistic title={<>Duration p50{allRunsNote && <> · {allRunsNote}</>}</>} value={(data.durationMs.p50 / 1000).toFixed(2)} suffix="s" /></Card>
         </Col>
         <Col xs={12} sm={6}>
-          <Tooltip title={clientFiltersActive ? 'Duration reflects the host/runnable/date scope, not the group/operator/agent filters' : ''}>
-            <Card size="small" style={cardStyle}><Statistic title="Duration p95" value={(data.durationMs.p95 / 1000).toFixed(2)} suffix="s" /></Card>
-          </Tooltip>
+          <Card size="small" style={cardStyle}><Statistic title={<>Duration p95{allRunsNote && <> · {allRunsNote}</>}</>} value={(data.durationMs.p95 / 1000).toFixed(2)} suffix="s" /></Card>
         </Col>
       </Row>
 
@@ -306,7 +317,7 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
           </Card>
         </Col>
         <Col xs={24} lg={12}>
-          <Card size="small" title="Duration p50 / p95 (ms)" style={cardStyle}>
+          <Card size="small" title="Duration p50 / p95 (ms)" extra={allRunsNote} style={cardStyle}>
             {kpis.total === 0 ? <EmptyState message="No runs in this range." /> : (
               <div role="img" aria-label={'Duration p50 and p95 over time, in milliseconds'}>
                 <Line
@@ -344,7 +355,9 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
                 <Pie
                   data={initiated} angleField="value" colorField="type"
                   height={chartHeight} theme={plotTheme} innerRadius={0.5}
-                  scale={{ color: { domain: ['user', 'agent', 'schedule'], range: [PALETTE[0], PALETTE[1], PALETTE[2]] } }}
+                  // Hues from the far end of the palette, so they don't
+                  // match the operators' pie beside it (blue there is a person).
+                  scale={{ color: { domain: ['user', 'agent', 'schedule'], range: [PALETTE[7], PALETTE[6], PALETTE[5]] } }}
                   legend={{ color: { position: 'right' } }} label={{ text: 'value', position: 'inside' }}
                 />
               </div>
@@ -354,9 +367,9 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
       </Row>
 
       {/* Row 4: exceptions */}
-      <Card size="small" title="Top exceptions" style={cardStyle}>
+      <Card size="small" title="Top exceptions" extra={clientFiltersActive ? <Text type="secondary" style={{ fontSize: 12 }}>from the runnables and hosts in view</Text> : null} style={cardStyle}>
         <Table
-          dataSource={data.exceptions}
+          dataSource={exceptions}
           columns={exceptionColumns}
           rowKey={(r) => `${r.exception}|${r.runnable}|${r.host}`}
           size="small"

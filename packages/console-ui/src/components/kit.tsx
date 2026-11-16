@@ -9,7 +9,7 @@
 //   EmptyState   one line saying why it's empty, plus at most one action
 
 import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, SyntheticEvent } from 'react'
-import { cloneElement, isValidElement, useState } from 'react'
+import { cloneElement, isValidElement, useEffect, useState, type RefObject } from 'react'
 import { Button, Dropdown, Modal, Segmented, Tag, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import { useRiskConfirm } from './risk'
@@ -140,6 +140,55 @@ export function FilterChip({ checked, onChange, children, style, label }: {
       {children}
     </Tag.CheckableTag>
   )
+}
+
+// ── table row expander ───────────────────────────────────────────────────────
+
+/** A table's row expander as a 24px button around antd's 16px +/− mark, named
+ *  for the row it opens. Pass as `expandable.expandIcon`. */
+export function expandHit<T>(name: (record: T) => string) {
+  return function ExpandHit({ expanded, onExpand, record, expandable }: {
+    expanded: boolean; onExpand: (record: T, e: MouseEvent<HTMLElement>) => void; record: T; expandable: boolean
+  }) {
+    if (!expandable) return null
+    return (
+      <button type="button" className="rs-expand-hit" aria-expanded={expanded}
+        aria-label={`${expanded ? 'Hide' : 'Show'} details: ${name(record)}`}
+        onClick={e => onExpand(record, e)}>
+        <span aria-hidden className={`ant-table-row-expand-icon ${expanded ? 'ant-table-row-expand-icon-expanded' : 'ant-table-row-expand-icon-collapsed'}`} />
+      </button>
+    )
+  }
+}
+
+// ── keyboard table filters ───────────────────────────────────────────────────
+
+/** antd draws a column's filter funnel as an unnamed span with tabindex -1, so
+ *  the keyboard can't reach it. Inside `ref`, make each one a named, focusable
+ *  button ("Filter Status") that Enter or Space opens. Re-applied as the table
+ *  re-renders. */
+export function useKeyboardTableFilters(ref: RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    const root = ref.current
+    if (!root) return
+    const fix = () => {
+      for (const el of root.querySelectorAll<HTMLElement>('.ant-table-filter-trigger')) {
+        if (el.dataset.rsKeyboard) continue
+        el.dataset.rsKeyboard = '1'
+        el.tabIndex = 0
+        const th = el.closest('th')
+        const title = th?.querySelector('.ant-table-column-title')?.textContent?.trim() || th?.textContent?.trim() || 'column'
+        if (!el.getAttribute('aria-label')) el.setAttribute('aria-label', `Filter ${title}`)
+        el.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); el.click() }
+        })
+      }
+    }
+    fix()
+    const mo = new MutationObserver(fix)
+    mo.observe(root, { childList: true, subtree: true })
+    return () => mo.disconnect()
+  }, [ref])
 }
 
 // ── pressable ────────────────────────────────────────────────────────────────

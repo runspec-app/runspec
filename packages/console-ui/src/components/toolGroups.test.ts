@@ -64,3 +64,21 @@ describe('toolGroupSummary()', () => {
     expect(toolGroupSummary(e)).toMatchObject({ where: '× 3', status: '2 done · 1 denied', tone: 'ok' })
   })
 })
+
+describe('toolFailure() and failures in a group', () => {
+  it('reads a non-zero exit or a call the console could not make', async () => {
+    const { toolFailure } = await import('./OutputPanel')
+    const done = (output: string, extra: Partial<ToolCallEntry> = {}) => ({ name: 'x', input: {}, running: false, output, ...extra })
+    expect(toolFailure(done('[exit 255]\nssh: timed out'))).toBe('exit 255')
+    expect(toolFailure(done("✗ No host in group 'web' has 'x'."))).toBe('failed')
+    expect(toolFailure(done('{"ok": true}'))).toBeNull()
+    expect(toolFailure(done('[exit 1]', { operatorDecision: 'denied' }))).toBeNull()
+    expect(toolFailure(done('[exit 1]', { running: true }))).toBeNull()
+  })
+  it('leads a fan-out summary with its failures', () => {
+    const e = fanout(24).map(s => (s as { entry: ToolCallEntry }).entry)
+    e[6].output = '[exit 255]\nssh: timed out'
+    e[18].output = '[exit 255]\nssh: timed out'
+    expect(toolGroupSummary(e)).toMatchObject({ status: '2 of 24 failed · 22 ok', tone: 'failed' })
+  })
+})

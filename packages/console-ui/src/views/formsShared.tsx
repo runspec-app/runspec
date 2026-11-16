@@ -381,6 +381,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         placeholder={multi ? 'Select one or more…' : 'Select…'}
         style={{ width: '100%', fontFamily: MONO_FONT, fontSize: 13 }}
         status={error ? 'error' : undefined}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? argErrorId(arg.name) : undefined}
         options={arg.options.map(o => ({ label: o, value: o }))}
       />
     )
@@ -402,6 +403,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         autoComplete="new-password"
         style={inputStyle}
         status={error ? 'error' : undefined}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? argErrorId(arg.name) : undefined}
       />
     )
   }
@@ -434,6 +436,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
             max={max}
             style={{ width: 80, ...inputStyle }}
             status={error ? 'error' : undefined}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? argErrorId(arg.name) : undefined}
           />
         </div>
       )
@@ -450,6 +453,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         max={arg.range?.[1]}
         style={{ width: '100%', ...inputStyle }}
         status={error ? 'error' : undefined}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? argErrorId(arg.name) : undefined}
       />
     )
   }
@@ -493,6 +497,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         placeholder={placeholder ?? (withTime ? 'Select date & time…' : 'Select date…')}
         style={{ width: '100%', ...inputStyle }}
         status={error ? 'error' : undefined}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? argErrorId(arg.name) : undefined}
       />
     )
   }
@@ -511,6 +516,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         placeholder={placeholder ?? 'Select month…'}
         style={{ width: '100%', ...inputStyle }}
         status={error ? 'error' : undefined}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? argErrorId(arg.name) : undefined}
       />
     )
   }
@@ -531,6 +537,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
         placeholder={placeholder ?? 'Select time…'}
         style={{ width: '100%', ...inputStyle }}
         status={error ? 'error' : undefined}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? argErrorId(arg.name) : undefined}
       />
     )
   }
@@ -563,6 +570,7 @@ export function ArgInput({ arg, host, runnable, runAs, group, value, error, onCh
       placeholder={placeholder}
       style={inputStyle}
       status={error ? 'error' : undefined}
+        aria-invalid={error ? true : undefined} aria-describedby={error ? argErrorId(arg.name) : undefined}
     />
   )
 }
@@ -688,9 +696,17 @@ export function ArgField({ header, description, children }: {
 }
 
 // A field's validation message, under the control.
-export function ArgError({ text }: { text?: string }) {
+/** The id of an arg's error line, which its control points at (aria-describedby). */
+export const argErrorId = (name: string) => `arg-error-${name.replace(/[^A-Za-z0-9_-]/g, '_')}`
+
+export function ArgError({ text, name }: { text?: string; name?: string }) {
   if (!text) return null
-  return <Typography.Text type="danger" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{text}</Typography.Text>
+  return <Typography.Text id={name ? argErrorId(name) : undefined} type="danger" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>{text}</Typography.Text>
+}
+
+/** After a submit with errors: put the cursor on the first field that has one. */
+export function focusFirstInvalid(root: ParentNode = document): void {
+  setTimeout(() => root.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), 0)
 }
 
 

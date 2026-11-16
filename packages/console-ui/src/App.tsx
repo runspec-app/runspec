@@ -2107,13 +2107,13 @@ export default function App() {
             </div>
 
             {/* Command bar — the composer floats on the content background; the
-                selected host's venv scope is a menu in its toolbar. It sits on
-                the transcript's left edge, the same width as a tool row, so on a
-                wide window the prompt and the replies share one axis. */}
+                selected host's venv scope is a menu in its toolbar. It stays
+                centred in the window at a readable width however wide the window
+                gets (the operator's choice), while the cards above fill it. */}
             <div data-testid="command-bar" style={{
               padding: '4px 24px 14px',
               background: contentBg, flexShrink: 0,
-              width: '100%', maxWidth: 1000, margin: 0, boxSizing: 'border-box',
+              width: '100%', maxWidth: 1000, margin: '0 auto', boxSizing: 'border-box',
             }}>
               {!discovery.ready && discovery.total > 0 && (
                 <div style={{
