@@ -10,7 +10,7 @@
  *
  * Rows, states, counts and filtering live in allSchedules.ts (pure, tested).
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { readHostsLabel } from '../hostCount'
 import { Table, Tag, Typography, Button, Tooltip, Alert, Dropdown, Empty, Input, Modal, Popover, Select, Switch, Space, Spin, Popconfirm, message, theme } from 'antd'
 import {
@@ -22,7 +22,7 @@ import { When, fmtWhen, fullWhen } from '../when'
 import type { ColumnType } from 'antd/es/table'
 import { bridge, type HostScheduleResult, type HostScheduleSave, type Runnable, type SharedSchedule } from '../bridge'
 import { HostScheduleModal, timeoutText, type HostScheduleEditing } from './HostScheduleModal'
-import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary, withAlpha } from '../ThemeContext'
+import { MONO_FONT, RADIUS, useIsDark, textColor, textMuted, textSecondary } from '../ThemeContext'
 import {
   DAEMON_SETTINGS, DEFAULT_FILTERS, FOLDED_ATTENTION_MAX, PACKAGE_POLICY, STATE_TONE, claimStale, daemonNeedsAttention, daemonSummary, filterRows, noteBatches, noteText, noteVerbs, noteable, packageOverridden, settingText, settingsForm, shortDuration, supportsPackages, venvSettingsChanges,
   type Collected, type VenvSettingsForm, type NoteVerb, type DaemonVenv, type RowFilters, type RowSource, type RowState, type ScheduleRow, type ScheduleScope, type SchedulerVenv, type SortKey,
@@ -374,8 +374,35 @@ export function LastRunCell({ row, onOpenHistory, onAck }: {
 }) {
   const isDark = useIsDark()
   const secondary = textSecondary(isDark)
+  // Keyboard focus follows the swap: Acknowledge → Undo and back, so it isn't
+  // dropped on the page when the button it was on goes away.
+  const ackRef = useRef<HTMLButtonElement>(null)
+  const undoRef = useRef<HTMLButtonElement>(null)
+  const [moveTo, setMoveTo] = useState<'ack' | 'undo' | null>(null)
+  useEffect(() => {
+    if (moveTo === 'undo' && row.state === 'acknowledged') { undoRef.current?.focus(); setMoveTo(null) }
+    if (moveTo === 'ack' && row.state === 'last run failed') { ackRef.current?.focus(); setMoveTo(null) }
+  }, [moveTo, row.state])
   const l = row.lastRun
   if (!l) return <span style={{ color: textMuted(isDark) }}>—</span>
+  const name = row.name || row.id
+  const acknowledge = () => {
+    onAck!(row.id, l.cardId!)
+    setMoveTo('undo')
+    // A view that lists only problems drops the row at once, taking its Undo
+    // with it; the toast keeps one in reach.
+    const key = `rs-ack-${row.id}`
+    message.open({
+      key, type: 'success', duration: 8,
+      content: (
+        <span>
+          Acknowledged <span style={{ fontFamily: MONO_FONT }}>{name}</span>{' · '}
+          <Button type="link" size="small" style={{ padding: 0, height: 'auto' }}
+            onClick={() => { onAck!(row.id, null); message.destroy(key) }}>Undo</Button>
+        </span>
+      ),
+    })
+  }
   const label = (l.status === 'failed' || l.status === 'crashed') && l.exitCode != null ? `exit ${l.exitCode}` : l.status
   const canAck = !!onAck && row.source === 'console' && !!l.cardId
   return (
@@ -390,15 +417,15 @@ export function LastRunCell({ row, onOpenHistory, onAck }: {
       )}
       {canAck && row.state === 'last run failed' && (
         <Tooltip title="You've seen this failure: it stops counting as a problem. If the next run fails too, it counts again.">
-          <Button size="small" icon={<CheckOutlined />} aria-label={`Acknowledge the failed run of ${row.name || row.id}`}
-            onClick={() => onAck!(row.id, l.cardId!)}>Acknowledge</Button>
+          <Button ref={ackRef} size="small" icon={<CheckOutlined />} aria-label={`Acknowledge the failed run of ${name}`}
+            onClick={acknowledge}>Acknowledge</Button>
         </Tooltip>
       )}
       {canAck && row.state === 'acknowledged' && (
         <span style={{ fontSize: 12, color: secondary }}>
           acknowledged{' · '}
-          <Button type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }}
-            aria-label={`Undo acknowledging ${row.name || row.id}`} onClick={() => onAck!(row.id, null)}>Undo</Button>
+          <Button ref={undoRef} type="link" size="small" style={{ padding: 0, height: 24, fontSize: 12 }}
+            aria-label={`Undo acknowledging ${name}`} onClick={() => { onAck!(row.id, null); setMoveTo('ack'); message.destroy(`rs-ack-${row.id}`) }}>Undo</Button>
         </span>
       )}
     </Space>
@@ -987,8 +1014,7 @@ export function AllSchedulesView({ scope, collected, loading, loaded, updatedAt,
           size="small"
           pagination={rows.length > 100 ? { pageSize: 100, showSizeChanger: false } : false}
           scroll={{ x: 'max-content' }}
-          rowClassName={r => (r.enabled ? '' : 'rs-schedule-disabled')}
-          onRow={r => (r.problem ? { style: { background: withAlpha(token.colorWarning, isDark ? 0.07 : 0.08) } } : {})}
+          rowClassName={r => [r.enabled ? '' : 'rs-schedule-disabled', r.problem ? 'rs-row-problem' : ''].join(' ').trim()}
           locale={{ emptyText: <EmptyState message={emptyText} /> }}
           expandable={{ expandedRowRender: expanded, rowExpandable: r => r.kind !== 'schedule' || !!r.shared || !!r.argsText }}
           rowSelection={editable && rows.some(noteable) ? {

@@ -459,11 +459,21 @@ function sectionsToText(meta: Record<string, unknown> | undefined, sections: Tab
  *  so a data-heavy table of scalars stays as cheap as plain text. A nested object
  *  or array-of-objects delegates to the stateful disclosure cell below so it
  *  never collapses to "[object Object]". */
+/** Past this many characters a table cell is cut, with the rest in its tooltip. */
+const LONG_CELL_CHARS = 48
+
 function JsonCell({ keyName, value }: { keyName: string; value: unknown }) {
   const isObj = typeof value === 'object' && value !== null
   const isScalarArray = Array.isArray(value)
     && (value.length === 0 || value.every(x => x === null || typeof x !== 'object'))
-  if (!isObj || isScalarArray) return <>{_humanVal(keyName, value)}</>
+  if (!isObj || isScalarArray) {
+    const t = _humanVal(keyName, value)
+    // A long value (a summary, a URL) is cut at about 40 characters so one
+    // column can't push the rest of the row off screen; the whole value is in
+    // its tooltip and in Copy.
+    if (t.length <= LONG_CELL_CHARS) return <>{t}</>
+    return <span title={t} style={{ display: 'inline-block', maxWidth: `${LONG_CELL_CHARS}ch`, overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'bottom' }}>{t}</span>
+  }
   return <JsonCellDisclosure value={value} />
 }
 
@@ -478,7 +488,7 @@ function JsonCellDisclosure({ value }: { value: unknown }) {
   const label = Array.isArray(value) ? `[${(value as unknown[]).length}]` : '{…}'
   return (
     <span>
-      <a onClick={() => setOpen(o => !o)} style={{ color: c.link, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+      <a {...pressable(() => setOpen(o => !o), { expanded: open, label: `${open ? 'Hide' : 'Show'} ${label}` })} style={{ color: c.link, cursor: 'pointer', whiteSpace: 'nowrap' }}>
         {open ? '▾' : '▸'} {label}
       </a>
       {open && (rowArray
@@ -489,6 +499,17 @@ function JsonCellDisclosure({ value }: { value: unknown }) {
       )}
     </span>
   )
+}
+
+/** The first column of a wide table stays put while the rest scrolls, so a row
+ *  keeps its name (the host, the alert id). Opaque, over the card, with the
+ *  row's stripe on top and a hairline edge. */
+function stickyFirst(c: CardTheme, stripe: string): React.CSSProperties {
+  return {
+    position: 'sticky', left: 0, zIndex: 1, paddingLeft: 14,
+    background: `linear-gradient(${stripe}, ${stripe}), ${c.cardBg}`,
+    boxShadow: `inset -1px 0 0 ${c.tableRowBorder}`,
+  }
 }
 
 function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
@@ -502,7 +523,9 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
   const shown = rows.length > limit ? rows.slice(0, limit) : rows
   const hidden = rows.length - shown.length
   return (
-    <div style={{ overflowX: 'auto', padding: '8px 14px' }}>
+    // No left padding: the first column brings its own, so when it sticks it
+    // covers the scrolled cells right up to the edge.
+    <div style={{ overflowX: 'auto', padding: '8px 14px 8px 0' }}>
       {/* At least the old column's width, but a narrow table isn't stretched
           across a wide window (its columns would drift apart). */}
       <table style={{
@@ -511,11 +534,12 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
       }}>
         <thead>
           <tr>
-            {keys.map(k => (
+            {keys.map((k, ci) => (
               <th key={k} style={{
                 textAlign: 'left', padding: '4px 10px 6px 0',
                 borderBottom: `1px solid ${c.tableHeadBorder}`,
                 color: c.tableHead, fontWeight: 600, whiteSpace: 'nowrap',
+                ...(ci === 0 ? stickyFirst(c, 'transparent') : {}),
               }}>
                 {k.replace(/_/g, ' ')}
               </th>
@@ -525,11 +549,12 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
         <tbody>
           {shown.map((row, i) => (
             <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : c.rowAlt }}>
-              {keys.map(k => (
+              {keys.map((k, ci) => (
                 <td key={k} style={{
                   padding: '4px 10px 4px 0',
                   borderBottom: `1px solid ${c.tableRowBorder}`,
                   whiteSpace: 'nowrap',
+                  ...(ci === 0 ? stickyFirst(c, i % 2 === 0 ? 'transparent' : c.rowAlt) : {}),
                 }}>
                   <JsonCell keyName={k} value={row[k]} />
                 </td>
@@ -540,9 +565,9 @@ function JsonTable({ rows }: { rows: Record<string, unknown>[] }) {
       </table>
       {hidden > 0 && (
         <div
-          onClick={() => setLimit(l => l + TABLE_ROW_STEP)}
+          {...pressable(() => setLimit(l => l + TABLE_ROW_STEP))}
           style={{
-            padding: '6px 0 2px', fontSize: 13, color: c.dim,
+            padding: '6px 0 2px 14px', fontSize: 13, color: c.dim,
             cursor: 'pointer', fontFamily: MONO_FONT,
           }}
           onMouseEnter={e => (e.currentTarget.style.color = c.text)}
@@ -887,6 +912,90 @@ export function toolDisplay(entry: ToolCallEntry): { name: string; args: [string
     }
   }
   return { name: entry.name.replace(/^[^_]+__/, ''), args: Object.entries(input) }
+}
+
+/** The `<prefix>` of a prefixed tool name (`web-01__system-info` → `web-01`):
+ *  the host in per_host mode, the venv/group in dedup mode; '' otherwise. */
+export function toolPrefix(name: string): string {
+  const m = name.match(/^([^_]+)__/)
+  return m ? m[1] : ''
+}
+
+/** Where a tool call ran, for its row: the host its input names, else its
+ *  name's prefix. `local` stays unsaid (it's where everything else runs too). */
+export function toolRowHost(entry: ToolCallEntry): string {
+  const named = confirmHost(entry.input)
+  if (named) return named
+  const p = toolPrefix(entry.name)
+  return p && p !== 'local' ? p : ''
+}
+
+/** Consecutive calls to one tool with the same arguments (a fan-out across
+ *  hosts) fold into one row once there are this many. */
+export const TOOL_GROUP_MIN = 3
+
+export type TranscriptItem =
+  | { kind: 'text'; index: number; text: string }
+  | { kind: 'tool'; index: number; entry: ToolCallEntry }
+  | { kind: 'group'; index: number; entries: ToolCallEntry[] }
+
+const HOST_ARGS = new Set(['host', '_host', '__host'])
+
+/** What makes two calls "the same call": the tool and its args, minus the host. */
+function toolRunKey(entry: ToolCallEntry): string {
+  const d = toolDisplay(entry)
+  const args = d.args.filter(([k]) => !HOST_ARGS.has(k)).sort(([a], [b]) => a.localeCompare(b))
+  return `${d.name}\u0000${JSON.stringify(args)}`
+}
+
+/** The transcript as rows: text, single tool calls, and runs of
+ *  `TOOL_GROUP_MIN`+ identical calls folded into a group. A call parked at the
+ *  approval gate always stands alone, so its card is never hidden in a group. */
+export function groupToolRuns(segments: BlockSegment[], pending?: PendingConfirm | null): TranscriptItem[] {
+  const out: TranscriptItem[] = []
+  let i = 0
+  while (i < segments.length) {
+    const seg = segments[i]
+    if (seg.kind === 'text') { out.push({ kind: 'text', index: i, text: seg.text }); i++; continue }
+    const key = toolRunKey(seg.entry)
+    let j = i
+    while (j < segments.length) {
+      const s = segments[j]
+      if (s.kind !== 'tool' || confirmOwnsSegment(pending, s.entry) || toolRunKey(s.entry) !== key) break
+      j++
+    }
+    if (j - i >= TOOL_GROUP_MIN) {
+      out.push({ kind: 'group', index: i, entries: segments.slice(i, j).map(s => (s as { kind: 'tool'; entry: ToolCallEntry }).entry) })
+      i = j
+    } else {
+      out.push({ kind: 'tool', index: i, entry: seg.entry })
+      i++
+    }
+  }
+  return out
+}
+
+/** A folded run's one-line summary: how many calls, where, how they went. */
+export function toolGroupSummary(entries: ToolCallEntry[]): {
+  where: string; status: string; tone: 'running' | 'ok' | 'denied'; duration: string
+} {
+  const hosts = new Set(entries.map(toolRowHost).filter(Boolean))
+  const n = entries.length
+  const where = hosts.size === n ? `on ${n} hosts` : `× ${n}`
+  const running = entries.filter(e => e.running).length
+  const denied = entries.filter(e => !e.running && e.operatorDecision === 'denied').length
+  const cut = entries.filter(e => !e.running && e.truncated).length
+  const parts: string[] = []
+  if (running) parts.push(`${n - running} of ${n} done`)
+  else if (denied === n) parts.push('all denied')
+  else parts.push(denied ? `${n - denied} done` : 'all done')
+  if (!running && denied && denied < n) parts.push(`${denied} denied`)
+  if (cut) parts.push(`${cut} output cut`)
+  const ms = entries.filter(e => !e.running && e.operatorDecision !== 'denied' && e.durationMs !== undefined).map(e => e.durationMs!)
+  const lo = ms.length ? Math.min(...ms) : 0
+  const hi = ms.length ? Math.max(...ms) : 0
+  const duration = !ms.length ? '' : lo === hi ? fmtDurationMs(lo) : `${fmtDurationMs(lo)}–${fmtDurationMs(hi)}`
+  return { where, status: parts.join(' · '), tone: running ? 'running' : denied === n ? 'denied' : 'ok', duration }
 }
 
 /**
@@ -1453,7 +1562,7 @@ function ToolCallBlock({
   // The row's label: search-mode wrappers show the runnable / tool they ran.
   const display = toolDisplay(entry)
   const denied = entry.operatorDecision === 'denied'
-  const rowHost = confirmHost(resolved?.input, entry.input)
+  const rowHost = confirmHost(resolved?.input) || toolRowHost(entry)
   // Edit-and-rerun target when this call is a runnable invocation (search /
   // per_host / dedup); null for built-ins / MCP tools (no affordance).
   const rerun = !entry.running && !awaiting ? rerunFromToolEntry(entry) : null
@@ -1883,6 +1992,54 @@ export function PromptMessage({ text }: { text: string }) {
 // (RunInbox) so an agent interaction looks identical in both. `pendingConfirm` is
 // optional — the console passes it to show the inline approve gate; the Triggers
 // panel omits it (it has its own Approve/Deny section) so tool blocks render plain.
+/** A run of identical calls (one tool, same args, many hosts) as one row:
+ *  "system-info detail="summary" on 24 hosts · all done · 37ms–176ms". Opening
+ *  it lists each call, with the host it ran on. */
+function ToolGroupRow({ entries, requester }: { entries: ToolCallEntry[]; requester?: string }) {
+  const c = useCardTheme()
+  const [open, setOpen] = useState(false)
+  const display = toolDisplay(entries[0])
+  const args = display.args.filter(([k]) => !HOST_ARGS.has(k))
+  const sum = toolGroupSummary(entries)
+  const argText = args.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')
+  const label = `${display.name} ${sum.where}, ${sum.status}${open ? '' : ', show each call'}`
+  return (
+    <div data-testid="tool-group" style={{
+      margin: '2px 0', maxWidth: open ? undefined : TOOL_ROW_MAX,
+      border: `1px solid ${c.toolBorder}`, borderRadius: 12, overflow: 'hidden', background: c.cardBg,
+    }}>
+      <div className="rs-tool-row" style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', cursor: 'pointer', userSelect: 'none',
+      }} {...pressable(() => setOpen(x => !x), { expanded: open, label })}>
+        {sum.tone === 'running'
+          ? <LoadingOutlined style={{ color: 'var(--rs-text-secondary)', fontSize: 13 }} />
+          : sum.tone === 'denied'
+            ? <StopOutlined style={{ color: 'var(--rs-text-muted)', fontSize: 13 }} />
+            : <CheckCircleOutlined style={{ color: 'var(--rs-ok)', fontSize: 13 }} />}
+        <Text code style={{ fontSize: 13, flexShrink: 0 }}>{display.name}</Text>
+        <Text data-testid="tool-group-where" style={{ fontSize: 12, color: c.text, flexShrink: 0, fontWeight: 600 }}>{sum.where}</Text>
+        {argText && (
+          <Text ellipsis style={{ flex: 1, minWidth: 0, color: c.dim, fontSize: 12 }}>{argText}</Text>
+        )}
+        <Text data-testid="tool-group-status" style={{ fontSize: 12, color: c.dim, flexShrink: 0, marginLeft: argText ? 0 : 'auto' }}>{sum.status}</Text>
+        {sum.duration && (
+          <Tooltip title="Fastest and slowest call">
+            <Text style={{ color: c.dim, fontSize: 12, flexShrink: 0, fontFamily: MONO_FONT }}>{sum.duration}</Text>
+          </Tooltip>
+        )}
+        <Text style={{ color: c.dim, fontSize: 12, flexShrink: 0 }}>
+          {open ? '▲ hide calls' : `▼ show ${entries.length} calls`}
+        </Text>
+      </div>
+      {open && (
+        <div style={{ padding: '2px 8px 8px', display: 'flex', flexDirection: 'column', gap: 4, borderTop: `1px solid ${c.toolBorder}` }}>
+          {entries.map((e, i) => <ToolCallBlock key={e.callId ?? i} entry={e} requester={requester} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ChatTranscript({
   segments,
   currentText,
@@ -1903,18 +2060,23 @@ export function ChatTranscript({
   onAnswerConfirm?: (approved: boolean, editedInput?: Record<string, unknown>, declineReason?: string) => void
 }) {
   const c = useCardTheme()
+  // A fan-out (the same call on many hosts) reads as one row, not dozens.
+  const items = useMemo(() => groupToolRuns(segments, pendingConfirm), [segments, pendingConfirm])
   return (
     <div style={{ padding: '6px 0 10px 2px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {segments.map((seg, i) =>
-        seg.kind === 'text' ? (
-          <Markdown key={i} color={c.text}>{seg.text}</Markdown>
+      {items.map(item =>
+        item.kind === 'text' ? (
+          <Markdown key={item.index} color={c.text}>{item.text}</Markdown>
+        ) : item.kind === 'group' ? (
+          <ToolGroupRow key={item.index} entries={item.entries} requester={requester} />
         ) : (
           (() => {
+            const seg = item
             const owns = confirmOwnsSegment(pendingConfirm, seg.entry)
             const pc = owns ? pendingConfirm! : null
             return (
               <ToolCallBlock
-                key={i}
+                key={item.index}
                 entry={seg.entry}
                 awaiting={pc ? pc.autonomy : null}
                 resolved={pc && pc.display_name ? { name: pc.display_name, input: pc.display_input ?? {} } : null}
@@ -2320,15 +2482,25 @@ const BlockCard = memo(function BlockCard({
         borderBottom: isChat || (collapsed && callArgs.length === 0) ? 'none' : `1px solid ${c.cardBorder}`,
         userSelect: 'none',
       }}>
-        {/* Collapse toggle */}
-        <span
+        {/* Collapse toggle: a real button, so the keyboard reaches it (the
+            title below also toggles, as a larger mouse target). */}
+        <button
+          type="button"
+          className="rs-card-caret"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Expand this card' : 'Collapse this card'}
           onClick={() => setCollapsed(v => !v)}
-          style={{ color: c.caret, cursor: 'pointer', fontSize: 12, flexShrink: 0, width: 14 }}
+          style={{
+            color: c.caret, cursor: 'pointer', fontSize: 12, flexShrink: 0,
+            width: 24, height: 24, margin: '0 -5px', padding: 0,
+            border: 'none', background: 'transparent', borderRadius: RADIUS.sm,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          }}
         >
           {collapsed
             ? <RightOutlined style={{ fontSize: 11 }} />
             : <DownOutlined style={{ fontSize: 11 }} />}
-        </span>
+        </button>
 
         {/* "In context" toggle — whether this card's content is part of the
             agent's context. Only on completed cards (an in-flight turn has no

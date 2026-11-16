@@ -4,6 +4,7 @@ import { ClockCircleOutlined, CoffeeOutlined, LockOutlined, UnlockOutlined, Ques
 import { bridge, type Rota, type RotaDay, type LockState } from '../bridge'
 import { useIsDark, textColor, textMuted, MONO_FONT } from '../ThemeContext'
 import { fmtClock } from '../when'
+import { StatusTag } from '../components/kit'
 
 // JS Date.getDay() (0=Sun) → rota day key.
 const DOW_KEY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
@@ -140,6 +141,11 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
     })),
   )
   const [saving, setSaving] = useState(false)
+  // These switches only take effect on Save, so the editor says when something
+  // is unsaved and Save is live only then.
+  const snapshot = JSON.stringify({ enabled, source, marker, hold, lockSuspend, days })
+  const [saved] = useState(snapshot)
+  const dirty = snapshot !== saved
 
   const setDay = (k: string, patch: Partial<RotaDay>) =>
     setDays(prev => ({ ...prev, [k]: { ...prev[k], ...patch } }))
@@ -244,10 +250,17 @@ function WorkingHoursEditor({ rota, onSaved }: { rota: Rota; onSaved: () => void
         ))}
       </div>
       <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Button type="primary" size="small" onClick={save} loading={saving}>
+        <Button type="primary" size="small" onClick={save} loading={saving} disabled={!dirty}>
           Save working hours
         </Button>
-        <span style={{ color: dim, fontSize: 13 }}>Changes take effect when you click Save.</span>
+        {dirty ? (
+          <>
+            <StatusTag tone="attention" testId="rota-unsaved">unsaved changes</StatusTag>
+            <Button size="small" onClick={onSaved} disabled={saving}>Discard</Button>
+          </>
+        ) : (
+          <span style={{ color: dim, fontSize: 13 }}>Saved. Changes here take effect when you click Save.</span>
+        )}
       </div>
     </div>
   )

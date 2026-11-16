@@ -70,6 +70,22 @@ export function QueueMark({ index, total }: { index: number; total: number }) {
 /** The decision row every approval card ends with: an optional reason (opened
  *  by "Add a reason…"), a green Approve & <verb>, and a neutral Deny. Deny
  *  always answers at once, so the keyboard shortcut keeps working. */
+/** After an answer the card goes away, and with it the button that had focus.
+ *  Put focus on the next waiting approval, else the composer, so the keyboard
+ *  isn't left on the page body. Only when focus was actually dropped. */
+export function refocusAfterAnswer(doc: Document = document): void {
+  const settle = () => {
+    const a = doc.activeElement
+    if (a && a !== doc.body) return
+    const next = doc.querySelector<HTMLElement>('[data-rs-confirm="approve"]:not([disabled])')
+      ?? doc.querySelector<HTMLElement>('[data-testid="composer"] textarea')
+    next?.focus()
+  }
+  // Once the card has unmounted (it can take a render or a round trip).
+  setTimeout(settle, 0)
+  setTimeout(settle, 250)
+}
+
 export function ApprovalActions({
   verb, onApprove, onDeny, reason, setReason, reasonHint, reasonLabel = 'Reason (optional)', busy, edited, extra,
 }: {
@@ -102,7 +118,7 @@ export function ApprovalActions({
             // Enter sends the Deny with the reason; Shift+Enter is a newline.
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
-              if (reason.trim()) onDeny()
+              if (reason.trim()) { onDeny(); refocusAfterAnswer() }
             }
           }}
           style={{ fontSize: 12, marginBottom: 10, borderRadius: 10 }}
@@ -111,7 +127,7 @@ export function ApprovalActions({
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Tooltip title={`Approve (${shortcutHint('approve')})`}>
           {/* One fixed look whatever the brand accent: green go, neutral Deny. */}
-          <Button shape="round" icon={<CaretRightOutlined />} onClick={onApprove} data-rs-confirm="approve"
+          <Button shape="round" icon={<CaretRightOutlined />} onClick={() => { onApprove(); refocusAfterAnswer() }} data-rs-confirm="approve"
             loading={busy === 'approve'} disabled={!!busy} className="rs-approve"
             style={{ background: go.bg, borderColor: go.bg, color: go.text, ['--rs-approve-hover' as string]: go.hover }}>
             {edited ? <>Approve edited &amp; {verb}</> : <>Approve &amp; {verb}</>}
@@ -119,7 +135,7 @@ export function ApprovalActions({
         </Tooltip>
         {edited && <StatusTag tone="attention" testId="confirm-edited">edited</StatusTag>}
         <Tooltip title={reason.trim() ? `Deny, with your reason (${shortcutHint('deny')})` : `Deny (${shortcutHint('deny')})`}>
-          <Button shape="round" onClick={onDeny} data-rs-confirm="deny" loading={busy === 'deny'} disabled={!!busy}>
+          <Button shape="round" onClick={() => { onDeny(); refocusAfterAnswer() }} data-rs-confirm="deny" loading={busy === 'deny'} disabled={!!busy}>
             {reason.trim() ? 'Deny with reason' : 'Deny'}
           </Button>
         </Tooltip>

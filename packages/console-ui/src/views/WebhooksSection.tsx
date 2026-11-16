@@ -13,7 +13,8 @@ import { useState, type ReactNode } from 'react'
 import { Button, Dropdown, Input, Select, Switch, Tag, Tooltip, message } from 'antd'
 import { DownOutlined, RightOutlined, ApiOutlined, BellOutlined, PlusOutlined, PoweroffOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
 import { bridge } from '../bridge'
-import type { WebhookVenv, WebhooksStatus } from '../bridge'
+import type { DeprovisionTarget, WebhookVenv, WebhooksStatus } from '../bridge'
+import { UpdateVenvModal } from './UpdateVenvModal'
 import { useIsDark, textColor, textMuted, textSecondary, textWarning, MONO_FONT, RADIUS } from '../ThemeContext'
 import { StatusTag, RowActions } from '../components/kit'
 import { connection, deliveryStatus, muteLabel, relTime, runLine } from '../webhooks'
@@ -413,65 +414,90 @@ type OfferRowProps = {
   editable: boolean; busy: string; turning: string
   onFollow: (host: string) => void; onEdit: (t: { host: string; venv: string; tab: ModalTab }) => void
   onTurnOn: (v: SchedulerVenv) => void
+  /** Opens Update venv for a venv whose runspec-scheduler is too old. */
+  onUpdate?: (v: SchedulerVenv) => void
 }
 
-/** One host this console doesn't follow: a line per venv (its webhook state
- *  and a way to set it up), and Follow, which works before any hook exists. */
-function HostOfferRow({ offer, editable, busy, turning, onFollow, onEdit, onTurnOn }: { offer: HostOffer } & OfferRowProps) {
+/** One host this console doesn't follow: a row per venv (its webhook state
+ *  and a way to set it up), and Follow, which works before any hook exists.
+ *  The host's rows are one rowgroup; each row names its host (visibly on the
+ *  first, for screen readers on the rest) so every row reads on its own. */
+function HostOfferRow({ offer, editable, busy, turning, onFollow, onEdit, onTurnOn, onUpdate }: { offer: HostOffer } & OfferRowProps) {
   const isDark = useIsDark()
   const { host, venvs, canFollow } = offer
   const span = `span ${venvs.length}`
   const group = venvs[0]?.hostGroup
   return (
-    <div data-testid="webhook-host-offer" role="row" style={{
+    <div data-testid="webhook-host-offer" role="rowgroup" style={{
       gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'subgrid', alignItems: 'center',
       columnGap: 12, rowGap: 2, padding: '5px 10px', borderTop: '1px solid var(--rs-border)', fontSize: 12,
     }}>
-      <div role="rowheader" style={{ gridColumn: 1, gridRow: `1 / ${span}`, alignSelf: 'start', minWidth: 0, paddingTop: 2 }}>
-        <div style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{host}</div>
-        {group && <div style={{ color: textMuted(isDark) }}>{group}</div>}
-      </div>
       {venvs.map((v, i) => {
         const st = venvHookState(v)
         const row = i + 1
         const where = `${host} / ${v.venv}`
         const quiet = { color: 'var(--rs-text-secondary)' }
         const cell = (col: number, key: string, node: ReactNode) => (
-          <span key={`${v.key}:${key}`} role="cell" style={{ gridColumn: col, gridRow: row, minHeight: 24, display: 'flex', alignItems: 'center' }}>{node}</span>
+          <span key={key} role="cell" style={{ gridColumn: col, gridRow: row, minHeight: 24, display: 'flex', alignItems: 'center' }}>{node}</span>
         )
         const canSet = editable && st !== 'old'
-        return [
-          <span key={`${v.key}:v`} role="cell" style={{ gridColumn: 2, gridRow: row, fontFamily: MONO_FONT, color: textSecondary(isDark) }}>{v.venv}</span>,
-          <span key={`${v.key}:s`} role="cell" style={{ gridColumn: 3, gridRow: row, color: st === 'old' ? textMuted(isDark) : textSecondary(isDark) }}>{hookStateText(v)}</span>,
-          cell(4, 'first', editable && (st === 'off'
-            ? <Button size="small" icon={<PoweroffOutlined />} loading={turning === v.key} disabled={!!turning && turning !== v.key}
-                aria-label={`Turn on webhooks on ${where}`} onClick={() => onTurnOn(v)}>Turn on</Button>
-            : st === 'empty'
-              ? <Button size="small" type="text" icon={<PlusOutlined />} style={quiet}
-                  aria-label={`Add a hook on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'hooks' })}>Add a hook…</Button>
-              : null)),
-          cell(5, 'hooks', canSet && st !== 'empty' && (
-            <Button size="small" type="text" icon={<ApiOutlined />} style={quiet}
-              aria-label={`Hooks on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'hooks' })}>Hooks…</Button>
-          )),
-          cell(6, 'settings', canSet && (
-            <Button size="small" type="text" icon={<SettingOutlined />} style={quiet}
-              aria-label={`Listener settings on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'settings' })}>Settings…</Button>
-          )),
-        ]
+        return (
+          // `contents`: the row's cells sit straight in the host's grid, so the
+          // columns line up across hosts.
+          <div key={v.key} role="row" style={{ display: 'contents' }}>
+            {i === 0 ? (
+              <div role="rowheader" style={{ gridColumn: 1, gridRow: `1 / ${span}`, alignSelf: 'start', minWidth: 0, paddingTop: 2 }}>
+                <div style={{ fontFamily: MONO_FONT, fontSize: 13, color: textColor(isDark), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{host}</div>
+                {group && <div style={{ color: textMuted(isDark) }}>{group}</div>}
+              </div>
+            ) : (
+              <span role="rowheader" className="rs-visually-hidden">{host}</span>
+            )}
+            <span role="cell" style={{ gridColumn: 2, gridRow: row, fontFamily: MONO_FONT, color: textSecondary(isDark) }}>{v.venv}</span>
+            <span role="cell" style={{ gridColumn: 3, gridRow: row, color: st === 'old' ? textMuted(isDark) : textSecondary(isDark) }}>
+              {hookStateText(v)}
+              {st === 'old' && editable && onUpdate && (
+                <>
+                  {' · '}
+                  <Button type="link" size="small" style={{ padding: 0, height: 24, fontSize: 12 }}
+                    aria-label={`Update venv ${where}`} onClick={() => onUpdate(v)}>Update venv…</Button>
+                </>
+              )}
+            </span>
+            {cell(4, 'first', editable && (st === 'off'
+              ? <Button size="small" icon={<PoweroffOutlined />} loading={turning === v.key} disabled={!!turning && turning !== v.key}
+                  aria-label={`Turn on webhooks on ${where}`} onClick={() => onTurnOn(v)}>Turn on</Button>
+              : st === 'empty'
+                ? <Button size="small" type="text" icon={<PlusOutlined />} style={quiet}
+                    aria-label={`Add a hook on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'hooks' })}>Add a hook…</Button>
+                : null))}
+            {cell(5, 'hooks', canSet && st !== 'empty' && (
+              <Button size="small" type="text" icon={<ApiOutlined />} style={quiet}
+                aria-label={`Hooks on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'hooks' })}>Hooks…</Button>
+            ))}
+            {cell(6, 'settings', canSet && (
+              <Button size="small" type="text" icon={<SettingOutlined />} style={quiet}
+                aria-label={`Listener settings on ${where}`} onClick={() => onEdit({ host, venv: v.venv, tab: 'settings' })}>Settings…</Button>
+            ))}
+            {i === 0 ? (
+              <div role="cell" style={{ gridColumn: 7, gridRow: `1 / ${span}`, alignSelf: 'start', justifySelf: 'end' }}>
+                {editable && (
+                  <Tooltip title={canFollow
+                    ? 'Show its webhook deliveries and approvals on this console. Works before any hook is made.'
+                    : 'Needs runspec-scheduler 0.11.0 or later in one of its venvs: use Update venv… on that venv’s line.'}>
+                    <Button size="small" disabled={!canFollow || !!busy} loading={busy === host}
+                      onClick={() => onFollow(host)} aria-label={`Follow webhooks on ${host}`}>
+                      Follow
+                    </Button>
+                  </Tooltip>
+                )}
+              </div>
+            ) : (
+              <span role="cell" className="rs-visually-hidden">{canFollow ? 'Follow is on the host’s first line' : ''}</span>
+            )}
+          </div>
+        )
       })}
-      <div role="cell" style={{ gridColumn: 7, gridRow: `1 / ${span}`, alignSelf: 'start', justifySelf: 'end' }}>
-        {editable && (
-          <Tooltip title={canFollow
-            ? 'Show its webhook deliveries and approvals on this console. Works before any hook is made.'
-            : 'Needs runspec-scheduler 0.11.0 or later in one of its venvs (Update venv… upgrades it).'}>
-            <Button size="small" disabled={!canFollow || !!busy} loading={busy === host}
-              onClick={() => onFollow(host)} aria-label={`Follow webhooks on ${host}`}>
-              Follow
-            </Button>
-          </Tooltip>
-        )}
-      </div>
     </div>
   )
 }
@@ -529,7 +555,9 @@ function HostOffers({ offers, ...row }: { offers: HostOffer[] } & OfferRowProps)
             <span role="columnheader" style={head}>Host</span>
             <span role="columnheader" style={head}>Venv</span>
             <span role="columnheader" style={head}>Webhooks</span>
-            <span role="columnheader" style={{ ...head, gridColumn: '4 / span 3' }}><span className="rs-visually-hidden">Venv actions</span></span>
+            <span role="columnheader" style={head}><span className="rs-visually-hidden">Set up</span></span>
+            <span role="columnheader" style={head}><span className="rs-visually-hidden">Hooks</span></span>
+            <span role="columnheader" style={head}><span className="rs-visually-hidden">Listener settings</span></span>
             <span role="columnheader" style={head}><span className="rs-visually-hidden">Follow</span></span>
           </div>
           {shown.map(o => <HostOfferRow key={o.host} offer={o} {...row} />)}
@@ -550,6 +578,7 @@ export function WebhooksSection({ status, venvs, editable, onChanged }: {
   const [editing, setEditing] = useState<{ host: string; venv: string; tab?: ModalTab } | null>(null)
   const [following, setFollowing] = useState('')
   const [turning, setTurning] = useState('')
+  const [updating, setUpdating] = useState<DeprovisionTarget[] | null>(null)
   const [expanded, setExpanded] = useState<boolean | null>(null)
   const offers = hostOffers(venvs, status)
   const live = status.venvs.filter(v => !v.unavailable && !isOffQuietly(v))
@@ -605,8 +634,11 @@ export function WebhooksSection({ status, venvs, editable, onChanged }: {
       {showOffers && (
         <HostOffers offers={offers} editable={editable} busy={following} turning={turning}
           onFollow={h => { void follow(h) }} onEdit={setEditing}
-          onTurnOn={v => { void turnOn(v.key, v.host, v.venv, v.webhooks?.port) }} />
+          onTurnOn={v => { void turnOn(v.key, v.host, v.venv, v.webhooks?.port) }}
+          onUpdate={v => setUpdating([{ host: v.host, runspec_path: v.venv }])} />
       )}
+      <UpdateVenvModal open={updating !== null} initialTargets={updating ?? undefined}
+        onClose={() => setUpdating(null)} onDone={() => onChanged?.()} />
       {editing && <WebhookHooksModal target={{ host: editing.host, venv: editing.venv }} startTab={editing.tab}
         takenPorts={portsOnHost(status, venvs, editing.host, editing.venv)} onClose={() => { setEditing(null); onChanged?.() }} />}
     </section>

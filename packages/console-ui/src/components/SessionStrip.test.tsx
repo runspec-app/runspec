@@ -185,3 +185,12 @@ describe('wholeChipScroll()', () => {
     expect(wholeChipScroll(starts, widths, 250, 318, 0)).toBe(0)
   })
 })
+
+describe('chipEndPad()', () => {
+  it('adds room after the last chip only when the whole-chip position is out of reach', async () => {
+    const { chipEndPad } = await import('./SessionStrip')
+    // 524px of chips in a 250px view scroll at most 274: reaching 318 needs 44px more.
+    expect(chipEndPad(318, 524, 250)).toBe(44)
+    expect(chipEndPad(106, 524, 250)).toBe(0)
+  })
+})

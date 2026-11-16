@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Table, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Collapse, Typography, message, theme } from 'antd'
-import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined } from '@ant-design/icons'
-import { bridge, type SharedSchedulesVenv, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
-import { useIsDark, textMuted, textSecondary, withAlpha, MONO_FONT } from '../ThemeContext'
+import { Table, Button, Modal, Form, Select, Input, InputNumber, Space, Segmented, Switch, Tooltip, Collapse, Typography, message } from 'antd'
+import { DeleteOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined, PlayCircleOutlined, CalendarOutlined, ReloadOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { bridge, type Rota, type SharedSchedulesVenv, type ArgDef, type Credential, type Host, type Runnable, type Schedule, type ScheduleWhen, type Runbook, type SavedRun, type SavedTransfer, type RunCard, type TriggerEvent, type EvalFixtureMeta } from '../bridge'
+import { useIsDark, textMuted, textSecondary, MONO_FONT } from '../ThemeContext'
 import { AskFirst, askRemembered, consentKey, useRiskConfirm } from '../components/risk'
 import { useFeatures, visibleScheduleActions } from '../features'
 import { RunInbox } from '../components/RunInbox'
@@ -13,6 +13,7 @@ import { initialFormValues, validateArgs } from './formsShared'
 import { RunbookField } from './RunbookRunModal'
 import { AllSchedulesView, LastRunCell, WhenCell } from './AllSchedulesView'
 import { useScheduleAcks } from './scheduleAcks'
+import { rotaAllows, rotaGates, rotaSummary } from '../rota'
 import { EmptyState, IconAction, StatusTag } from '../components/kit'
 import { ScheduleScopeCards } from './ScheduleScopeCards'
 import { useWebhooks } from '../webhooks'
@@ -971,12 +972,15 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
 
   const { hostVenvs, hostsLoaded, hostsUpdatedAt, hostsLoading, readHosts, targets } = useHostSchedulerReads(hosts)
   const isDark = useIsDark()
-  const { token } = theme.useToken()
   const [askRisk, riskHolder] = useRiskConfirm()
 
   const reload = () => bridge.get_schedules().then(setSchedules)
 
   useEffect(() => { reload() }, [])
+  // Working hours gate this console's schedules: a fire outside them is
+  // skipped, so the table says so rather than promising the run.
+  const [rota, setRota] = useState<Rota | null>(null)
+  useEffect(() => { bridge.list_triggers().then(r => setRota(r.rota ?? null)).catch(() => {}) }, [])
 
   // Seed + subscribe to the schedule run inbox and event log.
   useEffect(() => {
@@ -1216,6 +1220,15 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       render: (v: string | undefined, s: Schedule) => {
         if (s.enabled === false) return <StatusTag tone="neutral">paused</StatusTag>
         if (!v) return <span style={{ color: dimCol }}>—</span>
+        if (rota && rotaAllows(rota, new Date(v)) === false) {
+          return (
+            <Tooltip title={`${fullWhen(v)} is outside your working hours (${rotaSummary(rota)}), so this run will be skipped. Change the hours in Automation › Working hours.`}>
+              <span data-testid="next-run-skipped" style={{ color: dimCol }}>
+                {relativeWhen(v)} · <span style={{ color: textSecondary(isDark), fontWeight: 600 }}>skipped</span>, outside working hours
+              </span>
+            </Tooltip>
+          )
+        }
         return (
           <Tooltip title={fullWhen(v)}>
             <span style={{ color: dimCol }}>{relativeWhen(v)}</span>
@@ -1227,6 +1240,9 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       title: '',
       key: 'actions',
       width: 132,
+      // Pinned, so Run now / Edit / Delete stay on screen when the table
+      // scrolls sideways in a narrow window.
+      fixed: 'right' as const,
       render: (_: unknown, s: Schedule) => (
         <Space size={2}>
           {/* Named by the schedule, or what it does when it has no name, so a
@@ -1252,9 +1268,9 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
       size="small"
       pagination={false}
       locale={{ emptyText: <EmptyState message="No schedules on this console yet." action={{ label: 'New schedule', icon: <PlusOutlined />, onClick: openNew }} /> }}
-      rowClassName={s => (s.enabled === false ? 'rs-schedule-disabled' : '')}
+      scroll={{ x: 'max-content' }}
       // A failed run you haven't acknowledged tints its row, as on All.
-      onRow={s => (consoleRows.get(s.id)?.problem ? { style: { background: withAlpha(token.colorWarning, isDark ? 0.07 : 0.08) } } : {})}
+      rowClassName={s => [s.enabled === false ? 'rs-schedule-disabled' : '', consoleRows.get(s.id)?.problem ? 'rs-row-problem' : ''].join(' ').trim()}
       expandable={{
         rowExpandable: s => Object.keys(detailFor(s)).length > 0,
         expandedRowRender: s => (
@@ -1335,7 +1351,17 @@ export function SchedulesView({ hosts, runnables, selectedHost, activeProfile, o
               </Button>
             </Space>
           ),
-          children: scheduleTable,
+          children: (
+            <>
+              {rota && rotaGates(rota) && (
+                <div data-testid="schedules-rota-note" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: textSecondary(isDark), margin: '0 0 8px' }}>
+                  <ClockCircleOutlined aria-hidden />
+                  <span>Working hours are on: these schedules only fire {rotaSummary(rota)}. A run outside them is skipped.</span>
+                </div>
+              )}
+              {scheduleTable}
+            </>
+          ),
         }]}
       />
 

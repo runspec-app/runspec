@@ -36,7 +36,7 @@ import { KnowledgeTools } from './KnowledgeTools'
 import { pageTargetFor } from './KnowledgeEdits'
 import type { SyncResult } from '../components/MemorySyncTab'
 import { When, plural } from '../when'
-import { PageToolbar, SectionSwitch } from '../components/kit'
+import { PageToolbar, SectionSwitch, FilterChip } from '../components/kit'
 import { AskFirst } from '../components/risk'
 
 const RANGE_OPTIONS = [
@@ -421,7 +421,7 @@ function TypeFilter({ types, hidden, onToggle }: { types: string[]; hidden: Set<
   return (
     <Space size={4} wrap>
       {types.map(t => (
-        <Tag.CheckableTag key={t} checked={!hidden.has(t)} onChange={() => onToggle(t)}
+        <FilterChip key={t} checked={!hidden.has(t)} onChange={() => onToggle(t)}
           style={{
             border: `1px solid ${hidden.has(t) ? surfaces(isDark).border : withAlpha(typeColor(t), 0.6)}`,
             background: hidden.has(t) ? 'transparent' : withAlpha(typeColor(t), 0.16),
@@ -429,7 +429,7 @@ function TypeFilter({ types, hidden, onToggle }: { types: string[]; hidden: Set<
           }}>
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: typeColor(t), marginRight: 6 }} />
           {t}
-        </Tag.CheckableTag>
+        </FilterChip>
       ))}
     </Space>
   )

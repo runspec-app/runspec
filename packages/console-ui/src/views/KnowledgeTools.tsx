@@ -10,6 +10,7 @@
 // editing them happens in the repo.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FilterChip } from '../components/kit'
 import { Alert, Button, Empty, Input, Popconfirm, Space, Spin, Tag, Tooltip, Typography, message, theme } from 'antd'
 import { ApartmentOutlined, EditOutlined, ExportOutlined, HistoryOutlined, MessageOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons'
 
@@ -228,10 +229,10 @@ export function KnowledgeTools({ runnables, active, onOpenSettings, focus, onRun
           <Input size="small" allowClear prefix={<SearchOutlined style={{ color: textMuted(isDark) }} />}
             placeholder="Find a tool or page" aria-label="Find a tool or page" value={query} onChange={e => setQuery(e.target.value)} />
           <Space size={4} wrap>
-            <Tag.CheckableTag checked={filter === 'all'} onChange={() => setFilter('all')}>All tools {tools.length}</Tag.CheckableTag>
+            <FilterChip checked={filter === 'all'} onChange={() => setFilter('all')}>All tools {tools.length}</FilterChip>
             {/* Only a filter when it narrows the list (some tools have a page, some don't). */}
             {noPage > 0 && noPage < tools.length && (
-              <Tag.CheckableTag checked={filter === 'nopage'} onChange={() => setFilter('nopage')}>No page yet {noPage}</Tag.CheckableTag>
+              <FilterChip checked={filter === 'nopage'} onChange={() => setFilter('nopage')}>No page yet {noPage}</FilterChip>
             )}
           </Space>
         </div>

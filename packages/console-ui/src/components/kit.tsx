@@ -10,7 +10,7 @@
 
 import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode, Ref, SyntheticEvent } from 'react'
 import { cloneElement, isValidElement, useState } from 'react'
-import { Button, Dropdown, Modal, Segmented, Tooltip, Typography, theme } from 'antd'
+import { Button, Dropdown, Modal, Segmented, Tag, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import { useRiskConfirm } from './risk'
 import { CheckCircleFilled, CloseCircleFilled, CloseOutlined, EllipsisOutlined, ExclamationCircleOutlined, InfoCircleOutlined, LoadingOutlined, PauseCircleOutlined, WarningFilled } from '@ant-design/icons'
@@ -109,6 +109,37 @@ export function StatusTag({ tone, children, tip, icon, mono, style, testId, onCl
     </span>
   )
   return tip ? <Tooltip title={tip}>{tag}</Tooltip> : tag
+}
+
+// ── FilterChip ───────────────────────────────────────────────────────────────
+
+/** A toggle chip for a filter row: antd's CheckableTag (a bare span) made a
+ *  toggle button for the keyboard and screen readers — Tab reaches it, Enter
+ *  or Space flips it, and it says whether it's on. */
+export function FilterChip({ checked, onChange, children, style, label }: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  children: ReactNode
+  style?: CSSProperties
+  /** Its name, when the visible text isn't enough. */
+  label?: string
+}) {
+  return (
+    <Tag.CheckableTag
+      checked={checked}
+      onChange={onChange}
+      style={style}
+      // CheckableTag passes these on to its span; its props type doesn't list them.
+      {...({
+        role: 'button', tabIndex: 0, 'aria-pressed': checked, 'aria-label': label,
+        onKeyDown: (e: { key: string; preventDefault: () => void }) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChange(!checked) }
+        },
+      } as object)}
+    >
+      {children}
+    </Tag.CheckableTag>
+  )
 }
 
 // ── pressable ────────────────────────────────────────────────────────────────

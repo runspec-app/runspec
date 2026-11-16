@@ -13,7 +13,7 @@ import { Alert, Badge, Button, Checkbox, Input, Modal, Progress, Segmented, Sele
 import { AppstoreAddOutlined, UnorderedListOutlined, BookOutlined, CodeOutlined, DownloadOutlined, DeleteOutlined, HistoryOutlined, HomeOutlined, InfoCircleOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons'
 import { bridge, type Host, type MarketplaceCatalog, type MarketplaceEntry, type MarketplaceInstalled, type MarketplaceInstalledTarget, type MarketplaceOpPayload, type MarketplaceOpRecord, type MarketplaceOpTarget, type MarketplaceOpTargetState } from '../bridge'
 import { useIsDark, useAccent, withAlpha, surfaces, RADIUS, textColor, textSecondary, textMuted, MONO_FONT } from '../ThemeContext'
-import { antTone, RowActions, StatusTag, type StatusTone } from '../components/kit'
+import { antTone, RowActions, StatusTag, type StatusTone, FilterChip } from '../components/kit'
 import { Markdown } from '../components/Markdown'
 import { hasTargetTokens, hostPasses, parseSearch, type ParsedSearch } from '../searchTokens'
 import { fmtWhen } from '../when'
@@ -634,10 +634,10 @@ function OpModal({ entry, action, states, focus, groupOf, onClose, onStarted }: 
               <>
                 <span style={{ ...meta, marginLeft: 8 }}>Group:</span>
                 {groupNames.map(gn => (
-                  <Tag.CheckableTag key={gn} checked={groupPick === gn} onChange={on => setGroupPick(on ? gn : '')}
+                  <FilterChip key={gn} checked={groupPick === gn} onChange={on => setGroupPick(on ? gn : '')}
                     style={groupPick === gn ? undefined : { border: `1px solid ${withAlpha(accent, 0.35)}` }}>
                     {gn}
-                  </Tag.CheckableTag>
+                  </FilterChip>
                 ))}
               </>
             )}

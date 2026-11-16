@@ -282,6 +282,7 @@ export function ActivityControl({ inFlight, working = [], waiting, waitingTotal,
       {riskHolder}
       <Popover open={open} onOpenChange={setOpen} trigger="click" placement="bottomLeft" content={list}>
         <Button ref={btnRef} size="small" data-testid="activity-control" aria-label={`Activity: ${label}`}
+          aria-haspopup="dialog" aria-expanded={open}
           icon={inFlight.length ? <LoadingOutlined aria-hidden spin /> : <BellOutlined aria-hidden />}
           style={{ flexShrink: 0, height: 24, fontSize: 12, color: waiting.length ? 'var(--rs-waiting)' : undefined, fontWeight: waiting.length ? 600 : undefined }}>
           {label}

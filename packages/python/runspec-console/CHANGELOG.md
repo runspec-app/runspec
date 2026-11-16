@@ -9,6 +9,63 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.455.0] — 2026-11-16
+
+### Changed
+
+- **Console: a call to many hosts is one row.** When the assistant runs the
+  same tool with the same arguments three or more times in a row (one call per
+  host), the transcript shows one row, e.g. `system-info` **on 24 hosts** ·
+  all done · 30ms–60ms, instead of 24 identical rows. Opening it lists each
+  call. A call waiting for your approval is never folded into a group.
+- **Console: every tool row says which host it ran on**, including per-host
+  tools (`web-01__system-info`), whose host used to be stripped from the name.
+- **Console: wide tables keep their first column.** In a run's table the first
+  column stays in place while the rest scrolls sideways, and a value over 48
+  characters is cut with an ellipsis (all of it is in its tooltip and in Copy).
+- **Console: the composer sits on the transcript's left edge** at the width of
+  a tool row, so on a wide window the prompt and the replies line up instead
+  of the composer floating in the middle.
+- **Schedules: a run outside working hours says it will be skipped.** With
+  working hours on, This console's Next run reads "skipped, outside working
+  hours" for a fire the hours will suppress, and the table says the hours are
+  on and what they are.
+- **Schedules: Run now, Edit and Delete stay on screen** at 1024px. The Last run
+  column had pushed them past the table's edge; the column is pinned again.
+- **Schedules: Acknowledge keeps Undo in reach.** Acknowledging shows a toast
+  with Undo (on All, which lists only problems by default, the row leaves at
+  once), and keyboard focus moves to Undo, and back to Acknowledge after Undo.
+- **Schedules: a failed run's row is tinted on every cell**, so it shows over
+  the table's own cell background.
+- **History: a run fired by one of this console's schedules shows Run by
+  "schedule"**, not "user" or "agent", with a filter of its own.
+- **Denylist: Disable all has its own reason field** next to it. It used to
+  take whatever was typed in the specific-rule Reason further down.
+- **Working hours: Save is live only when something changed**, with an
+  "unsaved changes" marker and Discard.
+- **Webhooks: a venv that needs runspec-scheduler 0.11.0 offers Update venv…**
+  on its line. The hosts list gives each venv a row of its own that names its
+  host, with a header for every column.
+- **Triggers: one word for trying a trigger.** The row's **Test** opens "Test
+  <trigger>" with a **Run test** button (it was "Trigger now" and "Fire"), and
+  its explanation is two lines.
+- **Session chips** land on whole chips even at the end of the row, and a chip
+  past the row's end fades out instead of being cut off.
+- **Files:** the pane's buttons fold into More below 440px (at 1024px Delete
+  wrapped onto a line of its own).
+- Badge counts settle without the bounce.
+
+### Fixed
+
+- Keyboard and screen-reader access: the card collapse caret, a nested
+  table's disclosure and "show more rows" are buttons; schedule and trigger
+  run lists open with Enter; the Knowledge and Marketplace tag filters are
+  toggle buttons; the Activity button says when its list is open; focus moves
+  to the next approval (or the composer) after Approve or Deny.
+- History's row expander is a 24px target, and its tip says "the +" (not "its
+  arrow").
+- The hosts panel's not-connected mark meets 3:1 in the light theme.
+
 ## [0.454.0] — 2026-11-16
 
 ### Added

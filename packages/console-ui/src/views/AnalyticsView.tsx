@@ -208,7 +208,10 @@ export function AnalyticsView({ host, activeScope, active }: AnalyticsViewProps)
             maxTagCount="responsive"
           />
         )}
+        {/* Who started the runs, in History's Run by words. A schedule's runs
+            count under who its action is (the charts' data has no trigger). */}
         <Segmented
+          aria-label="Started by"
           options={[{ label: 'All', value: 'all' }, { label: 'User', value: 'user' }, { label: 'Agent', value: 'llm' }]}
           value={initiatedBy}
           onChange={(v) => setInitiatedBy(v as 'all' | 'user' | 'llm')}

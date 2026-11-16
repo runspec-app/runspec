@@ -7,7 +7,7 @@
  * fires say only `schedule` and show as a host schedule.
  */
 
-export type RunByKind = 'user' | 'agent' | 'cron' | 'daemon' | 'run-now' | 'host-schedule'
+export type RunByKind = 'user' | 'agent' | 'schedule' | 'cron' | 'daemon' | 'run-now' | 'host-schedule'
 
 export interface RunBy { kind: RunByKind; label: string; tip: string }
 
@@ -23,6 +23,9 @@ export function runBy(r: { initiatedBy?: string; trigger?: string; label?: strin
   if ((r.label ?? '').startsWith('sched:')) {
     return { kind: 'host-schedule', label: 'host sched', tip: 'Fired by a host schedule (runspec-scheduler before 0.7.0 didn’t record whether cron or the daemon fired it)' }
   }
+  // One of this console's own schedules (its trigger is plain `schedule`): not
+  // the operator, and not the assistant, even when it ran a prompt.
+  if (trigger === 'schedule') return { kind: 'schedule', label: 'schedule', tip: "Fired by one of this console's schedules" }
   if (r.initiatedBy === 'llm') return { kind: 'agent', label: 'agent', tip: 'Triggered by the assistant' }
   return { kind: 'user', label: 'user', tip: 'Run by an operator' }
 }
@@ -35,6 +38,7 @@ export function isScheduled(trigger: string | undefined): boolean {
 export const RUN_BY_FILTERS: { text: string; value: RunByKind }[] = [
   { text: 'User', value: 'user' },
   { text: 'Agent', value: 'agent' },
+  { text: 'This console’s schedule', value: 'schedule' },
   { text: 'Cron', value: 'cron' },
   { text: 'Daemon', value: 'daemon' },
   { text: 'Run now', value: 'run-now' },

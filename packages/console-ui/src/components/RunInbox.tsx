@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Button, Drawer, Empty, message } from 'antd'
 import { StopOutlined } from '@ant-design/icons'
 import { type RunCard } from '../bridge'
+import { pressable } from './kit'
 import { useIsDark, textColor, textMuted, MONO_FONT, RADIUS } from '../ThemeContext'
 import { Markdown } from './Markdown'
 import { AskFirst } from './risk'
@@ -83,7 +84,9 @@ export function RunInbox({
           {runs.map((card, i) => (
             <div
               key={card.card_id}
-              onClick={() => onSelect(card.card_id)}
+              // A button to the keyboard too: Tab reaches each run, Enter opens it.
+              {...pressable(() => onSelect(card.card_id), { current: selected === card.card_id })}
+              className="rs-inbox-row"
               style={{
                 display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px',
                 borderBottom: i < runs.length - 1 ? `1px solid ${border}` : undefined,

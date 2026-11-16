@@ -216,7 +216,10 @@ export function SessionStrip({ sessions, selectedId, statusOf, hasBlocks, onSele
         // Scrolling by hand settles on whole chips; scrolls the row makes itself
         // land on whole chips too (wholeChipScroll).
         scrollSnapType: 'x proximity',
-        padding: '2px 0',
+        // A chip running past the row's end fades out over the end padding,
+        // rather than being sliced off by a hard edge.
+        padding: `2px ${ROW_END_PAD}px 2px 0`,
+        maskImage: `linear-gradient(to right, var(--rs-text) calc(100% - ${ROW_END_PAD}px), transparent)`,
       }}
     >
       {inline.map(s => {
@@ -337,6 +340,9 @@ export function wholeChipScroll(starts: number[], widths: number[], view: number
   return snapped ?? left
 }
 
+/** Room after the last chip: where an overflowing chip fades out. */
+const ROW_END_PAD = 16
+
 /** Scroll the row to whole chips with this one in full view. */
 function showChip(row: HTMLElement, chip: HTMLElement | null | undefined) {
   if (!chip) return
@@ -346,7 +352,20 @@ function showChip(row: HTMLElement, chip: HTMLElement | null | undefined) {
   const widths = chips.map(c => c.getBoundingClientRect().width)
   const i = chips.indexOf(chip)
   if (i < 0) return
-  row.scrollLeft = wholeChipScroll(starts, widths, row.clientWidth, row.scrollLeft, i)
+  const want = wholeChipScroll(starts, widths, row.clientWidth, row.scrollLeft, i)
+  // Near the end of the row the whole-chip position can lie past the furthest
+  // the row scrolls, and the browser would clamp it back onto a part chip.
+  // Room after the last chip makes the position reachable.
+  const cur = parseFloat(row.style.paddingRight) || ROW_END_PAD
+  const content = row.scrollWidth - cur + ROW_END_PAD
+  row.style.paddingRight = `${ROW_END_PAD + chipEndPad(want, content, row.clientWidth)}px`
+  row.scrollLeft = want
+}
+
+/** How much empty room the row needs after its last chip so it can scroll to
+ *  `want` (0 when it already can). `content` is the chips' total width. Pure. */
+export function chipEndPad(want: number, content: number, view: number): number {
+  return Math.max(0, Math.ceil(want - (content - view)))
 }
 
 const chipEl = (row: HTMLElement, id: string) =>
